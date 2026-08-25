@@ -1,0 +1,24 @@
+# 构建产物
+.gradle/
+build/
+app/build/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+captures/
+Thumbs.db
+
+# 本地配置与密钥 —— 绝不入库
+local.properties
+gradle.properties.local
+secrets.properties
+*.env
+*.jks
+*.keystore
+
+# Node（若涉及 Kuikly web）
+node_modules/
