@@ -1,24 +1,52 @@
-# 构建产物
-.gradle/
-build/
-app/build/
-.externalNativeBuild/
-.cxx/
-
-# IDE
-.idea/
 *.iml
+.gradle
+/local.properties
+.idea
 .DS_Store
-captures/
-Thumbs.db
-
-# 本地配置与密钥 —— 绝不入库
+/build
+*/build
+/captures
+.externalNativeBuild
+.cxx
 local.properties
-gradle.properties.local
+*.so
+*.js
+node_modules
+Pods
+Pods/*
+Pods-iosApp/*
+Kotlin-js-store
+
+## Various settings
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+**/xcuserdata/**
+**/*.xcuserdatad/**
+**/xcshareddata/
+**/IDEWorkspaceChecks.plist
+
+## Other
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+*.xcbkptlist
+*.pyc
+
+# Kotlin 编译缓存（非源码）
+.kotlin/
+
+# AS run configurations
+.run/
+
+# 密钥与本地配置 —— 绝不入库
+*.keystore
+*.jks
 secrets.properties
 *.env
-*.jks
-*.keystore
-
-# Node（若涉及 Kuikly web）
-node_modules/
+gradle.properties.local
