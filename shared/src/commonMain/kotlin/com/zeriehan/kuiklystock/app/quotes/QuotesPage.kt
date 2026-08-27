@@ -1,0 +1,47 @@
+package com.zeriehan.kuiklystock.app.quotes
+
+import com.tencent.kuikly.core.annotations.Page
+import com.tencent.kuikly.core.base.ViewBuilder
+import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.views.*
+import com.zeriehan.kuiklystock.base.BasePager
+import com.zeriehan.kuiklystock.base.bridgeModule
+import com.zeriehan.kuiklystock.components.KRTable.KRStockList
+import com.zeriehan.kuiklystock.core.MockStockSource
+
+/**
+ * 行情 Tab 宿主页（测试用）。
+ * 引用 KRStockList 组件，加载 Mock 数据，验证行内展开交互。
+ */
+@Page("QuotesPage", supportInLocal = true)
+internal class QuotesPage : BasePager() {
+
+    override fun body(): ViewBuilder {
+        val ctx = this
+        return {
+            attr {
+                flexDirectionColumn()
+                backgroundColor(Color.WHITE)
+            }
+            // 顶部标题栏
+            View {
+                attr {
+                    height(48f)
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    padding(all = 14f)
+                    backgroundColor(Color(0xFFF2F3F5))
+                }
+                Text { attr { text("行情"); fontSize(18f); color(Color(0xFF222222)) } }
+            }
+            // 行情列表（含行内展开：点行挤开下方，显示迷你走势+详细按钮）
+            KRStockList {
+                stocks = MockStockSource.getQuotes()
+                onRowClick = { /* 展开/收起由 KRStockList 内部 expandedIndex 处理 */ }
+                onDetailClick = { stock ->
+                    ctx.bridgeModule.toast("查看 ${stock.name} 详情（待实现）")
+                }
+            }
+        }
+    }
+}
