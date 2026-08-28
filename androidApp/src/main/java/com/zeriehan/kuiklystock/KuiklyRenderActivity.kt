@@ -38,7 +38,7 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
             return if (pn.isNotEmpty()) {
                 return pn
             } else {
-                "QuotesPage" // TEST: 临时入口，验证行情组件后改回 "router"
+                "MainTab" // 四 Tab 主框架入口（Tab2 行情为已有内容，Tab1/3/4 占位/复用）
             }
         }
 
