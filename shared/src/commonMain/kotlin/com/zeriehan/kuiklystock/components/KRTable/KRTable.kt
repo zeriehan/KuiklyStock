@@ -11,6 +11,7 @@ import com.tencent.kuikly.core.views.compose.Button
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.*
 import com.zeriehan.kuiklystock.components.KRStockBadge.KRStockBadge
+import com.zeriehan.kuiklystock.components.KRTrendChart.KRTrendChart
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.formatPrice
 
@@ -37,7 +38,7 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
     override fun body(): ViewBuilder {
         val ctx = this
         return {
-            View {
+            Scroller {
                 attr {
                     flex(1f)
                     flexDirectionColumn()
@@ -81,13 +82,10 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                 flexDirectionColumn()
                                 backgroundColor(Color(0xFFF7F8FA))
                             }
-                            // TODO(P1): 替换为 KRTrendChart 组件（迷你走势折线）
-                            View {
-                                attr {
-                                    height(80f)
-                                    borderRadius(6f)
-                                    backgroundColor(if (stock.isUp) Color(0x1FE54D42) else Color(0x1F1ABE5B))
-                                }
+                            // 迷你走势折线（自研 KRTrendChart）
+                            KRTrendChart {
+                                points = stock.trend
+                                color = if (stock.isUp) Color(0xFFE54D42) else Color(0xFF1ABE5B)
                             }
                             // 关键信息
                             View {

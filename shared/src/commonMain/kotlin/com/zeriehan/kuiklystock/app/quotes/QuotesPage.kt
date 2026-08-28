@@ -35,7 +35,10 @@ internal class QuotesPage : BasePager() {
                 Text { attr { text("行情"); fontSize(18f); color(Color(0xFF222222)) } }
             }
             // 行情列表（含行内展开：点行挤开下方，显示迷你走势+详细按钮）
+            // 关键：自定义 ComposeView 放进纵向 column 时必须 flex(1f) 占满剩余高度，
+            // 否则其内部 Scroller 因父高度未约束而塌缩为 0 -> 整块空白。
             KRStockList {
+                attr { flex(1f) }
                 stocks = MockStockSource.getQuotes()
                 onRowClick = { /* 展开/收起由 KRStockList 内部 expandedIndex 处理 */ }
                 onDetailClick = { stock ->
