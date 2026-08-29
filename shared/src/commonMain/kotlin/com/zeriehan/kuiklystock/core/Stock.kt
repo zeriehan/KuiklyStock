@@ -36,6 +36,13 @@ data class KLineBar(
  * 由"距今天数"推算 MM-DD 标签（演示用，按真实月长回退，基准日 2026-08-29）。
  * 说明：这是 mock 演示标签，并非真实交易日历，仅用于 X 轴可读性，不影响任何逻辑。
  */
+/** 两位补零 */
+private fun pad2(v: Int): String = if (v < 10) "0$v" else v.toString()
+
+/**
+ * 由"距今天数"推算 MM-DD 标签（演示用，按真实月长回退，基准日 2026-08-29）。
+ * 说明：这是 mock 演示标签，并非真实交易日历，仅用于 X 轴可读性，不影响任何逻辑。
+ */
 fun dateLabel(daysAgo: Int): String {
     var m = 8
     var d = 29
@@ -47,8 +54,28 @@ fun dateLabel(daysAgo: Int): String {
             d = daysInMonth(m)
         }
     }
-    val pad2 = { v: Int -> if (v < 10) "0$v" else v.toString() }
     return "${pad2(m)}-${pad2(d)}"
+}
+
+/**
+ * K线 X 轴标签：按周期返回不同的可读格式（用户要求：日→日期、周→日期、月→月份、年→年份）。
+ * @param period "日"/"周"/"月"/"年"
+ * @param offsetFromNewest 距离最新一根的偏移（0=最新；日=天数，周=周数，月=月数，年=年数）
+ */
+fun klineDateLabel(period: String, offsetFromNewest: Int): String {
+    return when (period) {
+        "年" -> {
+            val y = 2026 - offsetFromNewest
+            "${y}年"
+        }
+        "月" -> {
+            var m = 8 - offsetFromNewest
+            while (m <= 0) { m += 12 } // 回退跨年（仅演示，不显示年份前缀以保持紧凑）
+            "${pad2(m)}月"
+        }
+        "周" -> dateLabel(offsetFromNewest * 7) // 按周步进（7 天）
+        else -> dateLabel(offsetFromNewest)      // 日：按天步进
+    }
 }
 
 /** 指定月份天数（2 月按平年 28 天，演示足够） */

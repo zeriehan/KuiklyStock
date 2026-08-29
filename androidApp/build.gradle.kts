@@ -1,6 +1,24 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     kotlin("android")
+}
+
+/**
+ * 读取 AI 大模型 API Key，优先级：local.properties > 环境变量 > 空串。
+ * local.properties 已在 .gitignore 中，密钥不会进入版本库；
+ * 取不到时为空串，App 会自动回退本地 Mock 分析，不影响功能演示。
+ */
+val glmApiKey: String = run {
+    val props = Properties()
+    val localFile = rootProject.file("local.properties")
+    if (localFile.exists()) {
+        localFile.inputStream().use { props.load(it) }
+    }
+    props.getProperty("GLM_API_KEY")
+        ?: System.getenv("GLM_API_KEY")
+        ?: ""
 }
 
 android {
@@ -12,6 +30,12 @@ android {
         targetSdk = 30
         versionCode = 1
         versionName = "1.0"
+
+        buildConfigField("String", "GLM_API_KEY", "\"$glmApiKey\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {

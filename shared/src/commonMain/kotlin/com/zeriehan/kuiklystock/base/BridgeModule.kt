@@ -71,6 +71,16 @@ internal class BridgeModule : Module() {
         callNativeMethod("toast", methodArgs, null)
     }
 
+    /**
+     * AI 分析：把自然语言 prompt 下发到 Android 宿主，由宿主用 GLM-4-Flash 生成文本后回调。
+     * 异步返回，回调参数形如 { "text": "..." }；生成失败/未配置 Key 时 text 为空串（上层回退 Mock）。
+     */
+    fun llmAnalyze(prompt: String, callbackFn: CallbackFn) {
+        val methodArgs = JSONObject()
+        methodArgs.put("prompt", prompt)
+        callNativeMethod(LLM_ANALYZE, methodArgs, callbackFn)
+    }
+
     fun openPage(
         url: String,
         closeCurPage: Boolean = false,
@@ -352,6 +362,7 @@ internal class BridgeModule : Module() {
         const val URL_DECODE = "urlDecode"
         const val SHOW_PHOTO_BROWSER = "showPhotoBrowser"
         const val HUMAN_VERIFICATION = "humanVerification"
+        const val LLM_ANALYZE = "llmAnalyze"
     }
 
 }

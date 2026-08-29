@@ -128,11 +128,13 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                             View { attr { width(18f); height(18f); borderRadius(9f); backgroundColor(Color(0xFFE6F1FB)); marginRight(6f) } }
                                             Text { attr { text("AI 智能分析"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
                                         }
-                                        val aiTxt = ctx.aiCache[index]
-                                        val aiBusy = ctx.aiLoading.contains(index)
+                                        // ⚠️ 必须在 attr 闭包内直接读取 observable（aiCache/aiLoading），
+                                        // 否则只在 vif 挂载时捕获一次旧值，AI 回调回填后不会重渲染（卡在"分析中"）。
                                         Text {
                                             attr {
-                                                text(if (aiBusy) "AI 分析中…" else (aiTxt ?: "AI 分析中…"))
+                                                val cached = ctx.aiCache[index]
+                                                val busy = ctx.aiLoading.contains(index)
+                                                text(if (busy) "AI 分析中…" else (cached ?: "AI 分析中…"))
                                                 fontSize(13f); color(Color(0xFF555555)); marginTop(8f)
                                             }
                                         }
