@@ -16,8 +16,10 @@ import com.zeriehan.kuiklystock.components.KRStockBadge.KRStockBadge
 import com.zeriehan.kuiklystock.components.KRTrendChart.KRTrendChart
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.MockStockSource
+import com.zeriehan.kuiklystock.base.Utils
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.llm.LLM
+import com.zeriehan.kuiklystock.components.KRRefreshButton.KRRefreshButton
 
 /** 折叠行固定高度：KRStockList 折叠行 attr 的 height 需与此保持一致 */
 private val ROW_HEIGHT = 64f
@@ -41,14 +43,19 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
     private var expandedIndex: Int by observable(-1)
     /** 行情行右滑 AI 分析：按行缓存分析结果（key=行index） */
     private var aiCache: Map<Int, String> by observable(emptyMap())
+    /** 行情行右滑 AI 分析时间文案（key=行index），与 aiCache 一一对应 */
+    private var aiTimeCache: Map<Int, String> by observable(emptyMap())
     private var aiLoading: Set<Int> by observable(emptySet())
 
-    /** 展开某行时按需拉取 AI 分析（Mock 同步返回，真实 GLM-4-Flash 异步回填） */
-    private fun loadAI(index: Int, stock: Stock) {
-        if (aiCache.containsKey(index) || aiLoading.contains(index)) return
+    /** 展开某行时按需拉取 AI 分析（首次自动；force=true 用于「重试」按钮强制刷新） */
+    private fun loadAI(index: Int, stock: Stock, force: Boolean = false) {
+        if (!force && (aiCache.containsKey(index) || aiLoading.contains(index))) return
         aiLoading = aiLoading + index
         LLM.client.analyze(stock, MockStockSource.getKLine(stock, "日")) { result ->
+            val ts = Utils.currentBridgeModule().currentTimeStamp()
+            val tText = if (ts > 0) Utils.currentBridgeModule().dateFormatter(ts, "MM-dd HH:mm") else ""
             aiCache = aiCache + (index to result)
+            aiTimeCache = aiTimeCache + (index to tText)
             aiLoading = aiLoading - index
         }
     }
@@ -127,6 +134,16 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                             attr { flexDirectionRow(); alignItemsCenter() }
                                             View { attr { width(18f); height(18f); borderRadius(9f); backgroundColor(Color(0xFFE6F1FB)); marginRight(6f) } }
                                             Text { attr { text("AI 智能分析"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                                            View { attr { flex(1f) } }
+                                            Text {
+                                                attr {
+                                                    val busy = ctx.aiLoading.contains(index)
+                                                    val t = ctx.aiTimeCache[index] ?: ""
+                                                    text(if (busy) "分析中…" else t)
+                                                    fontSize(12f); color(Color(0xFF999999)); marginRight(8f)
+                                                }
+                                            }
+                                            KRRefreshButton({ ctx.aiLoading.contains(index) }) { ctx.loadAI(index, stock, force = true) }
                                         }
                                         // ⚠️ 必须在 attr 闭包内直接读取 observable（aiCache/aiLoading），
                                         // 否则只在 vif 挂载时捕获一次旧值，AI 回调回填后不会重渲染（卡在"分析中"）。

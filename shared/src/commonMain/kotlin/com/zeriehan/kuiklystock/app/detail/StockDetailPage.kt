@@ -13,12 +13,16 @@ import com.tencent.kuikly.core.views.*
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.compose.Button
 import com.zeriehan.kuiklystock.base.BasePager
+import com.zeriehan.kuiklystock.base.Utils
 import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.core.MockStockSource
+import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.StockColor
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
+import com.zeriehan.kuiklystock.core.llm.AIAnalysisStore
 import com.zeriehan.kuiklystock.core.llm.LLM
+import com.zeriehan.kuiklystock.components.KRRefreshButton.KRRefreshButton
 import com.zeriehan.kuiklystock.components.KRKLineChart.KRKLineChart
 
 /**
@@ -49,13 +53,46 @@ internal class StockDetailPage : BasePager() {
     private var chartRef: ViewRef<KRKLineChart>? = null
     /** AI 分析文本（详情页 AI 卡由 LLM 层生成） */
     private var aiText: String by observable("")
+    /** AI 分析加载中：控制「重试」按钮置灰/禁用与「分析中…」文案 */
+    private var aiLoading: Boolean by observable(false)
+    /** AI 分析时间文案（如 08-29 17:52）；首次进入为空，分析完成后写入；再次进入直接读缓存 */
+    private var aiTimeText: String by observable("")
+
+    /**
+     * 执行一次 AI 分析。
+     * - force=false 且进程内已有该股票缓存：直接展示缓存（首次进入之后不再自动调模型，省额度 / 不闪动）。
+     * - 否则：置 loading，调 LLM，回填文本 + 分析时间（MM-dd HH:mm），并写入缓存。
+     */
+    private fun runAnalysis(stock: Stock, code: String, force: Boolean) {
+        if (!force) {
+            AIAnalysisStore.get(code)?.let {
+                aiText = it.text
+                aiTimeText = it.timeText
+                return
+            }
+        }
+        aiLoading = true
+        LLM.client.analyze(stock, MockStockSource.getKLine(stock, "日")) { text ->
+            val ts = Utils.currentBridgeModule().currentTimeStamp()
+            val tText = if (ts > 0) Utils.currentBridgeModule().dateFormatter(ts, "MM-dd HH:mm") else ""
+            aiText = text
+            aiTimeText = tText
+            aiLoading = false
+            AIAnalysisStore.put(code, text, tText)
+        }
+    }
+
+    /** 用户点击圆形「重试」按钮时触发：强制重新分析 */
+    private fun reanalyze(stock: Stock, code: String) {
+        runAnalysis(stock, code, force = true)
+    }
 
     override fun body(): ViewBuilder {
         val ctx = this
         val code = pageData.params.optString("stockCode")
         val stock = MockStockSource.findByCode(code)
-        // 触发 AI 分析（Mock 同步返回，真实 GLM-4-Flash 异步回填；卡片 Text 随 aiText 响应式刷新）
-        LLM.client.analyze(stock, MockStockSource.getKLine(stock, "日")) { ctx.aiText = it }
+        // 触发 AI 分析：首次进入自动分析；若已有缓存（同一股票再次进入）则直接展示缓存结果 + 时间
+        ctx.runAnalysis(stock, code, false)
         return {
             attr {
                 flexDirectionColumn()
@@ -171,16 +208,23 @@ internal class StockDetailPage : BasePager() {
                     }
                 }
 
-                // AI 分析卡片（Task01 验收点；此处为假数据，真接 LLM 留待后续）
+                // AI 分析卡片（Task01 验收点；首进自动分析，之后再进读缓存，可手动刷新）
                 vif({ ctx.modules.contains(DModule.AI) }) {
                     View {
                         attr { margin(12f); padding(12f); backgroundColor(Color.WHITE); borderRadius(12f) }
+                        // 头部：标题 + 分析时间 + 圆形重试按钮
                         View {
                             attr { flexDirectionRow(); alignItemsCenter() }
-                            View {
-                                attr { width(18f); height(18f); borderRadius(9f); backgroundColor(Color(0xFFE6F1FB)); marginRight(6f) }
-                            }
+                            View { attr { width(18f); height(18f); borderRadius(9f); backgroundColor(Color(0xFFE6F1FB)); marginRight(6f) } }
                             Text { attr { text("AI 智能分析"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                            View { attr { flex(1f) } }
+                            Text {
+                                attr {
+                                    text(if (ctx.aiLoading) "分析中…" else ctx.aiTimeText)
+                                    fontSize(12f); color(Color(0xFF999999)); marginRight(8f)
+                                }
+                            }
+                            KRRefreshButton({ ctx.aiLoading }) { ctx.reanalyze(stock, code) }
                         }
                         Text {
                             attr {
