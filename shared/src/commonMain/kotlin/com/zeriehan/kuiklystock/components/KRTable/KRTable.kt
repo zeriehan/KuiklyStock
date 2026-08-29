@@ -81,75 +81,81 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                         // 向上展开：展开块长在折叠行「上方」，底行展开也不会被底部 Tab 遮挡，
                         // 因此无需任何自动滚动 / 偏移计算（此前 postDelayed / layoutFrameDidChange 方案均失效）。
                         vif({ ctx.expandedIndex == index }) {
-                            // 横向轮播：Page1=走势迷你图+关键信息+详细；Page2=AI 分析（右滑切换）。
-                            // 两页各宽 = 页面宽度，整体可左右滑动；与详情页 AI 卡同源（同一 LLM 层）。
-                            val pageW = ctx.getPager().pageData.pageViewWidth
-                            Scroller {
-                                attr {
-                                    flexDirectionRow()
-                                }
-                                // ===== Page 1：走势 + 关键信息 + 详细 =====
-                                View {
+                            // 横向轮播区（固定高度，避免横滑 Scroller 在列容器里高度塌缩）：
+                            // Page1=迷你走势图；Page2=AI 智能分析，右滑在两者间切换；两页各宽=页面宽度。
+                            // 关键信息 + 「详细」按钮常驻在轮播下方（始终可见，无需翻页）。
+                            View {
+                                attr { flexDirectionColumn() }
+                                val pageW = ctx.getPager().pageData.pageViewWidth.let { if (it <= 0f) 360f else it }
+                                Scroller {
                                     attr {
-                                        width(pageW)
-                                        flexDirectionColumn()
-                                        padding(16f)
-                                        backgroundColor(Color(0xFFF7F8FA))
+                                        flexDirectionRow()
+                                        height(150f)
                                     }
-                                    // 迷你走势折线（自研 KRTrendChart，高 80f）
-                                    KRTrendChart {
-                                        points = stock.trend
-                                        color = if (stock.isUp) Color(0xFFE54D42) else Color(0xFF1ABE5B)
-                                    }
-                                    // 关键信息
+                                    // ===== Page 1：迷你走势图 + 右滑提示 =====
                                     View {
-                                        attr { flexDirectionRow(); marginTop(10f) }
-                                        Text { attr { text("最高 " + formatPrice(stock.high)); fontSize(13f); color(Color(0xFF666666)) } }
-                                        Text { attr { text("最低 " + formatPrice(stock.low)); fontSize(13f); color(Color(0xFF666666)); marginLeft(16f) } }
-                                        Text { attr { text("量 " + formatPrice(stock.volume) + "万"); fontSize(13f); color(Color(0xFF666666)); marginLeft(16f) } }
-                                    }
-                                    // 详细按钮
-                                    Button {
                                         attr {
-                                            size(96f, 36f)
-                                            marginTop(12f)
-                                            alignSelfFlexEnd()
-                                            borderRadius(18f)
-                                            backgroundColor(Color(0xFF23D3FD))
-                                            titleAttr { text("详细"); fontSize(14f); color(Color.WHITE) }
+                                            width(pageW)
+                                            height(150f)
+                                            flexDirectionColumn()
+                                            padding(16f)
+                                            backgroundColor(Color(0xFFF7F8FA))
                                         }
-                                        event { click { ctx.onDetailClick?.invoke(stock) } }
+                                        // 迷你走势折线（自研 KRTrendChart，高 80f）
+                                        KRTrendChart {
+                                            points = stock.trend
+                                            color = if (stock.isUp) Color(0xFFE54D42) else Color(0xFF1ABE5B)
+                                        }
+                                        Text {
+                                            attr {
+                                                text("〈 右滑查看 AI 分析")
+                                                fontSize(12f); color(Color(0xFF23D3FD))
+                                                marginTop(8f); alignSelfFlexEnd()
+                                            }
+                                        }
                                     }
-                                    // 右滑提示
-                                    Text {
+                                    // ===== Page 2：AI 智能分析（与详情页卡片同源）=====
+                                    View {
                                         attr {
-                                            text("〈 右滑查看 AI 分析")
-                                            fontSize(12f); color(Color(0xFF23D3FD))
-                                            marginTop(8f); alignSelfFlexEnd()
+                                            width(pageW)
+                                            height(150f)
+                                            flexDirectionColumn()
+                                            padding(16f)
+                                            backgroundColor(Color(0xFFF7F8FA))
+                                        }
+                                        View {
+                                            attr { flexDirectionRow(); alignItemsCenter() }
+                                            View { attr { width(18f); height(18f); borderRadius(9f); backgroundColor(Color(0xFFE6F1FB)); marginRight(6f) } }
+                                            Text { attr { text("AI 智能分析"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                                        }
+                                        val aiTxt = ctx.aiCache[index]
+                                        val aiBusy = ctx.aiLoading.contains(index)
+                                        Text {
+                                            attr {
+                                                text(if (aiBusy) "AI 分析中…" else (aiTxt ?: "AI 分析中…"))
+                                                fontSize(13f); color(Color(0xFF555555)); marginTop(8f)
+                                            }
                                         }
                                     }
                                 }
-                                // ===== Page 2：AI 智能分析（与详情页卡片同源）=====
+                                // ===== 常驻：关键信息 =====
                                 View {
+                                    attr { flexDirectionRow(); marginTop(10f); paddingLeft(16f); paddingRight(16f) }
+                                    Text { attr { text("最高 " + formatPrice(stock.high)); fontSize(13f); color(Color(0xFF666666)) } }
+                                    Text { attr { text("最低 " + formatPrice(stock.low)); fontSize(13f); color(Color(0xFF666666)); marginLeft(16f) } }
+                                    Text { attr { text("量 " + formatPrice(stock.volume) + "万"); fontSize(13f); color(Color(0xFF666666)); marginLeft(16f) } }
+                                }
+                                // 详细按钮
+                                Button {
                                     attr {
-                                        width(pageW)
-                                        flexDirectionColumn()
-                                        padding(16f)
-                                        backgroundColor(Color(0xFFF7F8FA))
+                                        size(96f, 36f)
+                                        marginTop(12f); marginRight(16f)
+                                        alignSelfFlexEnd()
+                                        borderRadius(18f)
+                                        backgroundColor(Color(0xFF23D3FD))
+                                        titleAttr { text("详细"); fontSize(14f); color(Color.WHITE) }
                                     }
-                                    View {
-                                        attr { flexDirectionRow(); alignItemsCenter() }
-                                        View { attr { width(18f); height(18f); borderRadius(9f); backgroundColor(Color(0xFFE6F1FB)); marginRight(6f) } }
-                                        Text { attr { text("AI 智能分析"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
-                                    }
-                                    val aiTxt = ctx.aiCache[index]
-                                    val aiBusy = ctx.aiLoading.contains(index)
-                                    Text {
-                                        attr {
-                                            text(if (aiBusy) "AI 分析中…" else (aiTxt ?: "AI 分析中…"))
-                                            fontSize(13f); color(Color(0xFF555555)); marginTop(8f)
-                                        }
-                                    }
+                                    event { click { ctx.onDetailClick?.invoke(stock) } }
                                 }
                             }
                         }
