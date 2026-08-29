@@ -21,6 +21,17 @@ data class Stock(
 }
 
 /**
+ * K线单根柱状数据（日/周/月/年）
+ */
+data class KLineBar(
+    val open: Float,    // 开盘价
+    val high: Float,    // 最高价
+    val low: Float,     // 最低价
+    val close: Float,   // 收盘价
+    val volume: Float,  // 成交量（相对值，仅用于高度占比）
+)
+
+/**
  * 涨红跌绿配色（中国股市惯例）
  */
 object StockColor {

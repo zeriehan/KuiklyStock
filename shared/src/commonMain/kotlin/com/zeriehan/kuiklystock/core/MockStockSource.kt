@@ -42,4 +42,34 @@ object MockStockSource {
         }
         return pts
     }
+
+    /** 按代码查找个股/指数；找不到回退到第一支 */
+    fun findByCode(code: String): Stock =
+        getQuotes().firstOrNull { it.code == code } ?: getQuotes().first()
+
+    /**
+     * 生成一根股票约 40 个交易日的 K线（确定性，便于演示）。
+     * 以当前价为基准随机游走，涨跌各半；成交量给相对值即可。
+     */
+    fun getKLine(stock: Stock): List<KLineBar> {
+        val n = 40
+        val bars = mutableListOf<KLineBar>()
+        var seed = (stock.code.filter { it.isDigit() }.sumOf { it.code } % 97 + 11)
+        fun rnd(): Float {
+            seed = ((seed.toLong() * 1103515245L + 12345L) % 2147483648L).toInt()
+            return seed / 2147483648f
+        }
+        var prevClose = stock.price * 0.98f
+        repeat(n) {
+            val open = prevClose
+            val drift = (rnd() - 0.5f) * stock.price * 0.03f
+            val close = (open + drift).coerceAtLeast(1f)
+            val high = maxOf(open, close) + rnd() * stock.price * 0.015f
+            val low = minOf(open, close) - rnd() * stock.price * 0.015f
+            val volume = 1f + rnd() * 5f
+            bars.add(KLineBar(open, high, low, close, volume))
+            prevClose = close
+        }
+        return bars
+    }
 }

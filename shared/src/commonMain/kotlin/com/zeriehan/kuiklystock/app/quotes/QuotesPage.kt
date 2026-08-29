@@ -3,6 +3,8 @@ package com.zeriehan.kuiklystock.app.quotes
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.module.RouterModule
+import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.views.*
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.bridgeModule
@@ -42,7 +44,9 @@ internal class QuotesPage : BasePager() {
                 stocks = MockStockSource.getQuotes()
                 onRowClick = { /* 展开/收起由 KRStockList 内部 expandedIndex 处理 */ }
                 onDetailClick = { stock ->
-                    ctx.bridgeModule.toast("查看 ${stock.name} 详情（待实现）")
+                    val data = JSONObject()
+                    data.put("stockCode", stock.code)
+                    ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", data)
                 }
             }
         }
