@@ -33,17 +33,30 @@ data class KLineBar(
 )
 
 /**
- * 由"距今天数"推算 MM-DD 标签（演示用，仅处理 7/8 月边界）
+ * 由"距今天数"推算 MM-DD 标签（演示用，按真实月长回退，基准日 2026-08-29）。
+ * 说明：这是 mock 演示标签，并非真实交易日历，仅用于 X 轴可读性，不影响任何逻辑。
  */
 fun dateLabel(daysAgo: Int): String {
     var m = 8
     var d = 29
     repeat(daysAgo) {
         d -= 1
-        if (d <= 0) { m -= 1; d = 31 } // 7月、8月均为31天
+        if (d <= 0) {
+            m -= 1
+            if (m <= 0) { m = 12 } // 跨年回到 12 月（演示范围不会触发，留作健壮性）
+            d = daysInMonth(m)
+        }
     }
     val pad2 = { v: Int -> if (v < 10) "0$v" else v.toString() }
     return "${pad2(m)}-${pad2(d)}"
+}
+
+/** 指定月份天数（2 月按平年 28 天，演示足够） */
+private fun daysInMonth(m: Int): Int = when (m) {
+    1, 3, 5, 7, 8, 10, 12 -> 31
+    4, 6, 9, 11 -> 30
+    2 -> 28
+    else -> 30
 }
 
 /**

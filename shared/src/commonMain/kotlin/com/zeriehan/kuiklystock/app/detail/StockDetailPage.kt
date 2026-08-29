@@ -18,6 +18,7 @@ import com.zeriehan.kuiklystock.core.MockStockSource
 import com.zeriehan.kuiklystock.core.StockColor
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
+import com.zeriehan.kuiklystock.core.llm.LLM
 import com.zeriehan.kuiklystock.components.KRKLineChart.KRKLineChart
 
 /**
@@ -46,11 +47,15 @@ internal class StockDetailPage : BasePager() {
     private var selectedPeriod: Int by observable(0)
     /** K线图引用，用于切换周期时刷新数据（ref 返回 ViewRef，取 .view 拿实例） */
     private var chartRef: ViewRef<KRKLineChart>? = null
+    /** AI 分析文本（详情页 AI 卡由 LLM 层生成） */
+    private var aiText: String by observable("")
 
     override fun body(): ViewBuilder {
         val ctx = this
         val code = pageData.params.optString("stockCode")
         val stock = MockStockSource.findByCode(code)
+        // 触发 AI 分析（Mock 同步返回，真实 GLM-4-Flash 异步回填；卡片 Text 随 aiText 响应式刷新）
+        LLM.client.analyze(stock, MockStockSource.getKLine(stock, "日")) { ctx.aiText = it }
         return {
             attr {
                 flexDirectionColumn()
@@ -179,7 +184,7 @@ internal class StockDetailPage : BasePager() {
                         }
                         Text {
                             attr {
-                                text("基于近期量价与资金面，${stock.name} 处于震荡上行通道，短期受板块情绪带动明显；建议结合仓位控制，关注下方支撑位的有效性。")
+                                text(if (ctx.aiText.isEmpty()) "AI 分析中…" else ctx.aiText)
                                 fontSize(13f); color(Color(0xFF555555)); marginTop(8f)
                             }
                         }
