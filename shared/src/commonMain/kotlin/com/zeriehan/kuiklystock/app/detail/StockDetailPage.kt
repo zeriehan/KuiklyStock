@@ -130,6 +130,7 @@ internal class StockDetailPage : BasePager() {
                             }
                         }
                     }
+                    // 图表区（横向滚动 K线；"成交量"标签在画布内绘制）
                     KRKLineChart {
                         ref { ctx.chartRef = it }
                         attr { marginTop(8f) }
@@ -137,14 +138,14 @@ internal class StockDetailPage : BasePager() {
                     }
                 }
 
-                // 模块芯片（点击增删模块；on 状态在 attr/event 闭包内读取，保证响应式刷新）
-                View {
-                    attr { flexDirectionRow(); padding(12f); alignItemsCenter() }
+                // 模块芯片（横向可滑动；点击增删模块，on 状态在 attr/event 闭包内读取）
+                Scroller {
+                    attr { flexDirectionRow(); height(52f); padding(12f); alignItemsCenter() }
                     ctx.moduleLabels.forEach { (m, label) ->
                         View {
                             attr {
                                 paddingLeft(12f); paddingRight(12f); height(28f); borderRadius(14f)
-                                marginRight(8f); marginTop(8f); justifyContentCenter(); alignItemsCenter()
+                                marginRight(8f); justifyContentCenter(); alignItemsCenter()
                                 val on = ctx.modules.contains(m)
                                 backgroundColor(if (on) Color(0xFF23D3FD) else Color.WHITE)
                                 border(if (on) Border(0f, BorderStyle.SOLID, Color(0)) else Border(1f, BorderStyle.SOLID, Color(0xFFDDDDDD)))

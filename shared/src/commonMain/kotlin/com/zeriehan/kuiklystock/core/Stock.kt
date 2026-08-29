@@ -29,7 +29,22 @@ data class KLineBar(
     val low: Float,     // 最低价
     val close: Float,   // 收盘价
     val volume: Float,  // 成交量（相对值，仅用于高度占比）
+    val date: String = "" // 日期标签（如 "08-29"），用于 X 轴
 )
+
+/**
+ * 由"距今天数"推算 MM-DD 标签（演示用，仅处理 7/8 月边界）
+ */
+fun dateLabel(daysAgo: Int): String {
+    var m = 8
+    var d = 29
+    repeat(daysAgo) {
+        d -= 1
+        if (d <= 0) { m -= 1; d = 31 } // 7月、8月均为31天
+    }
+    val pad2 = { v: Int -> if (v < 10) "0$v" else v.toString() }
+    return "${pad2(m)}-${pad2(d)}"
+}
 
 /**
  * 涨红跌绿配色（中国股市惯例）

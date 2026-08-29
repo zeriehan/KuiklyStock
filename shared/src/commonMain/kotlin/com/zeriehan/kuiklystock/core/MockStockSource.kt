@@ -74,7 +74,7 @@ object MockStockSource {
             val high = maxOf(open, close) + rnd() * stock.price * vol * 0.5f
             val low = minOf(open, close) - rnd() * stock.price * vol * 0.5f
             val volume = 1f + rnd() * 5f
-            bars.add(KLineBar(open, high, low, close, volume))
+            bars.add(KLineBar(open, high, low, close, volume, dateLabel(n - 1 - it)))
             prevClose = close
         }
         return bars
