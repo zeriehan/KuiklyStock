@@ -3,6 +3,7 @@ package com.zeriehan.kuiklystock.app.detail
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.reactive.handler.observable
@@ -40,11 +41,16 @@ internal class StockDetailPage : BasePager() {
         listOf(DModule.AI, DModule.PROFILE, DModule.FINANCE)
     )
 
+    /** K线周期：0=日 1=周 2=月 3=年 */
+    private val periods = listOf("日", "周", "月", "年")
+    private var selectedPeriod: Int by observable(0)
+    /** K线图引用，用于切换周期时刷新数据（ref 返回 ViewRef，取 .view 拿实例） */
+    private var chartRef: ViewRef<KRKLineChart>? = null
+
     override fun body(): ViewBuilder {
         val ctx = this
         val code = pageData.params.optString("stockCode")
         val stock = MockStockSource.findByCode(code)
-        val kline = MockStockSource.getKLine(stock)
         return {
             attr {
                 flexDirectionColumn()
@@ -75,9 +81,9 @@ internal class StockDetailPage : BasePager() {
             Scroller {
                 attr { flex(1f); flexDirectionColumn() }
 
-                // 实时价
+                // 实时价（价格与涨跌幅同处一行）
                 View {
-                    attr { flexDirectionColumn(); padding(16f); backgroundColor(Color.WHITE) }
+                    attr { flexDirectionRow(); alignItemsCenter(); padding(16f); backgroundColor(Color.WHITE) }
                     Text {
                         attr {
                             text(formatPrice(stock.price))
@@ -91,7 +97,7 @@ internal class StockDetailPage : BasePager() {
                             text(formatPrice(stock.change) + "  " + formatPercent(stock.changePercent))
                             fontSize(14f)
                             color(StockColor.of(stock.changePercent))
-                            marginTop(4f)
+                            marginLeft(10f)
                         }
                     }
                 }
@@ -100,38 +106,56 @@ internal class StockDetailPage : BasePager() {
                 View {
                     attr { margin(12f); padding(12f); backgroundColor(Color.WHITE); borderRadius(12f) }
                     Text { attr { text("K线"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
-                    // 周期切换（静态，日选中）
+                    // 周期切换（日/周/月/年 可点击；高亮随 selectedPeriod 响应式刷新，图表数据同步切换）
                     View {
                         attr { flexDirectionRow(); marginTop(8f) }
-                        listOf("日", "周", "月", "年").forEachIndexed { i, t ->
-                            Text {
+                        ctx.periods.forEachIndexed { i, t ->
+                            View {
                                 attr {
-                                    text(t)
-                                    fontSize(13f)
-                                    color(if (i == 0) Color(0xFF23D3FD) else Color(0xFF999999))
-                                    marginRight(16f)
+                                    paddingLeft(10f); paddingRight(10f); height(24f); borderRadius(12f)
+                                    marginRight(8f); justifyContentCenter(); alignItemsCenter()
+                                    backgroundColor(if (ctx.selectedPeriod == i) Color(0xFF23D3FD) else Color(0xFFF2F3F5))
+                                }
+                                event { click {
+                                    ctx.selectedPeriod = i
+                                    ctx.chartRef?.view?.let { it.bars = MockStockSource.getKLine(stock, t) }
+                                } }
+                                Text {
+                                    attr {
+                                        text(t)
+                                        fontSize(13f)
+                                        color(if (ctx.selectedPeriod == i) Color.WHITE else Color(0xFF666666))
+                                    }
                                 }
                             }
                         }
                     }
-                    KRKLineChart { attr { marginTop(8f) }; bars = kline }
+                    KRKLineChart {
+                        ref { ctx.chartRef = it }
+                        attr { marginTop(8f) }
+                        bars = MockStockSource.getKLine(stock, "日")
+                    }
                 }
 
-                // 模块芯片（点击增删模块）
+                // 模块芯片（点击增删模块；on 状态在 attr/event 闭包内读取，保证响应式刷新）
                 View {
                     attr { flexDirectionRow(); padding(12f); alignItemsCenter() }
                     ctx.moduleLabels.forEach { (m, label) ->
-                        val on = ctx.modules.contains(m)
                         View {
                             attr {
                                 paddingLeft(12f); paddingRight(12f); height(28f); borderRadius(14f)
-                                backgroundColor(if (on) Color(0xFF23D3FD) else Color.WHITE)
                                 marginRight(8f); marginTop(8f); justifyContentCenter(); alignItemsCenter()
+                                val on = ctx.modules.contains(m)
+                                backgroundColor(if (on) Color(0xFF23D3FD) else Color.WHITE)
                                 border(if (on) Border(0f, BorderStyle.SOLID, Color(0)) else Border(1f, BorderStyle.SOLID, Color(0xFFDDDDDD)))
                             }
-                            event { click { ctx.modules = if (on) ctx.modules - m else ctx.modules + m } }
+                            event { click {
+                                val on = ctx.modules.contains(m)
+                                ctx.modules = if (on) ctx.modules - m else ctx.modules + m
+                            } }
                             Text {
                                 attr {
+                                    val on = ctx.modules.contains(m)
                                     text(label + if (on) " ✓" else "")
                                     fontSize(12f)
                                     color(if (on) Color.WHITE else Color(0xFF666666))

@@ -48,24 +48,31 @@ object MockStockSource {
         getQuotes().firstOrNull { it.code == code } ?: getQuotes().first()
 
     /**
-     * 生成一根股票约 40 个交易日的 K线（确定性，便于演示）。
+     * 生成一根股票的 K线（确定性，便于演示）。
      * 以当前价为基准随机游走，涨跌各半；成交量给相对值即可。
+     * @param period 周期："日"/"周"/"月"/"年"，不同周期返回不同根数/波动，切换时可见变化。
      */
-    fun getKLine(stock: Stock): List<KLineBar> {
-        val n = 40
+    fun getKLine(stock: Stock, period: String = "日"): List<KLineBar> {
+        // 不同周期：根数、单根波动、起始价位不同，肉眼可见切换差异
+        val (n, vol, startFactor) = when (period) {
+            "周" -> Triple(30, 0.05f, 0.92f)
+            "月" -> Triple(24, 0.09f, 0.85f)
+            "年" -> Triple(12, 0.14f, 0.75f)
+            else -> Triple(40, 0.03f, 0.98f) // 日
+        }
         val bars = mutableListOf<KLineBar>()
-        var seed = (stock.code.filter { it.isDigit() }.sumOf { it.code } % 97 + 11)
+        var seed = (stock.code.filter { it.isDigit() }.sumOf { it.code } % 97 + 11) + period.length * 7
         fun rnd(): Float {
             seed = ((seed.toLong() * 1103515245L + 12345L) % 2147483648L).toInt()
             return seed / 2147483648f
         }
-        var prevClose = stock.price * 0.98f
+        var prevClose = stock.price * startFactor
         repeat(n) {
             val open = prevClose
-            val drift = (rnd() - 0.5f) * stock.price * 0.03f
+            val drift = (rnd() - 0.5f) * stock.price * vol
             val close = (open + drift).coerceAtLeast(1f)
-            val high = maxOf(open, close) + rnd() * stock.price * 0.015f
-            val low = minOf(open, close) - rnd() * stock.price * 0.015f
+            val high = maxOf(open, close) + rnd() * stock.price * vol * 0.5f
+            val low = minOf(open, close) - rnd() * stock.price * vol * 0.5f
             val volume = 1f + rnd() * 5f
             bars.add(KLineBar(open, high, low, close, volume))
             prevClose = close

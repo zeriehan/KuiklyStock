@@ -52,6 +52,18 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
                 val cw = (slot * 0.6f).coerceAtLeast(1f)
                 val maxVol = bars.maxOf { it.volume }.coerceAtLeast(0.01f)
 
+                // 分界线：K线区与成交量区之间
+                c.beginPath()
+                c.moveTo(pad, volTop)
+                c.lineTo(w - pad, volTop)
+                c.strokeStyle(Color(0xFFEEEEEE))
+                c.lineWidth(1f)
+                c.stroke()
+
+                // 成交量区左上角标签
+                c.fillStyle(Color(0xFF999999))
+                c.fillText("成交量", pad + 2f, volTop - 4f)
+
                 bars.forEachIndexed { i, bar ->
                     val cx = i * slot + slot / 2f
                     val color = if (bar.close >= bar.open) StockColor.UP else StockColor.DOWN
