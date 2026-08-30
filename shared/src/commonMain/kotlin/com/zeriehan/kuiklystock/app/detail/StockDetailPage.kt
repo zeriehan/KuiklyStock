@@ -46,9 +46,13 @@ internal class StockDetailPage : BasePager() {
         listOf(DModule.AI, DModule.PROFILE, DModule.FINANCE)
     )
 
-    /** K线周期：0=日 1=周 2=月 3=年 */
-    private val periods = listOf("日", "周", "月", "年")
+    /** K线周期：0=分时 1=日 2=周 3=月 4=年（默认分时，展示新能力） */
+    private val periods = listOf("分时", "日", "周", "月", "年")
     private var selectedPeriod: Int by observable(0)
+    /** K线已加载根数（加载更多历史时递增，保证随机游走首尾连续） */
+    private var klineCount: Int by observable(60)
+    /** 当前指标：主图 / MACD / RSI / BOLL */
+    private var selectedIndicator: Int by observable(KRKLineChart.IND_NONE)
     /** K线图引用，用于切换周期时刷新数据（ref 返回 ViewRef，取 .view 拿实例） */
     private var chartRef: ViewRef<KRKLineChart>? = null
     /** AI 分析文本（详情页 AI 卡由 LLM 层生成） */
@@ -85,6 +89,33 @@ internal class StockDetailPage : BasePager() {
     /** 用户点击圆形「重试」按钮时触发：强制重新分析 */
     private fun reanalyze(stock: Stock, code: String) {
         runAnalysis(stock, code, force = true)
+    }
+
+    /** 按周期切换 K线图数据 / 分时数据，并同步当前指标与十字光标清理 */
+    private fun applyPeriod(stock: Stock, i: Int) {
+        chartRef?.view?.let { chart ->
+            chart.clearCrosshair()
+            if (i == 0) {
+                // 分时模式：下发分时数据 + 昨收基准，清空 K线，指标置空
+                chart.bars = emptyList()
+                chart.timeSharing = MockStockSource.getIntraday(stock)
+                chart.refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
+                chart.indicator = KRKLineChart.IND_NONE
+            } else {
+                // K线模式：下发对应周期（含已加载历史根数），清空分时，恢复所选指标
+                chart.timeSharing = emptyList()
+                chart.bars = MockStockSource.getKLine(stock, periods[i], klineCount)
+                chart.indicator = selectedIndicator
+            }
+        }
+    }
+
+    /** 设置指标（主图 / MACD / RSI / BOLL），仅 K线模式生效 */
+    private fun applyIndicator(stock: Stock, ind: Int) {
+        selectedIndicator = ind
+        if (selectedPeriod != 0) {
+            chartRef?.view?.let { it.indicator = ind }
+        }
     }
 
     override fun body(): ViewBuilder {
@@ -148,7 +179,7 @@ internal class StockDetailPage : BasePager() {
                 View {
                     attr { margin(12f); padding(12f); backgroundColor(Color.WHITE); borderRadius(12f) }
                     Text { attr { text("K线"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
-                    // 周期切换（日/周/月/年 可点击；高亮随 selectedPeriod 响应式刷新，图表数据同步切换）
+                    // 周期切换（分时/日/周/月/年 可点击；高亮随 selectedPeriod 响应式刷新，图表数据同步切换）
                     View {
                         attr { flexDirectionRow(); marginTop(8f) }
                         ctx.periods.forEachIndexed { i, t ->
@@ -160,7 +191,7 @@ internal class StockDetailPage : BasePager() {
                                 }
                                 event { click {
                                     ctx.selectedPeriod = i
-                                    ctx.chartRef?.view?.let { it.bars = MockStockSource.getKLine(stock, t) }
+                                    ctx.applyPeriod(stock, i)
                                 } }
                                 Text {
                                     attr {
@@ -172,11 +203,49 @@ internal class StockDetailPage : BasePager() {
                             }
                         }
                     }
-                    // 图表区（横向滚动 K线；"成交量"标签在画布内绘制）
+                    // 指标切换（仅 K线模式可用：主图 / MACD / RSI / BOLL）
+                    vif({ ctx.selectedPeriod != 0 }) {
+                        View {
+                            attr { flexDirectionRow(); marginTop(8f) }
+                            val inds = listOf(
+                                KRKLineChart.IND_NONE to "主图",
+                                KRKLineChart.IND_MACD to "MACD",
+                                KRKLineChart.IND_RSI to "RSI",
+                                KRKLineChart.IND_BOLL to "BOLL",
+                            )
+                            inds.forEach { (ind, label) ->
+                                View {
+                                    attr {
+                                        paddingLeft(10f); paddingRight(10f); height(24f); borderRadius(12f)
+                                        marginRight(8f); justifyContentCenter(); alignItemsCenter()
+                                        backgroundColor(if (ctx.selectedIndicator == ind) Color(0xFF23D3FD) else Color(0xFFF2F3F5))
+                                    }
+                                    event { click { ctx.applyIndicator(stock, ind) } }
+                                    Text {
+                                        attr {
+                                            text(label)
+                                            fontSize(13f)
+                                            color(if (ctx.selectedIndicator == ind) Color.WHITE else Color(0xFF666666))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // 图表区（横向滚动；分时 / K线 自适配；触摸拖动十字光标、双指缩放、滚到最左加载更多）
                     KRKLineChart {
                         ref { ctx.chartRef = it }
                         attr { marginTop(8f) }
-                        bars = MockStockSource.getKLine(stock, "日")
+                        timeSharing = MockStockSource.getIntraday(stock)
+                        refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
+                        onLoadMore = {
+                            ctx.klineCount += 40
+                            if (ctx.selectedPeriod != 0) {
+                                ctx.chartRef?.view?.let { ch ->
+                                    ch.bars = MockStockSource.getKLine(stock, ctx.periods[ctx.selectedPeriod], ctx.klineCount)
+                                }
+                            }
+                        }
                     }
                 }
 

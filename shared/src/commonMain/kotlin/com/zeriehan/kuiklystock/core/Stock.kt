@@ -1,6 +1,7 @@
 package com.zeriehan.kuiklystock.core
 
 import com.tencent.kuikly.core.base.Color
+import kotlin.math.sqrt
 
 /**
  * 股票基础数据模型
@@ -36,25 +37,26 @@ data class KLineBar(
  * 由"距今天数"推算 MM-DD 标签（演示用，按真实月长回退，基准日 2026-08-29）。
  * 说明：这是 mock 演示标签，并非真实交易日历，仅用于 X 轴可读性，不影响任何逻辑。
  */
-/** 两位补零 */
-private fun pad2(v: Int): String = if (v < 10) "0$v" else v.toString()
+/** 两位补零（internal，供 MockStockSource 复用生成时分标签） */
+internal fun pad2(v: Int): String = if (v < 10) "0$v" else v.toString()
 
 /**
  * 由"距今天数"推算 MM-DD 标签（演示用，按真实月长回退，基准日 2026-08-29）。
  * 说明：这是 mock 演示标签，并非真实交易日历，仅用于 X 轴可读性，不影响任何逻辑。
  */
 fun dateLabel(daysAgo: Int): String {
+    var y = 2026
     var m = 8
     var d = 29
     repeat(daysAgo) {
         d -= 1
         if (d <= 0) {
             m -= 1
-            if (m <= 0) { m = 12 } // 跨年回到 12 月（演示范围不会触发，留作健壮性）
+            if (m <= 0) { m = 12; y -= 1 } // 跨年回到 12 月并年份递减
             d = daysInMonth(m)
         }
     }
-    return "${pad2(m)}-${pad2(d)}"
+    return "$y.${pad2(m)}.${pad2(d)}"
 }
 
 /**
@@ -66,15 +68,16 @@ fun klineDateLabel(period: String, offsetFromNewest: Int): String {
     return when (period) {
         "年" -> {
             val y = 2026 - offsetFromNewest
-            "${y}年"
+            "$y.01.01"   // 统一点分格式（该年首日）
         }
         "月" -> {
+            var y = 2026
             var m = 8 - offsetFromNewest
-            while (m <= 0) { m += 12 } // 回退跨年（仅演示，不显示年份前缀以保持紧凑）
-            "${pad2(m)}月"
+            while (m <= 0) { m += 12; y -= 1 } // 回退跨年并年份递减
+            "$y.${pad2(m)}"
         }
-        "周" -> dateLabel(offsetFromNewest * 7) // 按周步进（7 天）
-        else -> dateLabel(offsetFromNewest)      // 日：按天步进
+        "周" -> dateLabel(offsetFromNewest * 7) // 按周步进（7 天），已带年份点分
+        else -> dateLabel(offsetFromNewest)      // 日：按天步进，已带年份点分
     }
 }
 
@@ -84,6 +87,125 @@ private fun daysInMonth(m: Int): Int = when (m) {
     4, 6, 9, 11 -> 30
     2 -> 28
     else -> 30
+}
+
+/**
+ * 分时图单个采样点
+ * @param time  时间标签，如 "09:30" / "13:00"（A股交易日 09:30-15:00，午间休市）
+ * @param price 当时价格（白/蓝线）
+ * @param avg   均价（黄线，分时图经典参照）
+ */
+data class TimeSharingPoint(
+    val time: String,
+    val price: Float,
+    val avg: Float,
+)
+
+/**
+ * 计算移动平均序列（与输入等长，前 period-1 个为 null）。
+ * 用于 K线 MA5/MA10/MA20 叠线。
+ * @param closes 收盘价序列
+ * @param period 均线周期
+ */
+fun computeMA(closes: List<Float>, period: Int): List<Float?> {
+    val out = MutableList<Float?>(closes.size) { null }
+    if (period <= 1) {
+        closes.forEachIndexed { i, v -> out[i] = v }
+        return out
+    }
+    var sum = 0f
+    for (i in closes.indices) {
+        sum += closes[i]
+        if (i >= period) sum -= closes[i - period]
+        if (i >= period - 1) out[i] = sum / period
+    }
+    return out
+}
+
+/** 指数移动平均（EMA）。前 period-1 个为 null。 */
+fun computeEMA(values: List<Float>, period: Int): List<Float?> {
+    val out = MutableList<Float?>(values.size) { null }
+    if (values.isEmpty() || period <= 0) return out
+    val k = 2f / (period + 1)
+    var ema = values[0]
+    out[0] = ema
+    for (i in 1 until values.size) {
+        ema = values[i] * k + ema * (1f - k)
+        out[i] = ema
+    }
+    return out
+}
+
+/** MACD：DIF=EMA12-EMA26，DEA=EMA9(DIF)，柱=(DIF-DEA)*2 */
+data class MacdResult(
+    val dif: List<Float?>,
+    val dea: List<Float?>,
+    val hist: List<Float?>,
+)
+
+fun computeMACD(closes: List<Float>): MacdResult {
+    val e12 = computeEMA(closes, 12)
+    val e26 = computeEMA(closes, 26)
+    val dif = List(closes.size) { i ->
+        val a = e12[i]; val b = e26[i]
+        if (a != null && b != null) a - b else null
+    }
+    val difFilled = dif.map { it ?: 0f }
+    val dea = computeEMA(difFilled, 9)
+    val hist = List(closes.size) { i ->
+        val a = dif[i]; val b = dea[i]
+        if (a != null && b != null) (a - b) * 2f else null
+    }
+    return MacdResult(dif, dea, hist)
+}
+
+/** RSI（Wilder 平滑，默认 14 周期）。前 period 个为 null。 */
+fun computeRSI(closes: List<Float>, period: Int = 14): List<Float?> {
+    val n = closes.size
+    val out = MutableList<Float?>(n) { null }
+    if (n < period + 1) return out
+    var gain = 0f
+    var loss = 0f
+    for (i in 1..period) {
+        val d = closes[i] - closes[i - 1]
+        if (d >= 0f) gain += d else loss -= d
+    }
+    var avgGain = gain / period
+    var avgLoss = loss / period
+    out[period] = if (avgLoss == 0f) 100f else 100f - 100f / (1f + avgGain / avgLoss)
+    for (i in period + 1 until n) {
+        val d = closes[i] - closes[i - 1]
+        val g = if (d >= 0f) d else 0f
+        val l = if (d < 0f) -d else 0f
+        avgGain = (avgGain * (period - 1) + g) / period
+        avgLoss = (avgLoss * (period - 1) + l) / period
+        out[i] = if (avgLoss == 0f) 100f else 100f - 100f / (1f + avgGain / avgLoss)
+    }
+    return out
+}
+
+/** BOLL：中轨=MA(period)，上/下轨=中轨±k*标准差 */
+data class BollResult(
+    val mid: List<Float?>,
+    val upper: List<Float?>,
+    val lower: List<Float?>,
+)
+
+fun computeBOLL(closes: List<Float>, period: Int = 20, k: Int = 2): BollResult {
+    val n = closes.size
+    val mid = computeMA(closes, period)
+    val upper = MutableList<Float?>(n) { null }
+    val lower = MutableList<Float?>(n) { null }
+    for (i in period - 1 until n) {
+        val window = closes.subList(i - period + 1, i + 1)
+        val m = window.average().toFloat()
+        var v = 0f
+        for (x in window) v += (x - m) * (x - m)
+        val sd = sqrt(v / window.size)
+        upper[i] = m + k * sd
+        lower[i] = m - k * sd
+    }
+    return BollResult(mid, upper, lower)
 }
 
 /**

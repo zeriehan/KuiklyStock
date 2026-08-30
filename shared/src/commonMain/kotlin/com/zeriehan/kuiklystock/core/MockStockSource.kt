@@ -51,15 +51,17 @@ object MockStockSource {
      * 生成一根股票的 K线（确定性，便于演示）。
      * 以当前价为基准随机游走，涨跌各半；成交量给相对值即可。
      * @param period 周期："日"/"周"/"月"/"年"，不同周期返回不同根数/波动，切换时可见变化。
+     * @param count  根数；用于"加载更多历史"时增量增长（随机游走按索引确定，故首尾天然连续）。
      */
-    fun getKLine(stock: Stock, period: String = "日"): List<KLineBar> {
-        // 不同周期：根数、单根波动、起始价位不同，肉眼可见切换差异
-        val (n, vol, startFactor) = when (period) {
-            "周" -> Triple(30, 0.05f, 0.92f)
-            "月" -> Triple(24, 0.09f, 0.85f)
-            "年" -> Triple(12, 0.14f, 0.75f)
-            else -> Triple(40, 0.03f, 0.98f) // 日
+    fun getKLine(stock: Stock, period: String = "日", count: Int = 40): List<KLineBar> {
+        // 不同周期：单根波动、起始价位不同，肉眼可见切换差异；根数由 count 决定
+        val (vol, startFactor) = when (period) {
+            "周" -> Pair(0.05f, 0.92f)
+            "月" -> Pair(0.09f, 0.85f)
+            "年" -> Pair(0.14f, 0.75f)
+            else -> Pair(0.03f, 0.98f) // 日
         }
+        val n = count
         val bars = mutableListOf<KLineBar>()
         var seed = (stock.code.filter { it.isDigit() }.sumOf { it.code } % 97 + 11) + period.length * 7
         fun rnd(): Float {
@@ -78,5 +80,37 @@ object MockStockSource {
             prevClose = close
         }
         return bars
+    }
+
+    /**
+     * 生成分时图采样点（A股交易日 09:30-15:00，午间休市，49 点 ≈ 每 5 分钟）。
+     * 价格围绕"昨收"随机游走，同时给出逐步均价（黄线）；用于详情页分时模式。
+     * 昨收 = 最新价 - 涨跌额，作为基准虚线。
+     */
+    fun getIntraday(stock: Stock): List<TimeSharingPoint> {
+        val ref = (stock.price - stock.change).coerceAtLeast(0.01f)
+        val n = 49
+        val pts = mutableListOf<TimeSharingPoint>()
+        var seed = (stock.code.filter { it.isDigit() }.sumOf { it.code } % 131 + 17)
+        fun rnd(): Float {
+            seed = ((seed.toLong() * 1103515245L + 12345L) % 2147483648L).toInt()
+            return seed / 2147483648f
+        }
+        var price = ref
+        var sum = 0f
+        repeat(n) { i ->
+            val drift = (rnd() - 0.47f) * stock.price * 0.010f
+            price = (price + drift).coerceAtLeast(0.01f)
+            sum += price
+            val avg = sum / (i + 1)
+            // 时间标签：09:30 起，每 5 分钟一点；午休 11:30-13:00（+90 分钟跳过）
+            val totalMin = i * 5
+            val m = if (totalMin >= 120) totalMin + 90 else totalMin
+            val clock = 9 * 60 + 30 + m
+            val hh = clock / 60
+            val mm = clock % 60
+            pts.add(TimeSharingPoint("${pad2(hh)}:${pad2(mm)}", price, avg))
+        }
+        return pts
     }
 }
