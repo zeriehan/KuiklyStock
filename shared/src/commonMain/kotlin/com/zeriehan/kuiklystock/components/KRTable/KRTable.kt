@@ -19,6 +19,7 @@ import com.zeriehan.kuiklystock.core.MockStockSource
 import com.zeriehan.kuiklystock.base.Utils
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.llm.LLM
+import com.zeriehan.kuiklystock.core.llm.AIAnalysisStore
 import com.zeriehan.kuiklystock.components.KRRefreshButton.KRRefreshButton
 
 /** 折叠行固定高度：KRStockList 折叠行 attr 的 height 需与此保持一致 */
@@ -41,22 +42,21 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
     var onDetailClick: ((Stock) -> Unit)? = null
     var onRowClick: ((Stock) -> Unit)? = null
     private var expandedIndex: Int by observable(-1)
-    /** 行情行右滑 AI 分析：按行缓存分析结果（key=行index） */
-    private var aiCache: Map<Int, String> by observable(emptyMap())
-    /** 行情行右滑 AI 分析时间文案（key=行index），与 aiCache 一一对应 */
-    private var aiTimeCache: Map<Int, String> by observable(emptyMap())
-    private var aiLoading: Set<Int> by observable(emptySet())
+    /** 行情行右滑 AI 分析：加载中集合（key=股票代码）。
+     *  分析结果与时间统一写入共享 [AIAnalysisStore]（详情页也读同一份），保证两边内容一模一样。 */
+    private var aiLoadingCodes: Set<String> by observable(emptySet())
 
-    /** 展开某行时按需拉取 AI 分析（首次自动；force=true 用于「重试」按钮强制刷新） */
+    /** 展开某行时按需拉取 AI 分析（首次自动；force=true 用于「重试」按钮强制刷新）。
+     *  结果写入共享 [AIAnalysisStore]（key=股票代码），与详情页读取同一份，确保内容完全一致。 */
     private fun loadAI(index: Int, stock: Stock, force: Boolean = false) {
-        if (!force && (aiCache.containsKey(index) || aiLoading.contains(index))) return
-        aiLoading = aiLoading + index
+        val code = stock.code
+        if (!force && (AIAnalysisStore.get(code) != null || aiLoadingCodes.contains(code))) return
+        aiLoadingCodes = aiLoadingCodes + code
         LLM.client.analyze(stock, MockStockSource.getKLine(stock, "日")) { result ->
             val ts = Utils.currentBridgeModule().currentTimeStamp()
             val tText = if (ts > 0) Utils.currentBridgeModule().dateFormatter(ts, "MM-dd HH:mm") else ""
-            aiCache = aiCache + (index to result)
-            aiTimeCache = aiTimeCache + (index to tText)
-            aiLoading = aiLoading - index
+            AIAnalysisStore.put(code, result, tText)
+            aiLoadingCodes = aiLoadingCodes - code
         }
     }
 
@@ -121,7 +121,7 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                             }
                                         }
                                     }
-                                    // ===== Page 2：AI 智能分析（与详情页卡片同源）=====
+                                    // ===== Page 2：AI 智能分析（引用共享 AIAnalysisStore，与详情页完全一致）=====
                                     View {
                                         attr {
                                             width(pageW)
@@ -137,20 +137,20 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                             View { attr { flex(1f) } }
                                             Text {
                                                 attr {
-                                                    val busy = ctx.aiLoading.contains(index)
-                                                    val t = ctx.aiTimeCache[index] ?: ""
+                                                    val busy = ctx.aiLoadingCodes.contains(stock.code)
+                                                    val t = AIAnalysisStore.get(stock.code)?.timeText ?: ""
                                                     text(if (busy) "分析中…" else t)
                                                     fontSize(12f); color(Color(0xFF999999)); marginRight(8f)
                                                 }
                                             }
-                                            KRRefreshButton({ ctx.aiLoading.contains(index) }) { ctx.loadAI(index, stock, force = true) }
+                                            KRRefreshButton({ ctx.aiLoadingCodes.contains(stock.code) }) { ctx.loadAI(index, stock, force = true) }
                                         }
-                                        // ⚠️ 必须在 attr 闭包内直接读取 observable（aiCache/aiLoading），
+                                        // ⚠️ 必须在 attr 闭包内直接读取 observable（aiLoadingCodes 与 AIAnalysisStore），
                                         // 否则只在 vif 挂载时捕获一次旧值，AI 回调回填后不会重渲染（卡在"分析中"）。
                                         Text {
                                             attr {
-                                                val cached = ctx.aiCache[index]
-                                                val busy = ctx.aiLoading.contains(index)
+                                                val busy = ctx.aiLoadingCodes.contains(stock.code)
+                                                val cached = AIAnalysisStore.get(stock.code)?.text
                                                 text(if (busy) "AI 分析中…" else (cached ?: "AI 分析中…"))
                                                 fontSize(13f); color(Color(0xFF555555)); marginTop(8f)
                                             }
