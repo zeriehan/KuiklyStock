@@ -44,11 +44,15 @@ internal class MainTabPager : BasePager() {
     private var selectedTab: Int by observable(1)
 
     // ===== 持久化镜像（响应式）=====
-    private var watchlistCodes: Set<String> by observable(emptySet())
+    internal var watchlistCodes: Set<String> by observable(emptySet())
     private var hiddenMap: Map<String, Long> by observable(emptyMap())
     private var hideDays: Int by observable(7)
-    /** 强制重渲染计数：标签/隐藏/设置变更后 +1，body 据此刷新列表（helper 内读 observable 不可靠） */
-    private var dataVersion: Int by observable(0)
+    /** 强制重渲染计数：标签/隐藏/设置变更后 +1（辅助用，真正触发列表重建靠下方 vif 翻转） */
+    internal var dataVersion: Int by observable(0)
+    /** vif 翻转触发器：最近对话列表据此强制重建（本版本 body 不随 observable 重跑） */
+    internal var convToggle: Boolean by observable(false)
+    /** vif 翻转触发器：行情/自选列表据此强制重建 */
+    internal var listToggle: Boolean by observable(false)
     /** 「自动恢复周期」展开态 */
     private var hideDaysExpanded: Boolean by observable(false)
     /** 「自动恢复周期」自定义输入缓冲 */
@@ -69,15 +73,15 @@ internal class MainTabPager : BasePager() {
     override fun viewDidLoad() {
         super.viewDidLoad()
         loadState()
-        // 注册跨页监听：ChatPage 写入会话时即时刷新「最近对话」（无需手动切 Tab）
-        ChatSync.addListener { dataVersion++ }
+        // 注册跨页监听：ChatPage 写入会话时即时刷新「最近对话」（vif 翻转强制重建，无需手动切 Tab）
+        ChatSync.addListener { convToggle = !convToggle }
     }
 
     /** 从子页（如 ChatPage）返回时强制刷新：已隐藏列表 / 最近对话即时同步 */
     override fun pageDidAppear() {
         super.pageDidAppear()
         loadState()
-        dataVersion++
+        convToggle = !convToggle
     }
 
     // ===== 持久化读写 =====
@@ -96,38 +100,52 @@ internal class MainTabPager : BasePager() {
     }
 
     /** 行情列表：剔除仍处于「不感兴趣」冷却期内的股票 */
-    private fun visibleQuotes(): List<Stock> =
+    internal fun visibleQuotes(): List<Stock> =
         MockStockSource.getQuotes().filter { !isHidden(it.code) }
 
     /** 自选列表：仅含被打「自选」标签、且未被隐藏的股票 */
-    private fun watchlistStocks(): List<Stock> =
+    internal fun watchlistStocks(): List<Stock> =
         MockStockSource.getQuotes().filter { it.code in watchlistCodes && !isHidden(it.code) }
 
     // ===== 标签/隐藏变更 =====
     private fun toggleWatch(code: String) {
         watchlistCodes = if (watchlistCodes.contains(code)) watchlistCodes - code else watchlistCodes + code
         UserStockStore.saveWatchlist(prefs, watchlistCodes)
+        bumpList()
+    }
+
+    /** 标签/隐藏/恢复天数变更后：计数 + 翻转让行情/自选列表（vif 内）整体重建 */
+
+    /** 标签/隐藏/恢复天数变更后：计数 + 翻转让行情/自选列表（vif 内）整体重建 */
+    private fun bumpList() {
         dataVersion++
+        listToggle = !listToggle
     }
 
     private fun hideStock(code: String) {
         hiddenMap = hiddenMap + (code to nowMs())
         UserStockStore.saveHidden(prefs, hiddenMap)
-        dataVersion++
+        bumpList()
     }
+
+    /** 标签/隐藏/恢复天数变更后：计数 + 翻转让行情/自选列表（vif 内）整体重建 */
 
     private fun unhide(code: String) {
         hiddenMap = hiddenMap - code
         UserStockStore.saveHidden(prefs, hiddenMap)
-        dataVersion++
+        bumpList()
     }
+
+    /** 标签/隐藏/恢复天数变更后：计数 + 翻转让行情/自选列表（vif 内）整体重建 */
 
     /** 设置自动恢复天数（最少 1 天），并落盘 */
     private fun applyHideDays(days: Int) {
         hideDays = days.coerceAtLeast(1)
         UserStockStore.saveHideDays(prefs, hideDays)
-        dataVersion++
+        bumpList()
     }
+
+    /** 标签/隐藏/恢复天数变更后：计数 + 翻转让行情/自选列表（vif 内）整体重建 */
 
     /** 展开/收起「自动恢复周期」面板；展开时把当前值同步到输入框 */
     private fun toggleHideDaysExpanded() {
@@ -136,7 +154,7 @@ internal class MainTabPager : BasePager() {
     }
 
     // ===== 菜单 / 跳转 =====
-    private fun openSheet(stock: Stock, x: Float, y: Float) {
+    internal fun openSheet(stock: Stock, x: Float, y: Float) {
         sheetStock = stock; sheetX = x; sheetY = y
     }
 
@@ -148,7 +166,7 @@ internal class MainTabPager : BasePager() {
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", d)
     }
 
-    private fun openDetail(stock: Stock) {
+    internal fun openDetail(stock: Stock) {
         closeSheet()
         val d = JSONObject(); d.put("stockCode", stock.code)
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
@@ -192,50 +210,8 @@ internal class MainTabPager : BasePager() {
                     Scroller {
                         attr { flex(1f); flexDirectionColumn(); padding(12f) }
                         Text { attr { text("最近对话"); fontSize(16f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
-                        val convs = ChatStore.conversationCodes().mapNotNull { MockStockSource.findByCode(it) }
-                        if (convs.isEmpty()) {
-                            Text {
-                                attr {
-                                    text("还没有聊过。去行情页长按某只股票，选「问 AI」，就能和它开始一段对话～")
-                                    fontSize(13f); color(Color(0xFF999999)); marginTop(16f)
-                                }
-                            }
-                        } else {
-                            convs.forEach { s ->
-                                val last = ChatStore.last(s.code)
-                                View {
-                                    attr {
-                                        flexDirectionRow(); alignItemsCenter(); marginTop(10f)
-                                        padding(12f); backgroundColor(Color.WHITE); borderRadius(10f)
-                                        width(contentW)
-                                    }
-                                    event {
-                                        click {
-                                            val d = JSONObject(); d.put("stockCode", s.code)
-                                            ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", d)
-                                        }
-                                    }
-                                    View {
-                                        attr {
-                                            width(36f); height(36f); borderRadius(18f)
-                                            backgroundColor(Color(0xFFE6F1FB)); marginRight(10f)
-                                            alignItemsCenter(); justifyContentCenter()
-                                        }
-                                        Text { attr { text(s.name.take(1)); fontSize(16f); color(Color(0xFF23D3FD)); fontWeightSemisolid() } }
-                                    }
-                                    View { attr { flex(1f); flexDirectionColumn() }
-                                        Text { attr { text(s.name); fontSize(15f); color(Color(0xFF222222)) } }
-                                        Text {
-                                            attr {
-                                                text((last?.text ?: "").let { if (it.length > 22) it.take(22) + "…" else it })
-                                                fontSize(12f); color(Color(0xFF999999)); marginTop(3f)
-                                            }
-                                        }
-                                    }
-                                    Text { attr { text(">"); fontSize(16f); color(Color(0xFFCCCCCC)) } }
-                                }
-                            }
-                        }
+                        vif({ ctx.convToggle }) { val c = this; c.renderRecents(ctx, contentW) }
+                        vif({ !ctx.convToggle }) { val c = this; c.renderRecents(ctx, contentW) }
                     }
                 }
 
@@ -245,13 +221,8 @@ internal class MainTabPager : BasePager() {
                         flexDirectionColumn()
                         if (ctx.selectedTab == 1) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
                     }
-                    KRStockList {
-                        attr { flex(1f) }
-                        stocks = ctx.visibleQuotes()
-                        onRowClick = { /* 展开/收起由 KRStockList 内部处理 */ }
-                        onDetailClick = { ctx.openDetail(it) }
-                        onRowLongPress = { stock, x, y -> ctx.openSheet(stock, x, y) }
-                    }
+                    vif({ ctx.listToggle }) { val c = this; c.renderMarket(ctx) }
+                    vif({ !ctx.listToggle }) { val c = this; c.renderMarket(ctx) }
                 }
 
                 // ---- Tab2 自选 ----
@@ -260,22 +231,8 @@ internal class MainTabPager : BasePager() {
                         flexDirectionColumn()
                         if (ctx.selectedTab == 2) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
                     }
-                    vif({ ctx.watchlistCodes.isEmpty() }) {
-                        View {
-                            attr { flex(1f); alignItemsCenter(); justifyContentCenter(); flexDirectionColumn() }
-                            Text { attr { text("暂无自选股"); fontSize(18f); color(Color(0xFF222222)) } }
-                            Text { attr { text("长按行情里的股票，选「加自选」即可加入这里"); fontSize(13f); color(Color(0xFF999999)); marginTop(8f) } }
-                        }
-                    }
-                    vif({ ctx.watchlistCodes.isNotEmpty() }) {
-                        KRStockList {
-                            attr { flex(1f) }
-                            stocks = ctx.watchlistStocks()
-                            onRowClick = { /* 展开/收起内部处理 */ }
-                            onDetailClick = { ctx.openDetail(it) }
-                            onRowLongPress = { stock, x, y -> ctx.openSheet(stock, x, y) }
-                        }
-                    }
+                    vif({ ctx.listToggle }) { val c = this; c.renderWatchlist(ctx) }
+                    vif({ !ctx.listToggle }) { val c = this; c.renderWatchlist(ctx) }
                 }
 
                 // ---- Tab3 我的（设置）----
@@ -495,5 +452,88 @@ private fun ViewContainer<*, *>.sheetItem(label: String, onClick: () -> Unit) {
 
 private fun ViewContainer<*, *>.sheetDivider() {
     View { attr { height(0.5f); backgroundColor(Color(0xFFEEEEEE)); marginLeft(16f) } }
+}
+
+// ===== 列表渲染（放进 vif 内容闭包，随 convToggle/listToggle 翻转强制重建；本版本 body 不随 observable 重跑）=====
+// 注意：必须是「文件级」扩展函数，不能定义在类内（成员扩展函数在 vif 闭包里会丢失分派接收者）。
+
+/** 最近对话：随 convToggle 翻转重建 */
+private fun ViewContainer<*, *>.renderRecents(ctx: MainTabPager, contentW: Float) {
+    ctx.dataVersion // 依赖保险
+    val convs = ChatStore.conversationCodes().mapNotNull { MockStockSource.findByCode(it) }
+    if (convs.isEmpty()) {
+        Text {
+            attr {
+                text("还没有聊过。去行情页长按某只股票，选「问 AI」，就能和它开始一段对话～")
+                fontSize(13f); color(Color(0xFF999999)); marginTop(16f)
+            }
+        }
+    } else {
+        convs.forEach { s ->
+            val last = ChatStore.last(s.code)
+            View {
+                attr {
+                    flexDirectionRow(); alignItemsCenter(); marginTop(10f)
+                    padding(12f); backgroundColor(Color.WHITE); borderRadius(10f)
+                    width(contentW)
+                }
+                event {
+                    click {
+                        val d = JSONObject(); d.put("stockCode", s.code)
+                        ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", d)
+                    }
+                }
+                View {
+                    attr {
+                        width(36f); height(36f); borderRadius(18f)
+                        backgroundColor(Color(0xFFE6F1FB)); marginRight(10f)
+                        alignItemsCenter(); justifyContentCenter()
+                    }
+                    Text { attr { text(s.name.take(1)); fontSize(16f); color(Color(0xFF23D3FD)); fontWeightSemisolid() } }
+                }
+                View { attr { flex(1f); flexDirectionColumn() }
+                    Text { attr { text(s.name); fontSize(15f); color(Color(0xFF222222)) } }
+                    Text {
+                        attr {
+                            text((last?.text ?: "").let { if (it.length > 22) it.take(22) + "…" else it })
+                            fontSize(12f); color(Color(0xFF999999)); marginTop(3f)
+                        }
+                    }
+                }
+                Text { attr { text(">"); fontSize(16f); color(Color(0xFFCCCCCC)) } }
+            }
+        }
+    }
+}
+
+/** 行情列表：随 listToggle 翻转重建 */
+private fun ViewContainer<*, *>.renderMarket(ctx: MainTabPager) {
+    KRStockList {
+        attr { flex(1f) }
+        stocks = ctx.visibleQuotes()
+        onRowClick = { /* 展开/收起由 KRStockList 内部处理 */ }
+        onDetailClick = { ctx.openDetail(it) }
+        onRowLongPress = { stock, x, y -> ctx.openSheet(stock, x, y) }
+    }
+}
+
+/** 自选列表：随 listToggle 翻转重建 */
+private fun ViewContainer<*, *>.renderWatchlist(ctx: MainTabPager) {
+    vif({ ctx.watchlistCodes.isEmpty() }) {
+        View {
+            attr { flex(1f); alignItemsCenter(); justifyContentCenter(); flexDirectionColumn() }
+            Text { attr { text("暂无自选股"); fontSize(18f); color(Color(0xFF222222)) } }
+            Text { attr { text("长按行情里的股票，选「加自选」即可加入这里"); fontSize(13f); color(Color(0xFF999999)); marginTop(8f) } }
+        }
+    }
+    vif({ ctx.watchlistCodes.isNotEmpty() }) {
+        KRStockList {
+            attr { flex(1f) }
+            stocks = ctx.watchlistStocks()
+            onRowClick = { /* 展开/收起内部处理 */ }
+            onDetailClick = { ctx.openDetail(it) }
+            onRowLongPress = { stock, x, y -> ctx.openSheet(stock, x, y) }
+        }
+    }
 }
 

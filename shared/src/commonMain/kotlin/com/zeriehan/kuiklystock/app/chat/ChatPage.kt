@@ -50,15 +50,17 @@ import com.tencent.kuikly.core.manager.BridgeManager
 @Page("Chat", supportInLocal = true)
 internal class ChatPage : BasePager() {
 
-    private lateinit var code: String
+    internal lateinit var code: String
     private lateinit var stock: Stock
 
     /** 输入框当前文本（响应式，发送按钮据此启用） */
     private var inputText: String by observable("")
     /** AI 思考中：禁用发送、显示「思考中…」 */
-    private var aiThinking: Boolean by observable(false)
-    /** 消息版本号：每次增删消息 +1，body 据此重新读取 ChatStore 渲染最新对话 */
-    private var msgVersion: Int by observable(0)
+    internal var aiThinking: Boolean by observable(false)
+    /** 消息版本号：每次增删消息 +1，配合 renderToggle 翻转强制重建消息列表 */
+    internal var msgVersion: Int by observable(0)
+    /** vif 翻转触发器：本版本 body 不随 observable 重跑，消息列表必须靠 vif 翻转才能强制重建 */
+    internal var renderToggle: Boolean by observable(false)
     /** 键盘高度：弹出时把内容区底部抬起，使输入栏贴着键盘上沿（标题固定不动） */
     private var keyboardH: Float by observable(0f)
     /** 输入框 ref，用于发送后清空 */
@@ -104,6 +106,12 @@ internal class ChatPage : BasePager() {
         scrollerRef.view?.setContentOffset(0f, 100000f, true)
     }
 
+    /** 延迟一帧再滚到底，等 vif 翻转后的列表完成布局 */
+    private fun scrollSoon() {
+        val pid = BridgeManager.currentPageId
+        com.tencent.kuikly.core.timer.setTimeout(pid, 80) { scrollToBottom() }
+    }
+
     /** 发送：追加用户消息 -> 调 LLM.chat -> 追加 AI 回复 */
     private fun send() {
         val q = inputText.trim()
@@ -112,7 +120,8 @@ internal class ChatPage : BasePager() {
         inputRef.view?.setText("")
         ChatStore.append(code, ChatStore.ChatMessage("user", q))
         msgVersion++
-        scrollToBottom()
+        renderToggle = !renderToggle
+        scrollSoon()
         ChatSync.bump()
         aiThinking = true
         // 传完整历史给模型作为上下文
@@ -127,7 +136,8 @@ internal class ChatPage : BasePager() {
                 val reply = text.ifBlank { "（暂时没有回复，请稍后再试）" }
                 ChatStore.append(code, ChatStore.ChatMessage("assistant", reply))
                 msgVersion++
-                scrollToBottom()
+                renderToggle = !renderToggle
+                scrollSoon()
                 ChatSync.bump()
                 aiThinking = false
             }
@@ -146,12 +156,7 @@ internal class ChatPage : BasePager() {
                 // 键盘弹出时手动把内容区底部抬起，使输入栏贴着键盘上沿（标题栏固定不动）
                 paddingBottom(ctx.keyboardH)
             }
-            // 在「渲染闭包内」读取消息版本号建立依赖（关键：在闭包外读可能不触发重渲染）。
-            ctx.msgVersion
-            val msgs = ChatStore.messages(ctx.code)
-            // 气泡最大宽度：用下限 200 兜底，避免子页面 pageViewWidth 取不到时算成负宽导致气泡不可见；
-            // 上限 300 防止长文本占满整屏。
-            val maxBubbleW = (ctx.pagerData.pageViewWidth - 40f).coerceIn(200f, 300f)
+            // 消息列表的实际渲染放在 renderMessages() 中，由消息流 Scroller 内的 vif(renderToggle) 翻转重建。
 
             // ===== 返回栏 =====
             View {
@@ -183,23 +188,10 @@ internal class ChatPage : BasePager() {
             Scroller {
                 ref { ctx.scrollerRef = it }
                 attr { flex(1f); flexDirectionColumn(); padding(12f) }
-                val c = this
-                if (msgs.isEmpty()) {
-                    Text { attr { text("（暂无消息）"); fontSize(13f); color(Color(0xFF999999)); marginTop(20f) } }
-                }
-                msgs.forEach { m ->
-                    c.bubble(m.role, m.text, maxBubbleW)
-                }
-                // 思考中占位气泡
-                vif({ ctx.aiThinking }) {
-                    View {
-                        attr {
-                            alignSelfFlexStart(); marginBottom(10f)
-                            padding(10f); borderRadius(12f); backgroundColor(Color(0xFFF2F3F5))
-                        }
-                        Text { attr { text("AI 思考中…"); fontSize(14f); color(Color(0xFF999999)) } }
-                    }
-                }
+                // 关键：本版本 body 不会因 observable 变化而重跑，必须用 vif 翻转（renderToggle）
+                // 强制重建消息列表内容，否则发消息后气泡永远不刷新。
+                vif({ ctx.renderToggle }) { val c = this; c.renderMessages(ctx) }
+                vif({ !ctx.renderToggle }) { val c = this; c.renderMessages(ctx) }
             }
 
             // ===== 输入栏 =====
@@ -238,6 +230,28 @@ internal class ChatPage : BasePager() {
             }
         }
     }
+
+}
+
+/** 渲染消息列表：作为 vif 内容闭包，renderToggle 翻转时整体重建，确保发消息后气泡刷新 */
+private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
+    ctx.msgVersion // 建立依赖（保险）
+    val msgs = ChatStore.messages(ctx.code)
+    val maxBubbleW = (ctx.pagerData.pageViewWidth - 40f).coerceIn(200f, 300f)
+    if (msgs.isEmpty()) {
+        Text { attr { text("（暂无消息）"); fontSize(13f); color(Color(0xFF999999)); marginTop(20f) } }
+    }
+    msgs.forEach { m -> bubble(m.role, m.text, maxBubbleW) }
+    // 思考中占位气泡
+    vif({ ctx.aiThinking }) {
+        View {
+            attr {
+                alignSelfFlexStart(); marginBottom(10f)
+                padding(10f); borderRadius(12f); backgroundColor(Color(0xFFF2F3F5))
+            }
+            Text { attr { text("AI 思考中…"); fontSize(14f); color(Color(0xFF999999)) } }
+        }
+    }
 }
 
 /**
@@ -267,6 +281,9 @@ private fun ViewContainer<*, *>.bubble(role: String, text: String, maxBubbleW: F
                     text(text)
                     fontSize(14f)
                     color(if (isUser) Color.WHITE else Color(0xFF333333))
+                    // 关键：文本必须显式限宽，否则在「气泡只给 maxWidth、自身宽自适应」的情况下不换行，
+                    // 长内容只显示一行并溢出气泡（右侧被裁掉）。20f 为左右内边距。
+                    maxWidth(maxBubbleW - 20f)
                 }
             }
         }
