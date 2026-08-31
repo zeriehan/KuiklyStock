@@ -24,6 +24,7 @@ import com.zeriehan.kuiklystock.core.llm.ChatStore
 import com.zeriehan.kuiklystock.core.llm.ChatSync
 import com.zeriehan.kuiklystock.core.llm.LLM
 import com.tencent.kuikly.core.views.ScrollerView
+import com.tencent.kuikly.core.manager.BridgeManager
 
 /**
  * AI 聊天页（按股票代码隔离的同一段对话）。
@@ -103,12 +104,18 @@ internal class ChatPage : BasePager() {
         aiThinking = true
         // 传完整历史给模型作为上下文
         val history = ChatStore.messages(code)
+        // 捕获当前页 id：模型结果由宿主在后台线程回调，必须切回渲染线程再改 observable，
+        // 否则不会触发重渲染（表现为一直「分析中」、需重进才看到消息）。
+        val pid = BridgeManager.currentPageId
         LLM.client.chat(stock, q, history) { text ->
-            ChatStore.append(code, ChatStore.ChatMessage("assistant", text.ifBlank { "（暂时没有回复，请稍后再试）" }))
-            msgVersion++
-            scrollToBottom()
-            ChatSync.bump()
-            aiThinking = false
+            val reply = text.ifBlank { "（暂时没有回复，请稍后再试）" }
+            com.tencent.kuikly.core.timer.setTimeout(pid, 0) {
+                ChatStore.append(code, ChatStore.ChatMessage("assistant", reply))
+                msgVersion++
+                scrollToBottom()
+                ChatSync.bump()
+                aiThinking = false
+            }
         }
     }
 
@@ -116,14 +123,19 @@ internal class ChatPage : BasePager() {
         val ctx = this
         // 在 body 内读取参数并初始化（保证对话按正确 stockCode 落库）
         ctx.ensureInit()
-        // 依赖消息版本号：版本变化即重渲染最新对话
-        ctx.msgVersion
-        val msgs = ChatStore.messages(code)
+        // 气泡可用宽度：Scroller 两侧各 12 内边距，内容宽 = pageViewWidth - 24；
+        // 单条气泡最大宽度封顶 264，避免长文本把屏幕占满。
+        val contentW = ctx.pagerData.pageViewWidth - 24f
+        val maxBubbleW = contentW.coerceAtMost(264f)
         return {
             attr {
                 flexDirectionColumn()
                 backgroundColor(Color(0xFFF2F3F5))
             }
+            // 在「渲染闭包内」读取消息版本号建立依赖（关键：在闭包外读可能不触发重渲染，
+            // 表现为发消息后界面不刷新、卡在「分析中」）。
+            ctx.msgVersion
+            val msgs = ChatStore.messages(ctx.code)
 
             // ===== 返回栏 =====
             View {
@@ -160,7 +172,7 @@ internal class ChatPage : BasePager() {
                     Text { attr { text("（暂无消息）"); fontSize(13f); color(Color(0xFF999999)); marginTop(20f) } }
                 }
                 msgs.forEach { m ->
-                    c.bubble(m.role, m.text)
+                    c.bubble(m.role, m.text, maxBubbleW, contentW)
                 }
                 // 思考中占位气泡
                 vif({ ctx.aiThinking }) {
@@ -205,19 +217,24 @@ internal class ChatPage : BasePager() {
     }
 }
 
-/** 单条气泡：用户右侧青色、AI 左侧灰底（文件级扩展，便于在 forEach 内用显式接收者调用） */
-private fun ViewContainer<*, *>.bubble(role: String, text: String) {
+/**
+ * 单条气泡：用户右侧青色、AI 左侧灰底。
+ * 关键：气泡所在「行」必须有确定宽度（Scroller 内子元素默认不横向拉伸，否则整行塌缩成最左 1 字宽），
+ * 气泡自身给一个确定宽度，长文本才能在气泡内自动换行、整条消息完整可见。
+ * 不使用 flex(1f)（在宽度未定的行里会让整行塌缩成 1 字）。
+ */
+private fun ViewContainer<*, *>.bubble(role: String, text: String, maxBubbleW: Float, rowW: Float) {
     val isUser = role == "user"
     View {
         attr {
             flexDirectionRow()
             marginBottom(10f)
             justifyContent(if (isUser) FlexJustifyContent.FLEX_END else FlexJustifyContent.FLEX_START)
+            width(rowW)
         }
         View {
             attr {
-                flex(1f)
-                maxWidth(264f)
+                width(maxBubbleW)
                 padding(10f)
                 borderRadius(12f)
                 backgroundColor(if (isUser) Color(0xFF23D3FD) else Color(0xFFF2F3F5))

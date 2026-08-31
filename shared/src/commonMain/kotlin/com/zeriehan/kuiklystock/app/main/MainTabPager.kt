@@ -73,6 +73,13 @@ internal class MainTabPager : BasePager() {
         ChatSync.addListener { dataVersion++ }
     }
 
+    /** 从子页（如 ChatPage）返回时强制刷新：已隐藏列表 / 最近对话即时同步 */
+    override fun pageDidAppear() {
+        super.pageDidAppear()
+        loadState()
+        dataVersion++
+    }
+
     // ===== 持久化读写 =====
     private fun loadState() {
         watchlistCodes = UserStockStore.loadWatchlist(prefs)
