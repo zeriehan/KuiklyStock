@@ -192,7 +192,7 @@ internal class MainTabPager : BasePager() {
                     Scroller {
                         attr { flex(1f); flexDirectionColumn(); padding(12f) }
                         Text { attr { text("最近对话"); fontSize(16f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
-                        val convs = MockStockSource.getQuotes().filter { ChatStore.hasConversation(it.code) }
+                        val convs = ChatStore.conversationCodes().mapNotNull { MockStockSource.findByCode(it) }
                         if (convs.isEmpty()) {
                             Text {
                                 attr {

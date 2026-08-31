@@ -13,6 +13,7 @@ import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.*
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.compose.Button
+import com.tencent.kuikly.core.layout.FlexJustifyContent
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.core.MockStockSource
@@ -34,6 +35,15 @@ import com.tencent.kuikly.core.manager.BridgeManager
  * 两者都传同一 stockCode，因此复用 [ChatStore] 中同一份消息，做到「同一个对话」。
  *
  * 布局：返回栏 + 股价条 + 消息流（气泡左右分列）+ 输入框/发送。
+ *
+ * 关键实现说明（避免反复踩坑）：
+ * 1. 气泡宽度不依赖 pageViewWidth 计算负宽：用 `coerceIn(200f,300f)` 兜底，避免子页面 pageViewWidth
+ *    未就绪时算成负宽导致气泡 0 宽不可见。
+ * 2. 气泡行作为消息列(Scroller, 默认 alignItems=STRETCH)的直接子节点自动拉满整行宽度，再用
+ *    justifyContent 控制左/右对齐；气泡只给 maxWidth 上限，文本在其中自动换行。绝不给气泡 flex(1f)。
+ * 3. Mock LLM 为纯前端（无需后端）。回调可能来自宿主后台线程，统一用 setTimeout(pageId,0) 切回渲染线程再改 observable。
+ * 4. 键盘：宿主设 adjustNothing，这里监听 keyboardHeightChange 手动把内容区底部抬起(paddingBottom)，
+ *    标题栏固定不动、仅输入栏贴着键盘上沿。
  */
 @Page("Chat", supportInLocal = true)
 internal class ChatPage : BasePager() {
@@ -41,12 +51,14 @@ internal class ChatPage : BasePager() {
     private lateinit var code: String
     private lateinit var stock: Stock
 
-    /** 输入框当前文本（响应式，send 按钮据此启用） */
+    /** 输入框当前文本（响应式，发送按钮据此启用） */
     private var inputText: String by observable("")
     /** AI 思考中：禁用发送、显示「思考中…」 */
     private var aiThinking: Boolean by observable(false)
     /** 消息版本号：每次增删消息 +1，body 据此重新读取 ChatStore 渲染最新对话 */
     private var msgVersion: Int by observable(0)
+    /** 键盘高度：弹出时把内容区底部抬起，使输入栏贴着键盘上沿（标题固定不动） */
+    private var keyboardH: Float by observable(0f)
     /** 输入框 ref，用于发送后清空 */
     private lateinit var inputRef: ViewRef<InputView>
     /** 消息流 Scroller ref，用于新消息到达时滚动到底部 */
@@ -103,17 +115,20 @@ internal class ChatPage : BasePager() {
         aiThinking = true
         // 传完整历史给模型作为上下文
         val history = ChatStore.messages(code)
-        // 捕获当前页 id：模型结果由宿主在后台线程回调，必须切回渲染线程再改 observable，
+        // 捕获当前页 id：模型结果可能由宿主在后台线程回调，必须切回渲染线程再改 observable，
         // 否则不会触发重渲染（表现为一直「分析中」、需重进才看到消息）。
         val pid = BridgeManager.currentPageId
-        LLM.client.chat(stock, q, history) { text ->
-            val reply = text.ifBlank { "（暂时没有回复，请稍后再试）" }
-            com.tencent.kuikly.core.timer.setTimeout(pid, 0) {
-                ChatStore.append(code, ChatStore.ChatMessage("assistant", reply))
-                msgVersion++
-                scrollToBottom()
-                ChatSync.bump()
-                aiThinking = false
+        // 模拟一段「思考」延迟，让加载态可见（纯前端 Mock，无需后端）
+        com.tencent.kuikly.core.timer.setTimeout(pid, 600) {
+            LLM.client.chat(stock, q, history) { text ->
+                val reply = text.ifBlank { "（暂时没有回复，请稍后再试）" }
+                com.tencent.kuikly.core.timer.setTimeout(pid, 0) {
+                    ChatStore.append(code, ChatStore.ChatMessage("assistant", reply))
+                    msgVersion++
+                    scrollToBottom()
+                    ChatSync.bump()
+                    aiThinking = false
+                }
             }
         }
     }
@@ -124,16 +139,18 @@ internal class ChatPage : BasePager() {
         ctx.ensureInit()
         return {
             attr {
+                flex(1f)
                 flexDirectionColumn()
                 backgroundColor(Color(0xFFF2F3F5))
+                // 键盘弹出时手动把内容区底部抬起，使输入栏贴着键盘上沿（标题栏固定不动）
+                paddingBottom(ctx.keyboardH)
             }
-            // 在「渲染闭包内」读取消息版本号建立依赖（关键：在闭包外读可能不触发重渲染，
-            // 表现为发消息后界面不刷新、卡在「分析中」）。
+            // 在「渲染闭包内」读取消息版本号建立依赖（关键：在闭包外读可能不触发重渲染）。
             ctx.msgVersion
             val msgs = ChatStore.messages(ctx.code)
-            // 气泡最大宽度：必须在渲染闭包内读取 pageViewWidth（body 构建期该值可能为 0），
-            // 否则算出的负宽度会让气泡 0 宽不可见。封顶 264，避免长文本占满整屏。
-            val maxBubbleW = (ctx.pagerData.pageViewWidth - 40f).coerceAtMost(264f)
+            // 气泡最大宽度：用下限 200 兜底，避免子页面 pageViewWidth 取不到时算成负宽导致气泡不可见；
+            // 上限 300 防止长文本占满整屏。
+            val maxBubbleW = (ctx.pagerData.pageViewWidth - 40f).coerceIn(200f, 300f)
 
             // ===== 返回栏 =====
             View {
@@ -202,8 +219,11 @@ internal class ChatPage : BasePager() {
                     }
                     event {
                         textDidChange { ctx.inputText = it.text }
-                        // 键盘弹出/收起时把消息流滚到底部，确保最新一条不被输入栏遮住
-                        keyboardHeightChange { ctx.scrollToBottom() }
+                        // 键盘高度变化：抬起内容区并把最新消息滚到底部
+                        keyboardHeightChange { params ->
+                            ctx.keyboardH = params.height
+                            ctx.scrollToBottom()
+                        }
                     }
                 }
                 Button {
@@ -221,26 +241,32 @@ internal class ChatPage : BasePager() {
 
 /**
  * 单条气泡：用户右侧青色、AI 左侧灰底。
- * 做法：气泡直接作为消息列（Scroller, flexDirectionColumn）的子节点，
- * 用 alignSelf 控制左右对齐（用户 FLEX_END / AI FLEX_START），气泡宽度由 maxWidth 限定、
- * 文本在其中自动换行；不包一层 row、不给 flex(1f)（否则在列宽未定时会循环塌缩成 1 字宽）。
+ *
+ * 行作为消息列(Scroller, 默认 alignItems=STRETCH)的直接子节点，自动被拉满整行宽度；
+ * 用 justifyContent 控制气泡靠右(用户)/靠左(AI)。气泡只给 maxWidth 上限，文本在其中自动换行。
+ * 不显式给行宽（避免依赖 pageViewWidth 算成 0 宽）、不给气泡 flex(1f)（否则列宽未定时循环塌缩）。
  */
 private fun ViewContainer<*, *>.bubble(role: String, text: String, maxBubbleW: Float) {
     val isUser = role == "user"
     View {
         attr {
-            if (isUser) alignSelfFlexEnd() else alignSelfFlexStart()
-            maxWidth(maxBubbleW)
+            flexDirectionRow()
+            justifyContent(if (isUser) FlexJustifyContent.FLEX_END else FlexJustifyContent.FLEX_START)
             marginBottom(10f)
-            padding(10f)
-            borderRadius(12f)
-            backgroundColor(if (isUser) Color(0xFF23D3FD) else Color(0xFFF2F3F5))
         }
-        Text {
+        View {
             attr {
-                text(text)
-                fontSize(14f)
-                color(if (isUser) Color.WHITE else Color(0xFF333333))
+                maxWidth(maxBubbleW)
+                padding(10f)
+                borderRadius(12f)
+                backgroundColor(if (isUser) Color(0xFF23D3FD) else Color(0xFFF2F3F5))
+            }
+            Text {
+                attr {
+                    text(text)
+                    fontSize(14f)
+                    color(if (isUser) Color.WHITE else Color(0xFF333333))
+                }
             }
         }
     }

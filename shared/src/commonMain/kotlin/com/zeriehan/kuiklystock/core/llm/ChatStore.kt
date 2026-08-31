@@ -27,6 +27,10 @@ object ChatStore {
     /** 最后一条消息（用于「最近对话」预览） */
     fun last(code: String): ChatMessage? = conversations[code]?.lastOrNull()
 
+    /** 所有有对话的股票代码（用于「最近对话」列表，避免依赖外部股票表过滤导致漏显） */
+    fun conversationCodes(): List<String> =
+        conversations.filter { it.value.isNotEmpty() }.keys.toList()
+
     /** 清空某股票对话（可选） */
     fun clear(code: String) {
         conversations.remove(code)
