@@ -41,7 +41,9 @@ import com.tencent.kuikly.core.manager.BridgeManager
  *    未就绪时算成负宽导致气泡 0 宽不可见。
  * 2. 气泡行作为消息列(Scroller, 默认 alignItems=STRETCH)的直接子节点自动拉满整行宽度，再用
  *    justifyContent 控制左/右对齐；气泡只给 maxWidth 上限，文本在其中自动换行。绝不给气泡 flex(1f)。
- * 3. Mock LLM 为纯前端（无需后端）。回调可能来自宿主后台线程，统一用 setTimeout(pageId,0) 切回渲染线程再改 observable。
+ * 3. GLM/Mock 回调均已在主线程（宿主 KRBridgeModule 用 Handler(Looper.getMainLooper()).post 切主线程；Mock 同步即主线程），
+ *    故 chat 回调里直接改 observable，不再嵌套 setTimeout 切线程（那层在子页面不可靠，曾导致「分析完什么都不显示」）。
+ *    仅用 setTimeout 做一次「思考」延迟，让加载态可见。
  * 4. 键盘：宿主设 adjustNothing，这里监听 keyboardHeightChange 手动把内容区底部抬起(paddingBottom)，
  *    标题栏固定不动、仅输入栏贴着键盘上沿。
  */
@@ -115,20 +117,19 @@ internal class ChatPage : BasePager() {
         aiThinking = true
         // 传完整历史给模型作为上下文
         val history = ChatStore.messages(code)
-        // 捕获当前页 id：模型结果可能由宿主在后台线程回调，必须切回渲染线程再改 observable，
-        // 否则不会触发重渲染（表现为一直「分析中」、需重进才看到消息）。
+        // 宿主 KRBridgeModule.llmAnalyze 已在子线程请求、并在主线程（Handler post）回调，
+        // Mock 同步也是主线程；因此 chat 回调里可直接改 observable，无需再嵌套 setTimeout 切线程
+        // （之前多套的那层 setTimeout 在子页面不可靠，正是「分析完什么都不显示」的根因）。
+        // 这里仅用 setTimeout 做一段「思考」延迟，让加载态可见。
         val pid = BridgeManager.currentPageId
-        // 模拟一段「思考」延迟，让加载态可见（纯前端 Mock，无需后端）
         com.tencent.kuikly.core.timer.setTimeout(pid, 600) {
             LLM.client.chat(stock, q, history) { text ->
                 val reply = text.ifBlank { "（暂时没有回复，请稍后再试）" }
-                com.tencent.kuikly.core.timer.setTimeout(pid, 0) {
-                    ChatStore.append(code, ChatStore.ChatMessage("assistant", reply))
-                    msgVersion++
-                    scrollToBottom()
-                    ChatSync.bump()
-                    aiThinking = false
-                }
+                ChatStore.append(code, ChatStore.ChatMessage("assistant", reply))
+                msgVersion++
+                scrollToBottom()
+                ChatSync.bump()
+                aiThinking = false
             }
         }
     }
