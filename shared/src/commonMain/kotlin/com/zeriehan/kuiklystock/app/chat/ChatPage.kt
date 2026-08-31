@@ -21,7 +21,9 @@ import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.llm.ChatStore
+import com.zeriehan.kuiklystock.core.llm.ChatSync
 import com.zeriehan.kuiklystock.core.llm.LLM
+import com.tencent.kuikly.core.views.ScrollerView
 
 /**
  * AI 聊天页（按股票代码隔离的同一段对话）。
@@ -47,6 +49,8 @@ internal class ChatPage : BasePager() {
     private var msgVersion: Int by observable(0)
     /** 输入框 ref，用于发送后清空 */
     private lateinit var inputRef: ViewRef<InputView>
+    /** 消息流 Scroller ref，用于新消息到达时滚动到底部 */
+    private lateinit var scrollerRef: ViewRef<ScrollerView<*, *>>
     /** 是否已初始化（参数须在 body 内读取，故用此标志保证仅初始化一次） */
     private var bootstrapped: Boolean = false
 
@@ -76,6 +80,14 @@ internal class ChatPage : BasePager() {
             )
         }
         bootstrapped = true
+        // 通知主框架：本股票已有对话（用于「最近对话」即时刷新）
+        ChatSync.bump()
+    }
+
+    /** 滚动消息流到底部（新消息到达时调用，确保不被 Scroller 视口截断） */
+    private fun scrollToBottom() {
+        // offsetY 给极大值，由原生 Scroller 自动 clamp 到内容底部
+        scrollerRef.view?.setContentOffset(0f, 100000f, true)
     }
 
     /** 发送：追加用户消息 -> 调 LLM.chat -> 追加 AI 回复 */
@@ -86,12 +98,16 @@ internal class ChatPage : BasePager() {
         inputRef.view?.setText("")
         ChatStore.append(code, ChatStore.ChatMessage("user", q))
         msgVersion++
+        scrollToBottom()
+        ChatSync.bump()
         aiThinking = true
         // 传完整历史给模型作为上下文
         val history = ChatStore.messages(code)
         LLM.client.chat(stock, q, history) { text ->
             ChatStore.append(code, ChatStore.ChatMessage("assistant", text.ifBlank { "（暂时没有回复，请稍后再试）" }))
             msgVersion++
+            scrollToBottom()
+            ChatSync.bump()
             aiThinking = false
         }
     }
@@ -137,6 +153,7 @@ internal class ChatPage : BasePager() {
 
             // ===== 消息流 =====
             Scroller {
+                ref { ctx.scrollerRef = it }
                 attr { flex(1f); flexDirectionColumn(); padding(12f) }
                 val c = this
                 if (msgs.isEmpty()) {
@@ -199,6 +216,7 @@ private fun ViewContainer<*, *>.bubble(role: String, text: String) {
         }
         View {
             attr {
+                flex(1f)
                 maxWidth(264f)
                 padding(10f)
                 borderRadius(12f)

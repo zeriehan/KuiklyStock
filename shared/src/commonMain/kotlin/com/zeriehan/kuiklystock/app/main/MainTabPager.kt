@@ -22,6 +22,7 @@ import com.zeriehan.kuiklystock.core.MockStockSource
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.UserStockStore
 import com.zeriehan.kuiklystock.core.llm.ChatStore
+import com.zeriehan.kuiklystock.core.llm.ChatSync
 
 /**
  * 四 Tab 主框架（App 启动入口）。
@@ -68,6 +69,8 @@ internal class MainTabPager : BasePager() {
     override fun viewDidLoad() {
         super.viewDidLoad()
         loadState()
+        // 注册跨页监听：ChatPage 写入会话时即时刷新「最近对话」（无需手动切 Tab）
+        ChatSync.addListener { dataVersion++ }
     }
 
     // ===== 持久化读写 =====
@@ -153,8 +156,9 @@ internal class MainTabPager : BasePager() {
     override fun body(): ViewBuilder {
         val ctx = this
         return {
-            // 建立依赖：标签/隐藏/设置变化（dataVersion）即重渲染列表
-            ctx.dataVersion
+            // 建立依赖：隐藏/自选/恢复天数等真实 observable 变化即重渲染列表。
+            // 直接读取（而非仅读 dataVersion 计数），确保子组件（KRStockList）拿到最新过滤后的列表。
+            ctx.hiddenMap; ctx.watchlistCodes; ctx.hideDays; ctx.dataVersion
             // 内容卡宽度（Scroller 默认不拉伸子元素，需显式宽度以铺满、避免右侧留白）
             val contentW = ctx.pagerData.pageViewWidth - 24f
             attr { flexDirectionColumn(); backgroundColor(Color.WHITE) }
@@ -300,16 +304,16 @@ internal class MainTabPager : BasePager() {
                                         flexDirectionColumn(); marginTop(12f); padding(10f)
                                         backgroundColor(Color(0xFFF7F8FA)); borderRadius(8f)
                                     }
-                                    // 自定义天数输入（最少 1 天，天为单位）
+                                    // 自定义输入（最少 1 天，天为单位）
                                     View {
                                         attr { flexDirectionRow(); alignItemsCenter(); padding(top = 2f, bottom = 6f) }
-                                        Text { attr { text("自定义天数（最少 1）："); fontSize(13f); color(Color(0xFF666666)) } }
+                                        Text { attr { text("自定义（最少 1 天）："); fontSize(13f); color(Color(0xFF666666)) } }
                                         View { attr { flex(1f) } }
                                         Input {
                                             attr {
                                                 width(72f); height(34f); fontSize(15f); color(Color(0xFF222222))
                                                 backgroundColor(Color.WHITE); borderRadius(6f)
-                                                placeholder("天数"); placeholderColor(Color(0xFFBBBBBB))
+                                                placeholder(""); placeholderColor(Color(0xFFBBBBBB))
                                             }
                                             event { textDidChange { ctx.hideDaysInput = it.text } }
                                         }
