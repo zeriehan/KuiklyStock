@@ -6,7 +6,6 @@ import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
-import com.tencent.kuikly.core.layout.FlexJustifyContent
 import com.tencent.kuikly.core.module.RouterModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.reactive.handler.observable
@@ -123,10 +122,6 @@ internal class ChatPage : BasePager() {
         val ctx = this
         // 在 body 内读取参数并初始化（保证对话按正确 stockCode 落库）
         ctx.ensureInit()
-        // 气泡可用宽度：Scroller 两侧各 12 内边距，内容宽 = pageViewWidth - 24；
-        // 单条气泡最大宽度封顶 264，避免长文本把屏幕占满。
-        val contentW = ctx.pagerData.pageViewWidth - 24f
-        val maxBubbleW = contentW.coerceAtMost(264f)
         return {
             attr {
                 flexDirectionColumn()
@@ -136,6 +131,9 @@ internal class ChatPage : BasePager() {
             // 表现为发消息后界面不刷新、卡在「分析中」）。
             ctx.msgVersion
             val msgs = ChatStore.messages(ctx.code)
+            // 气泡最大宽度：必须在渲染闭包内读取 pageViewWidth（body 构建期该值可能为 0），
+            // 否则算出的负宽度会让气泡 0 宽不可见。封顶 264，避免长文本占满整屏。
+            val maxBubbleW = (ctx.pagerData.pageViewWidth - 40f).coerceAtMost(264f)
 
             // ===== 返回栏 =====
             View {
@@ -172,16 +170,16 @@ internal class ChatPage : BasePager() {
                     Text { attr { text("（暂无消息）"); fontSize(13f); color(Color(0xFF999999)); marginTop(20f) } }
                 }
                 msgs.forEach { m ->
-                    c.bubble(m.role, m.text, maxBubbleW, contentW)
+                    c.bubble(m.role, m.text, maxBubbleW)
                 }
                 // 思考中占位气泡
                 vif({ ctx.aiThinking }) {
                     View {
-                        attr { flexDirectionRow(); marginBottom(10f) }
-                        View {
-                            attr { padding(10f); borderRadius(12f); backgroundColor(Color(0xFFF2F3F5)) }
-                            Text { attr { text("AI 思考中…"); fontSize(14f); color(Color(0xFF999999)) } }
+                        attr {
+                            alignSelfFlexStart(); marginBottom(10f)
+                            padding(10f); borderRadius(12f); backgroundColor(Color(0xFFF2F3F5))
                         }
+                        Text { attr { text("AI 思考中…"); fontSize(14f); color(Color(0xFF999999)) } }
                     }
                 }
             }
@@ -199,10 +197,14 @@ internal class ChatPage : BasePager() {
                         flex(1f); height(38f)
                         fontSize(15f); color(Color(0xFF222222))
                         backgroundColor(Color(0xFFF2F3F5)); borderRadius(19f)
-                        placeholder("问点什么…")
+                        placeholder("")
                         placeholderColor(Color(0xFF999999))
                     }
-                    event { textDidChange { ctx.inputText = it.text } }
+                    event {
+                        textDidChange { ctx.inputText = it.text }
+                        // 键盘弹出/收起时把消息流滚到底部，确保最新一条不被输入栏遮住
+                        keyboardHeightChange { ctx.scrollToBottom() }
+                    }
                 }
                 Button {
                     attr {
@@ -219,32 +221,26 @@ internal class ChatPage : BasePager() {
 
 /**
  * 单条气泡：用户右侧青色、AI 左侧灰底。
- * 关键：气泡所在「行」必须有确定宽度（Scroller 内子元素默认不横向拉伸，否则整行塌缩成最左 1 字宽），
- * 气泡自身给一个确定宽度，长文本才能在气泡内自动换行、整条消息完整可见。
- * 不使用 flex(1f)（在宽度未定的行里会让整行塌缩成 1 字）。
+ * 做法：气泡直接作为消息列（Scroller, flexDirectionColumn）的子节点，
+ * 用 alignSelf 控制左右对齐（用户 FLEX_END / AI FLEX_START），气泡宽度由 maxWidth 限定、
+ * 文本在其中自动换行；不包一层 row、不给 flex(1f)（否则在列宽未定时会循环塌缩成 1 字宽）。
  */
-private fun ViewContainer<*, *>.bubble(role: String, text: String, maxBubbleW: Float, rowW: Float) {
+private fun ViewContainer<*, *>.bubble(role: String, text: String, maxBubbleW: Float) {
     val isUser = role == "user"
     View {
         attr {
-            flexDirectionRow()
+            if (isUser) alignSelfFlexEnd() else alignSelfFlexStart()
+            maxWidth(maxBubbleW)
             marginBottom(10f)
-            justifyContent(if (isUser) FlexJustifyContent.FLEX_END else FlexJustifyContent.FLEX_START)
-            width(rowW)
+            padding(10f)
+            borderRadius(12f)
+            backgroundColor(if (isUser) Color(0xFF23D3FD) else Color(0xFFF2F3F5))
         }
-        View {
+        Text {
             attr {
-                width(maxBubbleW)
-                padding(10f)
-                borderRadius(12f)
-                backgroundColor(if (isUser) Color(0xFF23D3FD) else Color(0xFFF2F3F5))
-            }
-            Text {
-                attr {
-                    text(text)
-                    fontSize(14f)
-                    color(if (isUser) Color.WHITE else Color(0xFF333333))
-                }
+                text(text)
+                fontSize(14f)
+                color(if (isUser) Color.WHITE else Color(0xFF333333))
             }
         }
     }
