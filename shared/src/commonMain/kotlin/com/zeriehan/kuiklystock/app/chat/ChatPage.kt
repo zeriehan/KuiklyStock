@@ -47,12 +47,22 @@ internal class ChatPage : BasePager() {
     private var msgVersion: Int by observable(0)
     /** 输入框 ref，用于发送后清空 */
     private lateinit var inputRef: ViewRef<InputView>
+    /** 是否已初始化（参数须在 body 内读取，故用此标志保证仅初始化一次） */
+    private var bootstrapped: Boolean = false
 
     override fun created() {
         super.created()
+    }
+
+    /**
+     * 在 body 首次调用时读取参数并补一句 AI 开场白。
+     * Kuikly 的 pageData.params 须在 body 作用域内读取（created 中可能为空白），
+     * 因此把参数读取与「最近对话」写库放到这里，确保对话按正确 stockCode 落库。
+     */
+    private fun ensureInit() {
+        if (bootstrapped) return
         code = pageData.params.optString("stockCode")
         stock = MockStockSource.findByCode(code)
-        // 首屏无对话时补一句 AI 开场白（进程内仅补一次，避免重复）
         if (ChatStore.messages(code).isEmpty()) {
             ChatStore.append(
                 code,
@@ -65,6 +75,7 @@ internal class ChatPage : BasePager() {
                 )
             )
         }
+        bootstrapped = true
     }
 
     /** 发送：追加用户消息 -> 调 LLM.chat -> 追加 AI 回复 */
@@ -87,6 +98,8 @@ internal class ChatPage : BasePager() {
 
     override fun body(): ViewBuilder {
         val ctx = this
+        // 在 body 内读取参数并初始化（保证对话按正确 stockCode 落库）
+        ctx.ensureInit()
         // 依赖消息版本号：版本变化即重渲染最新对话
         ctx.msgVersion
         val msgs = ChatStore.messages(code)

@@ -12,6 +12,7 @@ import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.*
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.layout.FlexJustifyContent
 import com.tencent.kuikly.core.views.compose.Button
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.Utils
@@ -38,7 +39,6 @@ internal class MainTabPager : BasePager() {
 
     private val tabTitles = listOf("AI 聊天", "行情", "自选", "我的")
     private val DAY_MS = 86_400_000L
-    private val HIDE_DAY_OPTIONS = listOf(3, 7, 14, 30)
 
     private var selectedTab: Int by observable(1)
 
@@ -46,6 +46,12 @@ internal class MainTabPager : BasePager() {
     private var watchlistCodes: Set<String> by observable(emptySet())
     private var hiddenMap: Map<String, Long> by observable(emptyMap())
     private var hideDays: Int by observable(7)
+    /** 强制重渲染计数：标签/隐藏/设置变更后 +1，body 据此刷新列表（helper 内读 observable 不可靠） */
+    private var dataVersion: Int by observable(0)
+    /** 「自动恢复周期」展开态 */
+    private var hideDaysExpanded: Boolean by observable(false)
+    /** 「自动恢复周期」自定义输入缓冲 */
+    private var hideDaysInput: String by observable("7")
 
     // ===== 长按操作菜单状态 =====
     private var sheetStock: Stock? by observable(null)
@@ -73,40 +79,50 @@ internal class MainTabPager : BasePager() {
 
     private fun nowMs(): Long = Utils.currentBridgeModule().currentTimeStamp()
 
-    /** 行情列表：剔除仍处于「不感兴趣」冷却期内的股票 */
-    private fun visibleQuotes(): List<Stock> {
-        val now = nowMs()
-        val cut = hideDays * DAY_MS
-        return MockStockSource.getQuotes().filter { stock ->
-            val t = hiddenMap[stock.code] ?: return@filter true
-            now - t >= cut
-        }
+    /** 某股票当前是否处于「不感兴趣」冷却期 */
+    private fun isHidden(code: String): Boolean {
+        val t = hiddenMap[code] ?: return false
+        return nowMs() - t < hideDays * DAY_MS
     }
 
-    /** 自选列表：仅含被打「自选」标签的股票 */
+    /** 行情列表：剔除仍处于「不感兴趣」冷却期内的股票 */
+    private fun visibleQuotes(): List<Stock> =
+        MockStockSource.getQuotes().filter { !isHidden(it.code) }
+
+    /** 自选列表：仅含被打「自选」标签、且未被隐藏的股票 */
     private fun watchlistStocks(): List<Stock> =
-        MockStockSource.getQuotes().filter { it.code in watchlistCodes }
+        MockStockSource.getQuotes().filter { it.code in watchlistCodes && !isHidden(it.code) }
 
     // ===== 标签/隐藏变更 =====
     private fun toggleWatch(code: String) {
         watchlistCodes = if (watchlistCodes.contains(code)) watchlistCodes - code else watchlistCodes + code
         UserStockStore.saveWatchlist(prefs, watchlistCodes)
+        dataVersion++
     }
 
     private fun hideStock(code: String) {
         hiddenMap = hiddenMap + (code to nowMs())
         UserStockStore.saveHidden(prefs, hiddenMap)
+        dataVersion++
     }
 
     private fun unhide(code: String) {
         hiddenMap = hiddenMap - code
         UserStockStore.saveHidden(prefs, hiddenMap)
+        dataVersion++
     }
 
-    private fun cycleHideDays() {
-        val idx = HIDE_DAY_OPTIONS.indexOf(hideDays).let { if (it < 0) 0 else (it + 1) % HIDE_DAY_OPTIONS.size }
-        hideDays = HIDE_DAY_OPTIONS[idx]
+    /** 设置自动恢复天数（最少 1 天），并落盘 */
+    private fun applyHideDays(days: Int) {
+        hideDays = days.coerceAtLeast(1)
         UserStockStore.saveHideDays(prefs, hideDays)
+        dataVersion++
+    }
+
+    /** 展开/收起「自动恢复周期」面板；展开时把当前值同步到输入框 */
+    private fun toggleHideDaysExpanded() {
+        hideDaysExpanded = !hideDaysExpanded
+        if (hideDaysExpanded) hideDaysInput = hideDays.toString()
     }
 
     // ===== 菜单 / 跳转 =====
@@ -137,6 +153,10 @@ internal class MainTabPager : BasePager() {
     override fun body(): ViewBuilder {
         val ctx = this
         return {
+            // 建立依赖：标签/隐藏/设置变化（dataVersion）即重渲染列表
+            ctx.dataVersion
+            // 内容卡宽度（Scroller 默认不拉伸子元素，需显式宽度以铺满、避免右侧留白）
+            val contentW = ctx.pagerData.pageViewWidth - 24f
             attr { flexDirectionColumn(); backgroundColor(Color.WHITE) }
 
             // ===== TopBar =====
@@ -176,6 +196,7 @@ internal class MainTabPager : BasePager() {
                                     attr {
                                         flexDirectionRow(); alignItemsCenter(); marginTop(10f)
                                         padding(12f); backgroundColor(Color.WHITE); borderRadius(10f)
+                                        width(contentW)
                                     }
                                     event {
                                         click {
@@ -257,17 +278,96 @@ internal class MainTabPager : BasePager() {
 
                         // 不感兴趣管理
                         Text { attr { text("不感兴趣"); fontSize(13f); color(Color(0xFF999999)); marginBottom(8f) } }
+                        // —— 自动恢复周期（可展开自定义天数）——
                         View {
-                            attr { flexDirectionRow(); alignItemsCenter(); padding(14f); backgroundColor(Color.WHITE); borderRadius(10f) }
-                            Text { attr { text("自动恢复周期"); fontSize(15f); color(Color(0xFF222222)) } }
-                            View { attr { flex(1f) } }
-                            Text { attr { text("${ctx.hideDays} 天"); fontSize(14f); color(Color(0xFF23D3FD)) } }
-                            Text { attr { text("  >"); fontSize(15f); color(Color(0xFFCCCCCC)); marginLeft(6f) } }
-                            event { click { ctx.cycleHideDays(); ctx.bridgeModule.toast("已设为 ${ctx.hideDays} 天") } }
+                            attr { flexDirectionColumn(); padding(14f); backgroundColor(Color.WHITE); borderRadius(10f); width(contentW) }
+                            View {
+                                attr { flexDirectionRow(); alignItemsCenter() }
+                                event { click { ctx.toggleHideDaysExpanded() } }
+                                Text { attr { text("自动恢复周期"); fontSize(15f); color(Color(0xFF222222)) } }
+                                View { attr { flex(1f) } }
+                                Text { attr { text("${ctx.hideDays} 天"); fontSize(14f); color(Color(0xFF23D3FD)) } }
+                                Text {
+                                    attr {
+                                        text(if (ctx.hideDaysExpanded) "  ▲" else "  >")
+                                        fontSize(15f); color(Color(0xFFCCCCCC)); marginLeft(6f)
+                                    }
+                                }
+                            }
+                            vif({ ctx.hideDaysExpanded }) {
+                                View {
+                                    attr {
+                                        flexDirectionColumn(); marginTop(12f); padding(10f)
+                                        backgroundColor(Color(0xFFF7F8FA)); borderRadius(8f)
+                                    }
+                                    // 自定义天数输入（最少 1 天，天为单位）
+                                    View {
+                                        attr { flexDirectionRow(); alignItemsCenter(); padding(top = 2f, bottom = 6f) }
+                                        Text { attr { text("自定义天数（最少 1）："); fontSize(13f); color(Color(0xFF666666)) } }
+                                        View { attr { flex(1f) } }
+                                        Input {
+                                            attr {
+                                                width(72f); height(34f); fontSize(15f); color(Color(0xFF222222))
+                                                backgroundColor(Color.WHITE); borderRadius(6f)
+                                                placeholder("天数"); placeholderColor(Color(0xFFBBBBBB))
+                                            }
+                                            event { textDidChange { ctx.hideDaysInput = it.text } }
+                                        }
+                                        Text { attr { text(" 天"); fontSize(14f); color(Color(0xFF222222)); marginLeft(6f) } }
+                                    }
+                                    // 快捷选项
+                                    View {
+                                        attr { flexDirectionRow(); alignItemsCenter(); padding(bottom = 8f) }
+                                        listOf(3, 7, 14, 30).forEach { d ->
+                                            View {
+                                                attr {
+                                                    height(30f); padding(left = 14f, right = 14f); marginRight(8f)
+                                                    borderRadius(15f)
+                                                    backgroundColor(if (ctx.hideDays == d) Color(0xFF23D3FD) else Color(0xFFE6F1FB))
+                                                    alignItemsCenter(); justifyContentCenter()
+                                                }
+                                                event {
+                                                    click {
+                                                        ctx.applyHideDays(d)
+                                                        ctx.hideDaysExpanded = false
+                                                        ctx.bridgeModule.toast("已设为 ${d} 天")
+                                                    }
+                                                }
+                                                Text {
+                                                    attr {
+                                                        text("${d}天")
+                                                        fontSize(13f)
+                                                        color(if (ctx.hideDays == d) Color.WHITE else Color(0xFF23D3FD))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // 确定（应用自定义输入）
+                                    View {
+                                        attr { flexDirectionRow(); justifyContent(FlexJustifyContent.FLEX_END) }
+                                        View {
+                                            attr {
+                                                height(32f); padding(left = 18f, right = 18f); borderRadius(16f)
+                                                backgroundColor(Color(0xFF23D3FD)); alignItemsCenter(); justifyContentCenter()
+                                            }
+                                            event {
+                                                click {
+                                                    val parsed = ctx.hideDaysInput.toIntOrNull()?.coerceAtLeast(1) ?: ctx.hideDays
+                                                    ctx.applyHideDays(parsed)
+                                                    ctx.hideDaysExpanded = false
+                                                    ctx.bridgeModule.toast("已设为 ${parsed} 天")
+                                                }
+                                            }
+                                            Text { attr { text("确定"); fontSize(14f); color(Color.WHITE) } }
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        // 已隐藏列表
+                        // —— 已隐藏列表（隐藏的股票即在此展示，可手动恢复）——
                         View {
-                            attr { flexDirectionColumn(); marginTop(10f); padding(14f); backgroundColor(Color.WHITE); borderRadius(10f) }
+                            attr { flexDirectionColumn(); marginTop(10f); padding(14f); backgroundColor(Color.WHITE); borderRadius(10f); width(contentW) }
                             Text { attr { text("已隐藏的股票（到点自动恢复，也可手动恢复）"); fontSize(13f); color(Color(0xFF999999)); marginBottom(6f) } }
                             if (ctx.hiddenMap.isEmpty()) {
                                 Text { attr { text("暂无"); fontSize(14f); color(Color(0xFF999999)) } }
@@ -277,36 +377,13 @@ internal class MainTabPager : BasePager() {
                                     View {
                                         attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
                                         Text { attr { text(s.name); fontSize(15f); color(Color(0xFF222222)); flex(1f) } }
+                                        Text { attr { text(code); fontSize(12f); color(Color(0xFF999999)); marginRight(10f) } }
                                         Button {
                                             attr {
                                                 size(56f, 28f); borderRadius(14f); backgroundColor(Color(0xFFF2F3F5))
                                                 titleAttr { text("恢复"); fontSize(13f); color(Color(0xFF23D3FD)) }
                                             }
                                             event { click { ctx.unhide(code); ctx.bridgeModule.toast("已恢复 ${s.name}") } }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 我的自选
-                        Text { attr { text("我的自选"); fontSize(13f); color(Color(0xFF999999)); margin(8f, 0f, 8f, 0f) } }
-                        View {
-                            attr { flexDirectionColumn(); padding(14f); backgroundColor(Color.WHITE); borderRadius(10f) }
-                            if (ctx.watchlistCodes.isEmpty()) {
-                                Text { attr { text("暂无自选"); fontSize(14f); color(Color(0xFF999999)) } }
-                            } else {
-                                ctx.watchlistCodes.forEach { code ->
-                                    val s = MockStockSource.findByCode(code)
-                                    View {
-                                        attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
-                                        Text { attr { text(s.name); fontSize(15f); color(Color(0xFF222222)); flex(1f) } }
-                                        Button {
-                                            attr {
-                                                size(56f, 28f); borderRadius(14f); backgroundColor(Color(0xFFF2F3F5))
-                                                titleAttr { text("移除"); fontSize(13f); color(Color(0xFF999999)) }
-                                            }
-                                            event { click { ctx.toggleWatch(code); ctx.bridgeModule.toast("已移除 ${s.name}") } }
                                         }
                                     }
                                 }
