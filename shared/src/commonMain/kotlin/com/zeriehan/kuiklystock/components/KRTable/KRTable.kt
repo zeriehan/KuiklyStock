@@ -51,6 +51,8 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
     var stocks: List<Stock> by observable(emptyList())
     var onDetailClick: ((Stock) -> Unit)? = null
     var onRowClick: ((Stock) -> Unit)? = null
+    /** 长按某行：弹出操作菜单。回调参数含长按点相对 Page 的坐标（pageX/pageY），供菜单定位 */
+    var onRowLongPress: ((Stock, Float, Float) -> Unit)? = null
     private var expandedIndex: Int by observable(-1)
     /** 行情行展开后的横向分页：0=分时图 1=AI分析 2=简况（pagingEnable 整屏吸附；currentPage 仅用于圆点指示） */
     private var currentPage: Int by observable(0)
@@ -273,6 +275,11 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                 ctx.expandedIndex = if (willExpand) index else -1
                                 if (willExpand) { ctx.loadAI(index, stock); ctx.currentPage = 0 }
                                 ctx.onRowClick?.invoke(stock)
+                            }
+                            longPress { p ->
+                                // 长按手势可能分 start/move/end 多次回调；由父层按 sheetStock 去重，
+                                // 这里只负责把「股票 + 长按点坐标」抛上去定位菜单。
+                                ctx.onRowLongPress?.invoke(stock, p.pageX, p.pageY)
                             }
                             }
                             // 名称 + 代码

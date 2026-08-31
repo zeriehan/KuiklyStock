@@ -307,7 +307,14 @@ internal class StockDetailPage : BasePager() {
                                 backgroundColor(Color(0xFF23D3FD))
                                 titleAttr { text("深入聊聊这只股票 →"); fontSize(14f); color(Color.WHITE) }
                             }
-                            event { click { ctx.bridgeModule.toast("深入聊聊（Task02 待实现）") } }
+                            event {
+                                click {
+                                    // 与行情长按「问 AI」共用同一段对话（按 stockCode 隔离）
+                                    val data = JSONObject()
+                                    data.put("stockCode", code)
+                                    ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", data)
+                                }
+                            }
                         }
                     }
                 }

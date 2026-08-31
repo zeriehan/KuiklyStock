@@ -47,6 +47,60 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
         }
     }
 
+    override fun chat(
+        stock: Stock,
+        question: String,
+        history: List<ChatStore.ChatMessage>,
+        callback: (String) -> Unit,
+    ) {
+        val prompt = buildChatPrompt(stock, question, history)
+        try {
+            Utils.currentBridgeModule().llmAnalyze(prompt) { resp ->
+                val text = resp?.optString("text") ?: ""
+                if (text.isBlank()) {
+                    fallback.chat(stock, question, history, callback)
+                } else {
+                    callback(text)
+                }
+            }
+        } catch (e: Throwable) {
+            fallback.chat(stock, question, history, callback)
+        }
+    }
+
+    /**
+     * 构造多轮问答 prompt：股票基本信息 + 最近若干轮对话 + 用户当前问题。
+     * 仍要求纯文本、用【】分段，避免 Markdown。
+     */
+    private fun buildChatPrompt(
+        stock: Stock,
+        question: String,
+        history: List<ChatStore.ChatMessage>,
+    ): String {
+        val recent = history.takeLast(6).joinToString("\n") { msg ->
+            val who = if (msg.role == "user") "用户" else "AI"
+            "$who：${msg.text}"
+        }
+        return buildString {
+            appendLine("你是一名资深证券分析师，正在和用户聊一只股票。请基于股票信息与对话历史，专业、客观地回答用户的问题。")
+            appendLine("严格要求：仅输出纯文本，不要使用任何 Markdown 符号（如 #、** 等），用【】标注段落标题，字数控制在 300 字以内。")
+            appendLine()
+            appendLine("股票：${stock.name}（${stock.code}）")
+            appendLine("现价：${formatPrice(stock.price)}  涨跌幅：${formatPrice(stock.changePercent)}%")
+            appendLine("最高：${formatPrice(stock.high)}  最低：${formatPrice(stock.low)}  成交量：${formatPrice(stock.volume)} 万手")
+            appendLine()
+            if (recent.isNotBlank()) {
+                appendLine("==== 对话历史 ====")
+                appendLine(recent)
+                appendLine("====================")
+                appendLine()
+            }
+            appendLine("用户当前问题：$question")
+            appendLine()
+            appendLine("请直接回答用户问题；若涉及操作，务必强调仅供参考、不构成投资建议。")
+        }.trimEnd()
+    }
+
     /**
      * 构造证券分析师口吻的中文 prompt。要求纯文本、用【】分段，避免 Markdown 语法
      * （本工程无 Markdown 渲染组件，AI 文本直接用 Text 直出）。

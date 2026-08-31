@@ -6,11 +6,18 @@ import com.zeriehan.kuiklystock.core.Stock
 /**
  * AI 分析客户端抽象。
  *
- * - 以回调方式返回分析文本（本工程暂无 Markdown 渲染组件，统一用 Text 直出，故约定为
- *   纯文本 + 简单分段标记，不使用 `#`/`**` 等 Markdown 语法）。
+ * - [analyze]：基于量价数据生成一段结构化分析文本（详情页卡片、行情行右滑面板用）。
+ * - [chat]：多轮问答。传入股票上下文 + 历史消息 + 用户当前问题，返回 AI 回复文本。
+ *   两者都通过回调返回纯文本（本工程无 Markdown 渲染组件，统一用 Text 直出）。
  * - 离线兜底实现为股票感知的 [MockLLMClient]；真实模型接入见 [GLMFlashClient]。
- * - 回调式接口与工程内 BridgeModule 的 CallbackFn 风格一致，便于后续真实网络通道复用。
  */
 interface LLMClient {
     fun analyze(stock: Stock, kline: List<KLineBar>, callback: (String) -> Unit)
+
+    fun chat(
+        stock: Stock,
+        question: String,
+        history: List<ChatStore.ChatMessage>,
+        callback: (String) -> Unit,
+    )
 }

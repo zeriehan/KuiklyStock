@@ -4,6 +4,7 @@ import com.zeriehan.kuiklystock.core.KLineBar
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
+import com.zeriehan.kuiklystock.core.llm.ChatStore
 import kotlin.math.abs
 
 /**
@@ -19,6 +20,44 @@ class MockLLMClient : LLMClient {
         callback: (String) -> Unit
     ) {
         callback(build(stock, kline))
+    }
+
+    override fun chat(
+        stock: Stock,
+        question: String,
+        history: List<ChatStore.ChatMessage>,
+        callback: (String) -> Unit,
+    ) {
+        callback(buildChat(stock, question))
+    }
+
+    private fun buildChat(stock: Stock, question: String): String {
+        val up = stock.changePercent >= 0f
+        val q = question.trim()
+        val trendWord = if (stock.changePercent > 1.5f) "强势上行" else if (stock.changePercent < -1.5f) "弱势回调" else "区间震荡"
+        return buildString {
+            appendLine("【关于${stock.name}（${stock.code}）】")
+            appendLine("")
+            appendLine("你问的是：$q")
+            appendLine("")
+            appendLine("【简要回应】")
+            appendLine(
+                "${stock.name} 今日${if (up) "上涨" else "下跌"}${formatPercent(abs(stock.changePercent))}，现价 ${formatPrice(stock.price)}，" +
+                    "当前呈${trendWord}格局，最高 ${formatPrice(stock.high)}、最低 ${formatPrice(stock.low)}。"
+            )
+            appendLine("")
+            appendLine("【参考思路】")
+            appendLine(
+                if (q.contains("买") || q.contains("入") || q.contains("建仓"))
+                    "若考虑介入，建议等待放量突破或回踩关键支撑确认后再分批，避免追高；严格设置止损。"
+                else if (q.contains("卖") || q.contains("出") || q.contains("减"))
+                    "若考虑兑现，可沿短期均线上方分批了结、锁定利润，保留底仓观察趋势延续性。"
+                else
+                    "可结合量能变化与板块联动进一步判断；当前方向尚不明朗时以观望为主。"
+            )
+            appendLine("")
+            appendLine("（以上由大模型基于量价数据生成，仅供参考，不构成投资建议）")
+        }.trimEnd()
     }
 
     private fun build(stock: Stock, kline: List<KLineBar>): String {
