@@ -17,8 +17,12 @@ import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.Utils
 import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.components.KRTable.KRStockList
+import com.zeriehan.kuiklystock.components.KRStockBadge.KRStockBadge
 import com.zeriehan.kuiklystock.core.MockStockSource
 import com.zeriehan.kuiklystock.core.Stock
+import com.zeriehan.kuiklystock.core.StockColor
+import com.zeriehan.kuiklystock.core.formatPrice
+import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.UserStockStore
 import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 import com.zeriehan.kuiklystock.core.llm.AIAnalysisStore
@@ -120,6 +124,15 @@ internal class MainTabPager : BasePager() {
     /** 自选列表：仅含被打「自选」标签、且未被隐藏的股票 */
     internal fun watchlistStocks(): List<Stock> =
         MockStockSource.getQuotes().filter { it.code in watchlistCodes && !isHidden(it.code) }
+
+    /** 行情页「大盘指数大框」：仅取 isIndex 的指数（剔除冷却期内的隐藏项） */
+    internal fun marketIndices(): List<Stock> = visibleQuotes().filter { it.isIndex }
+
+    /** 行情页「分类板块」：非指数个股按行业分组（保留首次出现顺序） */
+    internal fun marketCategorized(): List<Pair<String, List<Stock>>> =
+        visibleQuotes().filter { !it.isIndex }
+            .groupBy { stockCategoryOf(it.name) }
+            .toList()
 
     // ===== 标签/隐藏变更 =====
     private fun toggleWatch(code: String) {
@@ -486,14 +499,16 @@ private fun ViewContainer<*, *>.renderRecents(ctx: MainTabPager, contentW: Float
     }
 }
 
-/** 行情列表：随 listToggle 翻转重建 */
+/** 行情列表：随 listToggle 翻转重建。结构 = 大盘指数大框 + 分类板块（参照同花顺） */
 private fun ViewContainer<*, *>.renderMarket(ctx: MainTabPager) {
-    KRStockList {
-        attr { flex(1f) }
-        stocks = ctx.visibleQuotes()
-        onRowClick = { /* 展开/收起由 KRStockList 内部处理 */ }
-        onDetailClick = { ctx.openDetail(it) }
-        onRowLongPress = { stock, x, y -> ctx.openSheet(stock, x, y) }
+    val w = ctx.pagerData.pageViewWidth - 24f
+    Scroller {
+        attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
+        // ===== 大盘指数大框 =====
+        ctx.marketIndices().let { if (it.isNotEmpty()) renderIndexBox(ctx, it, w) }
+        // ===== 分类板块 =====
+        ctx.marketCategorized().forEach { (title, stocks) -> renderCategory(ctx, title, stocks, w) }
+        View { attr { height(16f) } }
     }
 }
 
@@ -514,6 +529,97 @@ private fun ViewContainer<*, *>.renderWatchlist(ctx: MainTabPager) {
             onDetailClick = { ctx.openDetail(it) }
             onRowLongPress = { stock, x, y -> ctx.openSheet(stock, x, y) }
         }
+    }
+}
+
+/**
+ * 股票所属板块/行业（与 KRStockList.deriveIndustry 同口径，供行情分类使用）。
+ * ⚠️ 文件级函数：在 vif/forEach 闭包里调用的 ViewContainer 扩展必须是文件级，否则编译丢分派接收者。
+ */
+private fun stockCategoryOf(name: String): String = when {
+    name.contains("茅台") || name.contains("五粮液") -> "白酒"
+    name.contains("银行") -> "银行"
+    name.contains("平安") -> "保险"
+    name.contains("宁德") -> "电池"
+    name.contains("指数") -> "大盘指数"
+    else -> "制造业"
+}
+
+/** 大盘指数大框：横向并列显示各指数，点击进详情 */
+private fun ViewContainer<*, *>.renderIndexBox(ctx: MainTabPager, indices: List<Stock>, w: Float) {
+    View {
+        attr {
+            margin(left = 12f, right = 12f, top = 12f)
+            padding(12f); backgroundColor(Color.WHITE); borderRadius(10f); width(w)
+        }
+        Text { attr { text("大盘指数"); fontSize(14f); fontWeightSemiBold(); color(Color(0xFF222222)); marginBottom(10f) } }
+        View {
+            attr { flexDirectionRow() }
+            indices.forEach { s ->
+                View {
+                    attr { flex(1f); flexDirectionColumn(); alignItemsCenter() }
+                    event { click { ctx.openDetail(s) } }
+                    Text { attr { text(s.name); fontSize(13f); color(Color(0xFF666666)) } }
+                    Text { attr { text(formatPrice(s.price)); fontSize(16f); color(Color(0xFF222222)); marginTop(4f) } }
+                    Text {
+                        attr {
+                            text(formatPercent(s.changePercent))
+                            fontSize(13f); color(StockColor.of(s.changePercent)); marginTop(2f)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 分类板块：板块头（板块名 + 只数 + 板块均涨跌幅）+ 该组股票行 */
+private fun ViewContainer<*, *>.renderCategory(ctx: MainTabPager, title: String, stocks: List<Stock>, w: Float) {
+    val avg = if (stocks.isNotEmpty()) stocks.map { it.changePercent }.average().toFloat() else 0f
+    View {
+        attr {
+            marginTop(12f); marginLeft(12f); marginRight(12f)
+            backgroundColor(Color.WHITE); borderRadius(10f); width(w); flexDirectionColumn()
+        }
+        // 板块头
+        View {
+            attr { flexDirectionRow(); alignItemsCenter(); padding(12f) }
+            Text { attr { text(title); fontSize(15f); fontWeightSemiBold(); color(Color(0xFF222222)) } }
+            Text { attr { text("${stocks.size} 只"); fontSize(12f); color(Color(0xFF999999)); marginLeft(8f) } }
+            View { attr { flex(1f) } }
+            Text { attr { text(formatPercent(avg)); fontSize(13f); color(StockColor.of(avg)); marginRight(2f) } }
+        }
+        View { attr { height(0.5f); backgroundColor(Color(0xFFEEEEEE)); marginLeft(12f); marginRight(12f) } }
+        // 股票行
+        stocks.forEach { s -> renderMarketRow(ctx, s) }
+        View { attr { height(0.5f); backgroundColor(Color(0xFFEEEEEE)); marginLeft(12f); marginRight(12f) } }
+    }
+}
+
+/** 分类板块里的单只股票行：名称+代码 / 最新价 / 涨跌幅徽章；支持点击进详情、长按弹菜单 */
+private fun ViewContainer<*, *>.renderMarketRow(ctx: MainTabPager, stock: Stock) {
+    View {
+        attr {
+            height(64f); flexDirectionRow(); alignItemsCenter()
+            padding(left = 12f, right = 12f); backgroundColor(Color.WHITE)
+        }
+        event {
+            click { ctx.openDetail(stock) }
+            longPress { p -> ctx.openSheet(stock, p.pageX, p.pageY) }
+        }
+        // 名称 + 代码
+        View {
+            attr { flex(1f); flexDirectionColumn() }
+            Text { attr { text(stock.name); fontSize(16f); color(Color(0xFF222222)) } }
+            Text { attr { text(stock.code); fontSize(12f); color(Color(0xFF999999)); marginTop(4f) } }
+        }
+        // 最新价（右对齐）
+        View {
+            attr { flex(1f); flexDirectionRow(); justifyContentFlexEnd() }
+            Text { attr { text(formatPrice(stock.price)); fontSize(16f); color(Color(0xFF222222)) } }
+        }
+        // 涨跌幅徽章
+        KRStockBadge { attr { changePercent = stock.changePercent } }
     }
 }
 
