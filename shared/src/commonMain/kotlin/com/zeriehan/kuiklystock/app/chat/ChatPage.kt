@@ -70,6 +70,12 @@ internal class ChatPage : BasePager() {
     private lateinit var inputRef: ViewRef<InputView>
     /** 消息流 Scroller ref，进页/来新消息时滚到底部（最新） */
     private lateinit var scrollerRef: ViewRef<ScrollerView<*, *>>
+    /** 是否“贴底”：用户在底部附近（或首次进入）时，新消息/布局变化自动滚到底部；在看历史时不打断 */
+    private var stickToBottom: Boolean = true
+    /** 聊天首屏是否已定位到底部：首屏强制贴底（无论 stickToBottom 当时算成啥），之后才受 stickToBottom 约束 */
+    private var chatPositioned: Boolean = false
+    /** 最近一次 contentSizeChanged 拿到的真实内容高度（用于精确滚到底，避免极大值 clamp 失效） */
+    private var lastContentH: Float = 0f
     /** 是否已初始化（参数须在 body 内读取，故用此标志保证仅初始化一次） */
     private var bootstrapped: Boolean = false
     /** 页面是否已销毁：销毁后监听回调直接返回，避免操作已失效的 observable */
@@ -130,11 +136,14 @@ internal class ChatPage : BasePager() {
     }
 
     /**
-     * 滚动消息流到底部（最新消息）。offsetY 给极大值，由原生 Scroller 自动 clamp 到内容底部。
+     * 滚动消息流到底部（最新消息）。
+     * 优先用 contentSizeChanged 拿到的真实内容高度（offsetY=contentHeight 会由原生 clamp 到
+     * 真正的底部，即最新消息）；万一来不及拿到真实高度，再退用极大值兜底。
      * animated=false：进页面/来新消息时「瞬移」到底部，避免从最顶一路扫下来的动画，也更可靠。
      */
     private fun scrollToBottom(animated: Boolean = false) {
-        scrollerRef.view?.setContentOffset(0f, 100000f, animated)
+        val h = if (lastContentH > 0f) lastContentH else 100000f
+        scrollerRef.view?.setContentOffset(0f, h, animated)
     }
 
     /**
@@ -148,7 +157,10 @@ internal class ChatPage : BasePager() {
     private fun scrollToBottomSoon() {
         val pid = BridgeManager.currentPageId
         listOf(60, 250, 500).forEach { d ->
-            com.tencent.kuikly.core.timer.setTimeout(pid, d) { scrollToBottom(false) }
+            com.tencent.kuikly.core.timer.setTimeout(pid, d) {
+                // 仅当用户本就在底部附近才跟随滚动；看历史时不打断（豆包/微信同款交互）
+                if (stickToBottom) scrollToBottom(false)
+            }
         }
     }
 
@@ -242,6 +254,24 @@ internal class ChatPage : BasePager() {
             Scroller {
                 ref { ctx.scrollerRef = it }
                 attr { flex(1f); flexDirectionColumn(); padding(12f) }
+                event {
+                    // 真实内容尺寸就绪（布局完成后才触发）：若在底部附近 / 首次进入，瞬移到底部（最新）。
+                    // 这比「setTimeout 给个极大值」可靠——后者在布局未完成（内容高度=0）时 clamp 到顶，
+                    // 正是「进聊天页停在最老消息」的根因。
+                    contentSizeChanged { _, h ->
+                        ctx.lastContentH = h
+                        // 首屏强制贴底；之后仅在「用户本就贴底」时跟随，避免打断看历史
+                        if (!ctx.chatPositioned || ctx.stickToBottom) {
+                            ctx.scrollerRef.view?.setContentOffset(0f, h, false)
+                            ctx.chatPositioned = true
+                        }
+                    }
+                    // 用户拖拽时实时更新「是否贴底」：在看历史（不在底部）时不自动回弹打断阅读；
+                    // 回到底部附近才会跟新消息滚动（豆包/微信同款交互）。
+                    scroll { params ->
+                        ctx.stickToBottom = (params.contentHeight - params.offsetY - params.viewHeight) < 80f
+                    }
+                }
                 // 关键：本版本 body 不会因 observable 变化而重跑，必须用 vif 翻转（renderToggle）
                 // 强制重建消息列表内容，否则发消息后气泡永远不刷新。
                 vif({ ctx.renderToggle }) { val c = this; c.renderMessages(ctx) }
