@@ -20,6 +20,7 @@ import com.zeriehan.kuiklystock.core.MockStockSource
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
+import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 import com.zeriehan.kuiklystock.core.llm.ChatStore
 import com.zeriehan.kuiklystock.core.llm.ChatSync
 import com.zeriehan.kuiklystock.core.llm.LLM
@@ -42,8 +43,10 @@ import com.tencent.kuikly.core.manager.BridgeManager
  * 2. 气泡行作为消息列(Scroller, 默认 alignItems=STRETCH)的直接子节点自动拉满整行宽度，再用
  *    justifyContent 控制左/右对齐；气泡只给 maxWidth 上限，文本在其中自动换行。绝不给气泡 flex(1f)。
  * 3. GLM/Mock 回调均已在主线程（宿主 KRBridgeModule 用 Handler(Looper.getMainLooper()).post 切主线程；Mock 同步即主线程），
- *    故 chat 回调里直接改 observable，不再嵌套 setTimeout 切线程（那层在子页面不可靠，曾导致「分析完什么都不显示」）。
- *    仅用 setTimeout 做一次「思考」延迟，让加载态可见。
+ *    故 chat 回调里直接写单例 ChatStore 并 bump，不再用 setTimeout 切线程。
+ * 3.1 「后台继续跑」：请求经 AIJobCenter 发到常驻根页面(MainTabPager)的桥上，
+ *    因此退出本页后 AI 仍会继续生成；结果写进单例 ChatStore（并已落盘 SharedPreferences），
+ *    重新进入时 pageDidAppear 会同步出来。等待状态由 ChatStore.isPending 跨页面保留。
  * 4. 键盘：宿主设 adjustNothing，这里监听 keyboardHeightChange 手动把内容区底部抬起(paddingBottom)，
  *    标题栏固定不动、仅输入栏贴着键盘上沿。
  */
@@ -69,9 +72,28 @@ internal class ChatPage : BasePager() {
     private lateinit var scrollerRef: ViewRef<ScrollerView<*, *>>
     /** 是否已初始化（参数须在 body 内读取，故用此标志保证仅初始化一次） */
     private var bootstrapped: Boolean = false
+    /** 页面是否已销毁：销毁后监听回调直接返回，避免操作已失效的 observable */
+    private var destroyed: Boolean = false
+    /** ChatSync 监听（须为稳定的同一对象，才能在 pageWillDestroy 里精确移除） */
+    private val chatListener: () -> Unit = { refreshMessages() }
 
     override fun created() {
         super.created()
+    }
+
+    /**
+     * 重新进入聊天页（或从详情页/其它子页返回）时同步最新状态：
+     * 页面关闭期间 AI 可能已经回复完成，也可能仍在"后台"生成中。
+     */
+    override fun pageDidAppear() {
+        super.pageDidAppear()
+        refreshMessages()
+    }
+
+    override fun pageWillDestroy() {
+        destroyed = true
+        ChatSync.removeListener(chatListener)
+        super.pageWillDestroy()
     }
 
     /**
@@ -96,6 +118,10 @@ internal class ChatPage : BasePager() {
             )
         }
         bootstrapped = true
+        // 若上一条提问还在"后台"生成中，进入页面时继续保持思考态
+        aiThinking = ChatStore.isPending(code)
+        // 注册会话变更监听：AI 在页面关闭期间回复完成时，本页（若仍活着）即时刷新出气泡
+        ChatSync.addListener(chatListener)
         // 通知主框架：本股票已有对话（用于「最近对话」即时刷新）
         ChatSync.bump()
     }
@@ -112,36 +138,49 @@ internal class ChatPage : BasePager() {
         com.tencent.kuikly.core.timer.setTimeout(pid, 80) { scrollToBottom() }
     }
 
-    /** 发送：追加用户消息 -> 调 LLM.chat -> 追加 AI 回复 */
+    /**
+     * 发送：追加用户消息 -> 标记等待 -> 调 LLM.chat（常驻根页桥，后台安全）-> 追加 AI 回复。
+     *
+     * ⚠️ 这里**刻意不用 setTimeout**：`setTimeout(pagerId, ...)` 绑定的是当前子页面，
+     * 一退出聊天页定时器就被销毁 → 请求根本不会发出，这正是「发完消息就退出，AI 再也不回复」
+     * 的元凶之一。现在直接发起，请求经 [com.zeriehan.kuiklystock.core.llm.AIJobCenter]
+     * 挂在常驻根页面的桥上，页面关掉后照常飞行、照常回调。
+     */
     private fun send() {
         val q = inputText.trim()
-        if (q.isEmpty() || aiThinking) return
+        if (q.isEmpty() || ChatStore.isPending(code)) return
         inputText = ""
         inputRef.view?.setText("")
         ChatStore.append(code, ChatStore.ChatMessage("user", q))
-        msgVersion++
-        renderToggle = !renderToggle
-        scrollSoon()
+        ChatStore.setPending(code, true)
+        // 统一走 ChatSync.bump()：本页监听刷新气泡，主框架监听刷新「最近对话」
         ChatSync.bump()
-        aiThinking = true
+
         // 传完整历史给模型作为上下文
         val history = ChatStore.messages(code)
-        // 宿主 KRBridgeModule.llmAnalyze 已在子线程请求、并在主线程（Handler post）回调，
-        // Mock 同步也是主线程；因此 chat 回调里可直接改 observable，无需再嵌套 setTimeout 切线程
-        // （之前多套的那层 setTimeout 在子页面不可靠，正是「分析完什么都不显示」的根因）。
-        // 这里仅用 setTimeout 做一段「思考」延迟，让加载态可见。
-        val pid = BridgeManager.currentPageId
-        com.tencent.kuikly.core.timer.setTimeout(pid, 600) {
-            LLM.client.chat(stock, q, history) { text ->
-                val reply = text.ifBlank { "（暂时没有回复，请稍后再试）" }
-                ChatStore.append(code, ChatStore.ChatMessage("assistant", reply))
-                msgVersion++
-                renderToggle = !renderToggle
-                scrollSoon()
-                ChatSync.bump()
-                aiThinking = false
+        LLM.client.chat(stock, q, history) { text ->
+            val reply = text.ifBlank { "（暂时没有回复，请稍后再试）" }
+            // 结果写进单例 ChatStore：即使本页已销毁，重新进入也能看到这条回复
+            ChatStore.append(code, ChatStore.ChatMessage("assistant", reply))
+            ChatStore.setPending(code, false)
+            ChatSync.bump()
+            // 后台跑完的提示：若用户已退出聊天页，用常驻桥弹 toast 告知（本页桥可能已失效）
+            if (destroyed) {
+                AIJobCenter.toast("「${stock.name}」的 AI 已回复，点开对话查看")
             }
         }
+    }
+
+    /**
+     * 消息区刷新：由 [ChatSync] 监听驱动（本页监听 + 主框架监听各一份）。
+     * 只在这里翻转 renderToggle，避免「直接翻转 + bump 触发监听再翻转」互相抵消。
+     */
+    private fun refreshMessages() {
+        if (destroyed || !::code.isInitialized) return
+        msgVersion++
+        aiThinking = ChatStore.isPending(code)
+        renderToggle = !renderToggle
+        scrollSoon()
     }
 
     override fun body(): ViewBuilder {

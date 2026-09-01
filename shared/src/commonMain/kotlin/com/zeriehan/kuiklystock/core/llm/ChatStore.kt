@@ -30,6 +30,13 @@ object ChatStore {
     /** 用 LinkedHashMap 保证「最近对话」按产生顺序展示 */
     private val conversations = linkedMapOf<String, MutableList<ChatMessage>>()
 
+    /**
+     * 正在等待 AI 回复的股票代码。
+     * 刻意**只存内存、不落盘**：进程被杀时自动清空，避免下次启动卡在"AI 思考中…"；
+     * 而同一次会话内退出聊天页再回来，思考态仍保留（配合"后台继续跑"）。
+     */
+    private val pending = mutableSetOf<String>()
+
     private var prefs: SharedPreferencesModule? = null
 
     // ===== 持久化 =====
@@ -127,7 +134,16 @@ object ChatStore {
     /** 清空某股票对话（自动落盘） */
     fun clear(code: String) {
         conversations.remove(code)
+        pending.remove(code)
         save()
+    }
+
+    /** 该股票是否正在等待 AI 回复（跨页面：退出聊天页后仍为 true，直到回复回来） */
+    fun isPending(code: String): Boolean = code in pending
+
+    /** 标记/取消「等待 AI 回复」 */
+    fun setPending(code: String, value: Boolean) {
+        if (value) pending.add(code) else pending.remove(code)
     }
 
     data class ChatMessage(

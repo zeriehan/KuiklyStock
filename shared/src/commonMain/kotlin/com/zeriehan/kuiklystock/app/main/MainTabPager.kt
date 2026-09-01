@@ -20,6 +20,7 @@ import com.zeriehan.kuiklystock.components.KRTable.KRStockList
 import com.zeriehan.kuiklystock.core.MockStockSource
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.UserStockStore
+import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 import com.zeriehan.kuiklystock.core.llm.ChatStore
 import com.zeriehan.kuiklystock.core.llm.ChatSync
 
@@ -76,6 +77,9 @@ internal class MainTabPager : BasePager() {
         loadState()
         // 注入聊天持久化句柄：冷启动时从 SharedPreferences 恢复历史对话（否则「AI」Tab 记录会丢）
         ChatStore.attach(prefs)
+        // 把「常驻根页面」的桥注册给 AI 任务中心：此后所有 LLM 请求都走这个桥，
+        // 子页面（ChatPage / StockDetailPage）关闭后请求与回调依然有效 —— 即 AI 在"后台"继续跑。
+        AIJobCenter.attach(bridgeModule)
         // 注册跨页监听：ChatPage 写入会话时即时刷新「最近对话」（vif 翻转强制重建，无需手动切 Tab）
         ChatSync.addListener { convToggle = !convToggle }
     }

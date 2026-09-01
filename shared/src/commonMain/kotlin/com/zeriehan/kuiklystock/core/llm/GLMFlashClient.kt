@@ -1,6 +1,5 @@
 package com.zeriehan.kuiklystock.core.llm
 
-import com.zeriehan.kuiklystock.base.Utils
 import com.zeriehan.kuiklystock.core.KLineBar
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.formatPrice
@@ -11,7 +10,9 @@ import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
  *
  * 调用链路：
  * 1. shared 侧拼好中文分析 prompt（[buildPrompt]）；
- * 2. 经 `BridgeModule.llmAnalyze` 下发到宿主；
+ * 2. 经 [AIJobCenter] 下发到宿主 `BridgeModule.llmAnalyze`；
+ *    ⚠️ 必须走 AIJobCenter（常驻根页面桥），不能用"当前页"的桥 ——
+ *    否则退出聊天页/详情页后回调会随页面销毁而丢失（AI 不再回复）；
  * 3. 宿主 `KRBridgeModule` 用 HttpURLConnection 调
  *    `POST https://open.bigmodel.cn/api/paas/v4/chat/completions`
  *    （Authorization: Bearer，Key 由 local.properties 经 BuildConfig 注入）；
@@ -33,7 +34,8 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
     ) {
         val prompt = buildPrompt(stock, kline)
         try {
-            Utils.currentBridgeModule().llmAnalyze(prompt) { resp ->
+            // 走 AIJobCenter（常驻根页面桥）：页面关闭后请求与回调依然有效
+            AIJobCenter.sendPrompt(prompt) { resp ->
                 val text = resp?.optString("text") ?: ""
                 if (text.isBlank()) {
                     fallback.analyze(stock, kline, callback)
@@ -55,7 +57,8 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
     ) {
         val prompt = buildChatPrompt(stock, question, history)
         try {
-            Utils.currentBridgeModule().llmAnalyze(prompt) { resp ->
+            // 走 AIJobCenter（常驻根页面桥）：退出聊天页后 AI 仍会在"后台"回复
+            AIJobCenter.sendPrompt(prompt) { resp ->
                 val text = resp?.optString("text") ?: ""
                 if (text.isBlank()) {
                     fallback.chat(stock, question, history, callback)
