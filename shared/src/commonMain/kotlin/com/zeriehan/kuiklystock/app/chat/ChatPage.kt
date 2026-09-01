@@ -14,6 +14,8 @@ import com.tencent.kuikly.core.views.*
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.compose.Button
 import com.tencent.kuikly.core.layout.FlexJustifyContent
+import com.tencent.kuikly.core.views.ScrollerView
+import com.tencent.kuikly.core.manager.BridgeManager
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.core.MockStockSource
@@ -24,8 +26,6 @@ import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 import com.zeriehan.kuiklystock.core.llm.ChatStore
 import com.zeriehan.kuiklystock.core.llm.ChatSync
 import com.zeriehan.kuiklystock.core.llm.LLM
-import com.tencent.kuikly.core.views.ScrollerView
-import com.tencent.kuikly.core.manager.BridgeManager
 
 /**
  * AI 聊天页（按股票代码隔离的同一段对话）。
@@ -68,7 +68,7 @@ internal class ChatPage : BasePager() {
     private var keyboardH: Float by observable(0f)
     /** 输入框 ref，用于发送后清空 */
     private lateinit var inputRef: ViewRef<InputView>
-    /** 消息流 Scroller ref，用于新消息到达时滚动到底部 */
+    /** 消息流 Scroller ref，进页/来新消息时滚到底部（最新） */
     private lateinit var scrollerRef: ViewRef<ScrollerView<*, *>>
     /** 是否已初始化（参数须在 body 内读取，故用此标志保证仅初始化一次） */
     private var bootstrapped: Boolean = false
@@ -124,6 +124,9 @@ internal class ChatPage : BasePager() {
         ChatSync.addListener(chatListener)
         // 通知主框架：本股票已有对话（用于「最近对话」即时刷新）
         ChatSync.bump()
+        // 进页面时把消息流滚到最底（最新）。放在 body 内（ensureInit）而非 pageDidAppear，
+        // 以确保「一定会执行」—— 部分子页生命周期下 pageDidAppear 不可靠，会导致从不滚到底。
+        scrollToBottomSoon()
     }
 
     /**
