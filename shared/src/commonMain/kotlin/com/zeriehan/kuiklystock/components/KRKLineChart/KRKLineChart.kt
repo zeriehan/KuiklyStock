@@ -6,9 +6,12 @@ import com.tencent.kuikly.core.base.ComposeEvent
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.base.ViewRef
+import com.tencent.kuikly.core.manager.BridgeManager
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.*
 import com.tencent.kuikly.core.views.CanvasContext
+import com.tencent.kuikly.core.views.ScrollerView
 import com.zeriehan.kuiklystock.core.KLineBar
 import com.zeriehan.kuiklystock.core.TimeSharingPoint
 import com.zeriehan.kuiklystock.core.StockColor
@@ -59,6 +62,13 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     /** 加载更多历史（横向滚到最左时由外层设置） */
     var onLoadMore: (() -> Unit)? = null
 
+    /** 主图 Scroller ref：初次/换股时把可视区定位到最新一根（最右） */
+    private lateinit var scrollerRef: ViewRef<ScrollerView<*, *>>
+    /** 已为当前数据集自动滚到最新一次，避免重复回弹 */
+    private var autoScrolledFor: Any? = null
+    /** 初始自动滚动只排一次（body 会因缩放/横滚重跑，不能每次都排定时器） */
+    private var scrollRetryArmed = false
+
     /** 十字光标状态 */
     var crossActive: Boolean by observable(false)
     var crossX: Float by observable(0f)   // 主画布局部 X
@@ -99,6 +109,18 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     /** 缩放（± 按钮 / 兜底捏合），限制在 0.5x–3x */
     private fun zoomBy(factor: Float) {
         zoom = (zoom * factor).coerceIn(ZOOM_MIN, ZOOM_MAX)
+    }
+
+    /**
+     * 数据就绪后把可视区定位到最新一根（最右）：offsetX 给极大值，原生 Scroller 自动 clamp 到右端。
+     * 用 [autoScrolledFor] 按数据集引用去重，换股（传入新 list）才再次自动滚，用户手动滑动不再被回弹。
+     */
+    private fun scrollToLatestIfNeeded() {
+        val data = if (isTimeSharing()) timeSharing else bars
+        if (data.isEmpty()) return
+        if (autoScrolledFor === data) return
+        autoScrolledFor = data
+        scrollerRef.view?.setContentOffset(100000f, 0f, false)
     }
 
     /** 价格上下界（含 8% 留白） */
@@ -150,6 +172,15 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
 
     override fun body(): ViewBuilder {
         val ctx = this
+        // 初次/换股后把可视区定位到最新一根（最右）：用递增延迟重试，等主画布（宽=数据量×步长×缩放）
+        // 布局完成后才能 scroll 到真正右端；一次性守卫避免 body 因缩放/横滚重跑时重复排定时器。
+        if (!ctx.scrollRetryArmed) {
+            ctx.scrollRetryArmed = true
+            val pid = BridgeManager.currentPageId
+            listOf(60, 250, 500, 900).forEach { d ->
+                com.tencent.kuikly.core.timer.setTimeout(pid, d) { ctx.scrollToLatestIfNeeded() }
+            }
+        }
         return {
             View {
                 attr {
@@ -200,6 +231,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
 
                     // 主图（横向滚动浏览历史；滚到最左触发加载更多）
                     Scroller {
+                        ref { ctx.scrollerRef = it }
                         attr { flex(1f); flexDirectionRow(); height(ctx.CHART_H) }
                         event {
                             scroll(sync = true) { params ->

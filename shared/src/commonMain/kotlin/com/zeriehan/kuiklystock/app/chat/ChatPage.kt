@@ -126,16 +126,27 @@ internal class ChatPage : BasePager() {
         ChatSync.bump()
     }
 
-    /** 滚动消息流到底部（新消息到达时调用，确保不被 Scroller 视口截断） */
-    private fun scrollToBottom() {
-        // offsetY 给极大值，由原生 Scroller 自动 clamp 到内容底部
-        scrollerRef.view?.setContentOffset(0f, 100000f, true)
+    /**
+     * 滚动消息流到底部（最新消息）。offsetY 给极大值，由原生 Scroller 自动 clamp 到内容底部。
+     * animated=false：进页面/来新消息时「瞬移」到底部，避免从最顶一路扫下来的动画，也更可靠。
+     */
+    private fun scrollToBottom(animated: Boolean = false) {
+        scrollerRef.view?.setContentOffset(0f, 100000f, animated)
     }
 
-    /** 延迟一帧再滚到底，等 vif 翻转后的列表完成布局 */
-    private fun scrollSoon() {
+    /**
+     * 进页面或内容重建后，确保滚动到底部（最新消息）。
+     *
+     * ⚠️ 关键坑：列表（vif 翻转后）布局完成往往晚于一次 setTimeout 触发，
+     * 若只延迟 80ms 就滚，内容高度还没算出来 → clamp 到 0 → 停在最顶（即最老消息），
+     * 这正是「进聊天页从头开始显示」的原因。故用递增延迟多次重试，最后一次（布局已完成）
+     * 会把位置 clamp 到真正的底部。
+     */
+    private fun scrollToBottomSoon() {
         val pid = BridgeManager.currentPageId
-        com.tencent.kuikly.core.timer.setTimeout(pid, 80) { scrollToBottom() }
+        listOf(60, 250, 500).forEach { d ->
+            com.tencent.kuikly.core.timer.setTimeout(pid, d) { scrollToBottom(false) }
+        }
     }
 
     /**
@@ -180,7 +191,7 @@ internal class ChatPage : BasePager() {
         msgVersion++
         aiThinking = ChatStore.isPending(code)
         renderToggle = !renderToggle
-        scrollSoon()
+        scrollToBottomSoon()
     }
 
     override fun body(): ViewBuilder {
