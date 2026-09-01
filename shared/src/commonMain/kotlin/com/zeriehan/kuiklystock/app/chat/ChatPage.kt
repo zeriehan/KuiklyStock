@@ -152,7 +152,8 @@ internal class ChatPage : BasePager() {
             attr {
                 flex(1f)
                 flexDirectionColumn()
-                backgroundColor(Color(0xFFF2F3F5))
+                // 页面底色比气泡略深一档（微信同款），让 AI 的白色气泡轮廓清晰可辨
+                backgroundColor(Color(0xFFEDEFF2))
                 // 键盘弹出时手动把内容区底部抬起，使输入栏贴着键盘上沿（标题栏固定不动）
                 paddingBottom(ctx.keyboardH)
             }
@@ -242,12 +243,12 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
         Text { attr { text("（暂无消息）"); fontSize(13f); color(Color(0xFF999999)); marginTop(20f) } }
     }
     msgs.forEach { m -> bubble(m.role, m.text, maxBubbleW) }
-    // 思考中占位气泡
+    // 思考中占位气泡（与 AI 气泡同款灰白底，保持视觉一致）
     vif({ ctx.aiThinking }) {
         View {
             attr {
                 alignSelfFlexStart(); marginBottom(10f)
-                padding(10f); borderRadius(12f); backgroundColor(Color(0xFFF2F3F5))
+                padding(10f); borderRadius(12f); backgroundColor(Color(0xFFFFFFFF))
             }
             Text { attr { text("AI 思考中…"); fontSize(14f); color(Color(0xFF999999)) } }
         }
@@ -274,7 +275,9 @@ private fun ViewContainer<*, *>.bubble(role: String, text: String, maxBubbleW: F
                 maxWidth(maxBubbleW)
                 padding(10f)
                 borderRadius(12f)
-                backgroundColor(if (isUser) Color(0xFF23D3FD) else Color(0xFFF2F3F5))
+                // AI 气泡用「灰白」底：页面背景是 0xFFF2F3F5（浅灰），气泡用近白 0xFFFAFBFC 会几乎融进背景，
+                // 故直接用纯白 0xFFFFFFFF —— 在浅灰页面上呈现为清晰可辨的「灰白色气泡」（微信同款观感）。
+                backgroundColor(if (isUser) Color(0xFF23D3FD) else Color(0xFFFFFFFF))
             }
             Text {
                 attr {

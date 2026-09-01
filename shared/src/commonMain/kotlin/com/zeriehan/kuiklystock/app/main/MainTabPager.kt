@@ -13,7 +13,6 @@ import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.*
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.layout.FlexJustifyContent
-import com.tencent.kuikly.core.views.compose.Button
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.Utils
 import com.zeriehan.kuiklystock.base.bridgeModule
@@ -45,7 +44,7 @@ internal class MainTabPager : BasePager() {
 
     // ===== 持久化镜像（响应式）=====
     internal var watchlistCodes: Set<String> by observable(emptySet())
-    private var hiddenMap: Map<String, Long> by observable(emptyMap())
+    internal var hiddenMap: Map<String, Long> by observable(emptyMap())
     private var hideDays: Int by observable(7)
     /** 强制重渲染计数：标签/隐藏/设置变更后 +1（辅助用，真正触发列表重建靠下方 vif 翻转） */
     internal var dataVersion: Int by observable(0)
@@ -53,6 +52,8 @@ internal class MainTabPager : BasePager() {
     internal var convToggle: Boolean by observable(false)
     /** vif 翻转触发器：行情/自选列表据此强制重建 */
     internal var listToggle: Boolean by observable(false)
+    /** vif 翻转触发器：「我的」页的隐藏股票入口行据其翻转重建（数量/天数的实时同步） */
+    internal var mineToggle: Boolean by observable(false)
     /** 「自动恢复周期」展开态 */
     private var hideDaysExpanded: Boolean by observable(false)
     /** 「自动恢复周期」自定义输入缓冲 */
@@ -73,15 +74,18 @@ internal class MainTabPager : BasePager() {
     override fun viewDidLoad() {
         super.viewDidLoad()
         loadState()
+        // 注入聊天持久化句柄：冷启动时从 SharedPreferences 恢复历史对话（否则「AI」Tab 记录会丢）
+        ChatStore.attach(prefs)
         // 注册跨页监听：ChatPage 写入会话时即时刷新「最近对话」（vif 翻转强制重建，无需手动切 Tab）
         ChatSync.addListener { convToggle = !convToggle }
     }
 
-    /** 从子页（如 ChatPage）返回时强制刷新：已隐藏列表 / 最近对话即时同步 */
+    /** 从子页（如 ChatPage / HiddenStocks）返回时强制刷新：已隐藏列表 / 最近对话即时同步 */
     override fun pageDidAppear() {
         super.pageDidAppear()
         loadState()
         convToggle = !convToggle
+        mineToggle = !mineToggle
     }
 
     // ===== 持久化读写 =====
@@ -115,11 +119,10 @@ internal class MainTabPager : BasePager() {
     }
 
     /** 标签/隐藏/恢复天数变更后：计数 + 翻转让行情/自选列表（vif 内）整体重建 */
-
-    /** 标签/隐藏/恢复天数变更后：计数 + 翻转让行情/自选列表（vif 内）整体重建 */
     private fun bumpList() {
         dataVersion++
         listToggle = !listToggle
+        mineToggle = !mineToggle
     }
 
     private fun hideStock(code: String) {
@@ -128,24 +131,12 @@ internal class MainTabPager : BasePager() {
         bumpList()
     }
 
-    /** 标签/隐藏/恢复天数变更后：计数 + 翻转让行情/自选列表（vif 内）整体重建 */
-
-    private fun unhide(code: String) {
-        hiddenMap = hiddenMap - code
-        UserStockStore.saveHidden(prefs, hiddenMap)
-        bumpList()
-    }
-
-    /** 标签/隐藏/恢复天数变更后：计数 + 翻转让行情/自选列表（vif 内）整体重建 */
-
     /** 设置自动恢复天数（最少 1 天），并落盘 */
     private fun applyHideDays(days: Int) {
         hideDays = days.coerceAtLeast(1)
         UserStockStore.saveHideDays(prefs, hideDays)
         bumpList()
     }
-
-    /** 标签/隐藏/恢复天数变更后：计数 + 翻转让行情/自选列表（vif 内）整体重建 */
 
     /** 展开/收起「自动恢复周期」面板；展开时把当前值同步到输入框 */
     private fun toggleHideDaysExpanded() {
@@ -333,30 +324,9 @@ internal class MainTabPager : BasePager() {
                                 }
                             }
                         }
-                        // —— 已隐藏列表（隐藏的股票即在此展示，可手动恢复）——
-                        View {
-                            attr { flexDirectionColumn(); marginTop(10f); padding(14f); backgroundColor(Color.WHITE); borderRadius(10f); width(contentW) }
-                            Text { attr { text("已隐藏的股票（到点自动恢复，也可手动恢复）"); fontSize(13f); color(Color(0xFF999999)); marginBottom(6f) } }
-                            if (ctx.hiddenMap.isEmpty()) {
-                                Text { attr { text("暂无"); fontSize(14f); color(Color(0xFF999999)) } }
-                            } else {
-                                ctx.hiddenMap.toList().forEach { (code, _) ->
-                                    val s = MockStockSource.findByCode(code)
-                                    View {
-                                        attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
-                                        Text { attr { text(s.name); fontSize(15f); color(Color(0xFF222222)); flex(1f) } }
-                                        Text { attr { text(code); fontSize(12f); color(Color(0xFF999999)); marginRight(10f) } }
-                                        Button {
-                                            attr {
-                                                size(56f, 28f); borderRadius(14f); backgroundColor(Color(0xFFF2F3F5))
-                                                titleAttr { text("恢复"); fontSize(13f); color(Color(0xFF23D3FD)) }
-                                            }
-                                            event { click { ctx.unhide(code); ctx.bridgeModule.toast("已恢复 ${s.name}") } }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // —— 隐藏股票入口：点击跳转到独立页面集中管理，列表本身不再铺在「我的」页 ——
+                        vif({ ctx.mineToggle }) { val c = this; c.renderHiddenEntry(ctx, contentW) }
+                        vif({ !ctx.mineToggle }) { val c = this; c.renderHiddenEntry(ctx, contentW) }
                         View { attr { height(20f) } }
                     }
                 }
@@ -534,6 +504,36 @@ private fun ViewContainer<*, *>.renderWatchlist(ctx: MainTabPager) {
             onDetailClick = { ctx.openDetail(it) }
             onRowLongPress = { stock, x, y -> ctx.openSheet(stock, x, y) }
         }
+    }
+}
+
+/**
+ * 「我的」页的隐藏股票入口行：点击跳转到 HiddenStocks 页集中管理。
+ * 列表本身不再铺在「我的」页（避免设置页过长），这里只展示数量与跳转箭头。
+ * 数量随 mineToggle 翻转同步（本版本 body 不随 observable 重跑）。
+ */
+private fun ViewContainer<*, *>.renderHiddenEntry(ctx: MainTabPager, contentW: Float) {
+    ctx.mineToggle // 依赖保险
+    val n = ctx.hiddenMap.size
+    View {
+        attr {
+            flexDirectionRow(); alignItemsCenter(); marginTop(10f)
+            padding(14f); backgroundColor(Color.WHITE); borderRadius(10f); width(contentW)
+        }
+        event {
+            click {
+                ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME)
+                    .openPage("HiddenStocks", JSONObject())
+            }
+        }
+        Text { attr { text("不感兴趣的股票"); fontSize(15f); color(Color(0xFF222222)); flex(1f) } }
+        Text {
+            attr {
+                text(if (n == 0) "无" else "$n 只")
+                fontSize(14f); color(Color(0xFF999999)); marginRight(8f)
+            }
+        }
+        Text { attr { text(">"); fontSize(16f); color(Color(0xFFCCCCCC)) } }
     }
 }
 
