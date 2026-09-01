@@ -21,6 +21,7 @@ import com.zeriehan.kuiklystock.core.MockStockSource
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.UserStockStore
 import com.zeriehan.kuiklystock.core.llm.AIJobCenter
+import com.zeriehan.kuiklystock.core.llm.AIAnalysisStore
 import com.zeriehan.kuiklystock.core.llm.ChatStore
 import com.zeriehan.kuiklystock.core.llm.ChatSync
 
@@ -77,6 +78,8 @@ internal class MainTabPager : BasePager() {
         loadState()
         // 注入聊天持久化句柄：冷启动时从 SharedPreferences 恢复历史对话（否则「AI」Tab 记录会丢）
         ChatStore.attach(prefs)
+        // 注入 AI 分析缓存持久化句柄：冷启动后详情页直接读磁盘缓存，不再每次等网络
+        AIAnalysisStore.attach(prefs)
         // 把「常驻根页面」的桥注册给 AI 任务中心：此后所有 LLM 请求都走这个桥，
         // 子页面（ChatPage / StockDetailPage）关闭后请求与回调依然有效 —— 即 AI 在"后台"继续跑。
         AIJobCenter.attach(bridgeModule)
@@ -90,6 +93,9 @@ internal class MainTabPager : BasePager() {
         loadState()
         convToggle = !convToggle
         mineToggle = !mineToggle
+        // ⚠️ 必须翻转 listToggle：行情/自选列表由 vif(listToggle) 包裹，
+        // 否则从 HiddenStocks 恢复股票后，行情页不会重新显示该股票（hiddenMap 已更新但列表未重建）。
+        listToggle = !listToggle
     }
 
     // ===== 持久化读写 =====
