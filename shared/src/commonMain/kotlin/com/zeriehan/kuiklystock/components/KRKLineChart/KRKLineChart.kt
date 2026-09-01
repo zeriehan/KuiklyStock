@@ -9,6 +9,7 @@ import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.manager.BridgeManager
 import com.tencent.kuikly.core.reactive.handler.observable
+import com.tencent.kuikly.core.layout.FlexJustifyContent
 import com.tencent.kuikly.core.views.*
 import com.tencent.kuikly.core.views.CanvasContext
 import com.tencent.kuikly.core.views.ScrollerView
@@ -66,10 +67,12 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     private lateinit var scrollerRef: ViewRef<ScrollerView<*, *>>
     /** 已为当前数据集自动滚到最新一次，避免重复回弹 */
     private var autoScrolledFor: Any? = null
-    /** 最近一次 contentSizeChanged 拿到的真实内容宽度（用于精确滚到最右，避免极大值 clamp 失效） */
+    /** 最近一次 contentSizeChanged 拿到的真实内容宽度（用于精确滚到最右：target = contentW - viewportW） */
     private var lastChartContentW: Float = 0f
     /** 初始自动滚动只排一次（body 会因缩放/横滚重跑，不能每次都排定时器） */
     private var scrollRetryArmed = false
+    /** 视口宽度：scroll 事件实时回写；初始用 pagerData 估算（避免首帧 scroll 未触发时算错） */
+    private var viewportW: Float = 0f
 
     /** 十字光标状态 */
     var crossActive: Boolean by observable(false)
@@ -114,19 +117,30 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     }
 
     /**
-     * 数据就绪后把可视区定位到最新一根（最右）。
-     * 优先用 contentSizeChanged 拿到的真实内容宽度（offsetX=contentWidth 会由原生 clamp 到
-     * 真正的右端=最新一根）；万一来不及拿到，退用极大值兜底。
-     * 用 [autoScrolledFor] 按数据集引用去重，换股/换周期（传入新 list）才再次自动滚，
+     * 把可视区定位到最新一根（最右）。
+     *
+     * 关键：offset 必须「在范围内」才生效。2.7.0 的 Scroller 对超出 [0, content-viewport]
+     * 的 offset 会直接忽略（不会自动 clamp），所以之前传极大值 / viewport 算成 0 时永远停在最左。
+     * 这里用 contentSizeChanged 拿到的真实内容宽度，减去真实视口宽度，得到精确且在范围内的 target。
+     * 按当前数据集引用去重（[autoScrolledFor]）：换股/换周期（新 list）才再次自动滚；
      * 用户手动滑动或缩放（同一 list 不变）不再被回弹。
      */
-    private fun positionToLatest() {
+    private fun tryScrollToLatest() {
         val data = if (isTimeSharing()) timeSharing else bars
         if (data.isEmpty()) return
-        if (autoScrolledFor === data) return
+        val accurate = viewportW > 0f
+        val vw = if (accurate) viewportW else estimateViewportW()
+        if (lastChartContentW <= 0f || vw <= 0f) return
+        // 已用准确视口滚过则不再回弹；仅用估算视口时，等 scroll 事件回写准确视口后再精修一次
+        if (autoScrolledFor === data && accurate) return
         autoScrolledFor = data
-        val w = if (lastChartContentW > 0f) lastChartContentW else 100000f
-        scrollerRef.view?.setContentOffset(w, 0f, false)
+        val x = (lastChartContentW - vw).coerceAtLeast(0f)
+        scrollerRef.view?.setContentOffset(x, 0f, false)
+    }
+
+    /** 视口宽度估算：页面宽 - 卡片外边距/内边距(48) - 左价格轴(46)；用于 scroll 事件尚未回写时兜底 */
+    private fun estimateViewportW(): Float {
+        return (pagerData.pageViewWidth - 80f).coerceAtLeast(0f)
     }
 
     /** 价格上下界（含 8% 留白） */
@@ -182,11 +196,9 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
         // 布局完成后才能 scroll 到真正右端；一次性守卫避免 body 因缩放/横滚重跑时重复排定时器。
         if (!ctx.scrollRetryArmed) {
             ctx.scrollRetryArmed = true
+            // 兜底：contentSizeChanged 为主路径；万一该事件在个别版本不触发，延迟再尝试一次
             val pid = BridgeManager.currentPageId
-            // 兜底：contentSizeChanged 为主路径；万一该事件在个别版本不触发，延迟重试也能定位
-            listOf(60, 250, 500, 900).forEach { d ->
-                com.tencent.kuikly.core.timer.setTimeout(pid, d) { ctx.positionToLatest() }
-            }
+            com.tencent.kuikly.core.timer.setTimeout(pid, 300) { ctx.tryScrollToLatest() }
         }
         return {
             View {
@@ -239,10 +251,13 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
                     // 主图（横向滚动浏览历史；滚到最左触发加载更多）
                     Scroller {
                         ref { ctx.scrollerRef = it }
-                        attr { flex(1f); flexDirectionRow(); height(ctx.CHART_H) }
+                        // justifyContent(FLEX_END) 让主画布自然靠右：内容不足视口时居右，超出时左侧溢出，
+                        // 首屏直接显示最新一根 K线，避免 setContentOffset 失效的问题。
+                        attr { flex(1f); flexDirectionRow(); justifyContent(FlexJustifyContent.FLEX_END); height(ctx.CHART_H) }
                         event {
                             scroll(sync = true) { params ->
                                 val offX = params.offsetX
+                                ctx.viewportW = params.viewWidth
                                 ctx.scrollOffsetX = offX
                                 if (offX <= 4f) {
                                     if (!ctx.atStart) {
@@ -253,11 +268,11 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
                                     ctx.atStart = false
                                 }
                             }
-                            // 真实内容宽度就绪（主画布布局完成后触发）：定位到最右（最新一根）。
-                            // 比「给极大值 clamp」可靠——布局未完成时内容宽度=0，极大值会被 clamp 到最左(最早)。
+                            // 真实内容宽度就绪（主画布布局完成后触发）：用「contentW - 真实视口」精确滚到最右（最新一根）。
+                            // 官方 setContentOffset 的正确用法；offset 必须在范围内才生效，故绝不再传极大值。
                             contentSizeChanged { w, _ ->
                                 ctx.lastChartContentW = w
-                                ctx.positionToLatest()
+                                ctx.tryScrollToLatest()
                             }
                         }
                         Canvas(

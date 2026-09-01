@@ -15,7 +15,6 @@ import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.compose.Button
 import com.tencent.kuikly.core.layout.FlexJustifyContent
 import com.tencent.kuikly.core.views.ScrollerView
-import com.tencent.kuikly.core.manager.BridgeManager
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.core.MockStockSource
@@ -74,8 +73,10 @@ internal class ChatPage : BasePager() {
     private var stickToBottom: Boolean = true
     /** 聊天首屏是否已定位到底部：首屏强制贴底（无论 stickToBottom 当时算成啥），之后才受 stickToBottom 约束 */
     private var chatPositioned: Boolean = false
-    /** 最近一次 contentSizeChanged 拿到的真实内容高度（用于精确滚到底，避免极大值 clamp 失效） */
+    /** 最近一次 contentSizeChanged 拿到的真实内容高度（用于精确滚到底：target = contentH - viewportH） */
     private var lastContentH: Float = 0f
+    /** 视口高度：scroll 事件实时回写；初始用 pagerData 估算（避免首帧 scroll 未触发时算错） */
+    private var viewportH: Float = 0f
     /** 是否已初始化（参数须在 body 内读取，故用此标志保证仅初始化一次） */
     private var bootstrapped: Boolean = false
     /** 页面是否已销毁：销毁后监听回调直接返回，避免操作已失效的 observable */
@@ -132,36 +133,32 @@ internal class ChatPage : BasePager() {
         ChatSync.bump()
         // 进页面时把消息流滚到最底（最新）。放在 body 内（ensureInit）而非 pageDidAppear，
         // 以确保「一定会执行」—— 部分子页生命周期下 pageDidAppear 不可靠，会导致从不滚到底。
-        scrollToBottomSoon()
+        // 主路径由 contentSizeChanged 驱动；这里补一个延迟兜底，防止个别情况该事件不触发。
+        com.tencent.kuikly.core.timer.setTimeout(pagerId, 300) { tryScrollToBottom() }
     }
 
     /**
-     * 滚动消息流到底部（最新消息）。
-     * 优先用 contentSizeChanged 拿到的真实内容高度（offsetY=contentHeight 会由原生 clamp 到
-     * 真正的底部，即最新消息）；万一来不及拿到真实高度，再退用极大值兜底。
-     * animated=false：进页面/来新消息时「瞬移」到底部，避免从最顶一路扫下来的动画，也更可靠。
-     */
-    private fun scrollToBottom(animated: Boolean = false) {
-        val h = if (lastContentH > 0f) lastContentH else 100000f
-        scrollerRef.view?.setContentOffset(0f, h, animated)
-    }
-
-    /**
-     * 进页面或内容重建后，确保滚动到底部（最新消息）。
+     * 把消息流滚到底部（最新消息）。
      *
-     * ⚠️ 关键坑：列表（vif 翻转后）布局完成往往晚于一次 setTimeout 触发，
-     * 若只延迟 80ms 就滚，内容高度还没算出来 → clamp 到 0 → 停在最顶（即最老消息），
-     * 这正是「进聊天页从头开始显示」的原因。故用递增延迟多次重试，最后一次（布局已完成）
-     * 会把位置 clamp 到真正的底部。
+     * 关键：offset 必须「在范围内」才生效。2.7.0 的 Scroller 对超出 [0, content-viewport]
+     * 的 offset 会直接忽略（不会自动 clamp），所以之前传极大值 / viewport 算成 0 时永远停在最顶。
+     * 这里用 contentSizeChanged 拿到的真实内容高度，减去真实视口高度，得到精确且在范围内的 target。
+     * 仅在「首屏」或「用户本就在底部附近(stickToBottom)」时跟随，看历史不打断（豆包/微信同款）。
      */
-    private fun scrollToBottomSoon() {
-        val pid = BridgeManager.currentPageId
-        listOf(60, 250, 500).forEach { d ->
-            com.tencent.kuikly.core.timer.setTimeout(pid, d) {
-                // 仅当用户本就在底部附近才跟随滚动；看历史时不打断（豆包/微信同款交互）
-                if (stickToBottom) scrollToBottom(false)
-            }
+    private fun tryScrollToBottom() {
+        if (!chatPositioned || stickToBottom) {
+            val vh = if (viewportH > 0f) viewportH else estimateViewportH()
+            if (lastContentH <= 0f || vh <= 0f) return
+            val y = (lastContentH - vh).coerceAtLeast(0f)
+            scrollerRef.view?.setContentOffset(0f, y, false)
+            chatPositioned = true
         }
+    }
+
+    /** 视口高度估算：页面高 - 返回栏(44+状态栏) - 输入栏(约48) - 键盘抬起量；用于 scroll 事件尚未回写时兜底 */
+    private fun estimateViewportH(): Float {
+        val sb = pagerData.statusBarHeight
+        return (pagerData.pageViewHeight - (44f + sb) - 48f - keyboardH).coerceAtLeast(0f)
     }
 
     /**
@@ -206,7 +203,7 @@ internal class ChatPage : BasePager() {
         msgVersion++
         aiThinking = ChatStore.isPending(code)
         renderToggle = !renderToggle
-        scrollToBottomSoon()
+        tryScrollToBottom()
     }
 
     override fun body(): ViewBuilder {
@@ -255,21 +252,17 @@ internal class ChatPage : BasePager() {
                 ref { ctx.scrollerRef = it }
                 attr { flex(1f); flexDirectionColumn(); padding(12f) }
                 event {
-                    // 真实内容尺寸就绪（布局完成后才触发）：若在底部附近 / 首次进入，瞬移到底部（最新）。
-                    // 这比「setTimeout 给个极大值」可靠——后者在布局未完成（内容高度=0）时 clamp 到顶，
-                    // 正是「进聊天页停在最老消息」的根因。
+                    // 真实内容尺寸就绪后（布局完成才触发），用「contentH - 真实视口」精确滚到底（最新）。
+                    // 这是官方 setContentOffset 的正确用法；offset 必须在范围内才生效，故绝不再传极大值。
                     contentSizeChanged { _, h ->
                         ctx.lastContentH = h
-                        // 首屏强制贴底；之后仅在「用户本就贴底」时跟随，避免打断看历史
-                        if (!ctx.chatPositioned || ctx.stickToBottom) {
-                            ctx.scrollerRef.view?.setContentOffset(0f, h, false)
-                            ctx.chatPositioned = true
-                        }
+                        ctx.tryScrollToBottom()
                     }
-                    // 用户拖拽时实时更新「是否贴底」：在看历史（不在底部）时不自动回弹打断阅读；
-                    // 回到底部附近才会跟新消息滚动（豆包/微信同款交互）。
+                    // 实时回写视口高度 + 是否贴底：贴底时才跟新消息滚动；看历史不打断（豆包/微信同款）。
                     scroll { params ->
+                        ctx.viewportH = params.viewHeight
                         ctx.stickToBottom = (params.contentHeight - params.offsetY - params.viewHeight) < 80f
+                        if (ctx.stickToBottom) ctx.tryScrollToBottom()
                     }
                 }
                 // 关键：本版本 body 不会因 observable 变化而重跑，必须用 vif 翻转（renderToggle）
@@ -299,7 +292,7 @@ internal class ChatPage : BasePager() {
                         // 键盘高度变化：抬起内容区并把最新消息滚到底部
                         keyboardHeightChange { params ->
                             ctx.keyboardH = params.height
-                            ctx.scrollToBottom()
+                            ctx.tryScrollToBottom()
                         }
                     }
                 }
