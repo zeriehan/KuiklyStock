@@ -75,6 +75,8 @@ internal class ChatPage : BasePager() {
     private var chatPositioned: Boolean = false
     /** 最近一次 contentSizeChanged 拿到的真实内容高度（用于精确滚到底：target = contentH - viewportH） */
     private var lastContentH: Float = 0f
+    /** 已据此高度定位到底部过：同一高度重复 contentSizeChanged 时不再 setContentOffset，防回弹抖动 */
+    private var lastScrolledContentH: Float = 0f
     /** 视口高度：scroll 事件实时回写；初始用 pagerData 估算（避免首帧 scroll 未触发时算错） */
     private var viewportH: Float = 0f
     /** 是否已初始化（参数须在 body 内读取，故用此标志保证仅初始化一次） */
@@ -149,8 +151,11 @@ internal class ChatPage : BasePager() {
         if (!chatPositioned || stickToBottom) {
             val vh = if (viewportH > 0f) viewportH else estimateViewportH()
             if (lastContentH <= 0f || vh <= 0f) return
+            // 同一内容高度已定位过（如 contentSizeChanged 连发），不再重复 setContentOffset，避免回弹
+            if (chatPositioned && lastContentH == lastScrolledContentH) return
             val y = (lastContentH - vh).coerceAtLeast(0f)
             scrollerRef.view?.setContentOffset(0f, y, false)
+            lastScrolledContentH = lastContentH
             chatPositioned = true
         }
     }
@@ -258,11 +263,12 @@ internal class ChatPage : BasePager() {
                         ctx.lastContentH = h
                         ctx.tryScrollToBottom()
                     }
-                    // 实时回写视口高度 + 是否贴底：贴底时才跟新消息滚动；看历史不打断（豆包/微信同款）。
+                    // 仅回写视口高度 + 是否贴底；**绝不在 scroll 事件里调 tryScrollToBottom**，
+                    // 否则在底部附近会反复把位置拽回底部（滑不动/卡死），且与 contentSizeChanged
+                    // 形成 setContentOffset→scroll→setContentOffset 死循环。
                     scroll { params ->
                         ctx.viewportH = params.viewHeight
                         ctx.stickToBottom = (params.contentHeight - params.offsetY - params.viewHeight) < 80f
-                        if (ctx.stickToBottom) ctx.tryScrollToBottom()
                     }
                 }
                 // 关键：本版本 body 不会因 observable 变化而重跑，必须用 vif 翻转（renderToggle）
