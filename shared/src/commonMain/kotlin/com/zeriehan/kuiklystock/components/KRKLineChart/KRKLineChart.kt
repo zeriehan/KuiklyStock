@@ -751,6 +751,15 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
      * 横滚时不改变内容、位置固定，解决"往左滑信息飞出屏幕"的问题。
      */
     /**
+     * 图表每根的「真实像素宽」：与主画布 drawMain 里蜡烛实际占宽一致（drawMain 用 s=canvasW/n）。
+     * 所有「屏幕坐标↔K线索引」的换算（十字光标吸附、顶部信息条）都必须用它，
+     * 否则索引对不上 → 顶部那行 开高收低/MA 与图上蜡烛不一致。
+     */
+    private fun chartStep(n: Int): Float =
+        if (n > 0 && lastCanvasW > 0f) lastCanvasW / n
+        else (if (isTimeSharing()) 6f else 9f) * zoom
+
+    /**
      * 当前信息条应展示的 K线/分时点索引：
      * - 有十字光标 → 光标吸附的那根；
      * - 否则 → 可视区内「最新一根」（= 视口右缘对应的内容坐标那根），随滚动而变化，
@@ -768,7 +777,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
         if (n == 0) return
         c.font(9f)
         if (isTimeSharing()) {
-            val s = 6f * zoom
+            val s = chartStep(n)
             val idx = infoIdx(s, n)
             val hp = timeSharing[idx]
             val chg = if (refPrice != 0f) (hp.price - refPrice) / refPrice * 100f else 0f
@@ -777,7 +786,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
             c.fillStyle(Color(0xFF666666))
             c.fillText("${hp.time}  价 ${formatPrice(hp.price)}  ${formatPercent(chg)}", 4f, 21f)
         } else {
-            val s = 9f * zoom
+            val s = chartStep(n)
             val idx = infoIdx(s, n)
             val b = bars[idx]
             // 涨跌幅 = (收盘 - 前一根收盘)/前一根收盘；第一根或前收为 0 则按平盘

@@ -125,9 +125,18 @@ object StockData {
     private val realKline = mutableMapOf<String, List<KLineBar>>()
     // key: "secid" → 真实当日分时（逐分钟）。命中则 getIntraday 用它。
     private val realTrends = mutableMapOf<String, List<TimeSharingPoint>>()
+    // key: code → 真实分时的昨收(前收)基准；分时图基线/涨跌应以此为准，避免用可能过期的 stock.change
+    private val trendPreClose = mutableMapOf<String, Float>()
     /** 是否已真正接入过真实K线/分时（用于图源标注） */
     var realHistoryLoaded = false
         private set
+
+    /** 真实分时昨收基准：有真实缓存用之，否则返回 null（由调用方按 stock.price-stock.change 兜底） */
+    fun trendPreCloseOf(code: String): Float? = trendPreClose[code]
+
+    /** 分时图昨收基准统一入口：优先真实分时的 preClose（避免用可能过期的 stock.change），无则回退 price-change */
+    fun intradayRefPrice(stock: Stock): Float =
+        trendPreCloseOf(stock.code) ?: (stock.price - stock.change).coerceAtLeast(0.01f)
 
     fun getSectors(): List<Sector> {
         if (realSectors.isNotEmpty()) {
@@ -322,6 +331,8 @@ object StockData {
                     realTrends[stock.code] = pts
                     realHistoryLoaded = true
                 }
+                val pre = resp?.optDouble("preClose", 0.0)?.toFloat() ?: 0f
+                if (pre > 0f) trendPreClose[stock.code] = pre
                 onDone?.invoke()
             }
         } catch (e: Throwable) {

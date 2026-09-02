@@ -109,7 +109,7 @@ internal class StockDetailPage : BasePager() {
                 if (selectedPeriod == 0) chartRef?.view?.let { ch ->
                     ch.timeSharing = StockData.getIntraday(st)
                     ch.bars = emptyList()
-                    ch.refPrice = (st.price - st.change).coerceAtLeast(0.01f)
+                    ch.refPrice = StockData.intradayRefPrice(st)
                     ch.resetToLatest()
                 }
             }
@@ -135,7 +135,7 @@ internal class StockDetailPage : BasePager() {
                 // 分时模式：下发分时数据 + 昨收基准，清空 K线，指标置空
                 chart.bars = emptyList()
                 chart.timeSharing = StockData.getIntraday(stock)
-                chart.refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
+                chart.refPrice = StockData.intradayRefPrice(stock)
                 chart.indicator = KRKLineChart.IND_NONE
             } else {
                 // K线模式：下发对应周期（含已加载历史根数），清空分时，恢复所选指标
@@ -155,7 +155,7 @@ internal class StockDetailPage : BasePager() {
                 if (selectedPeriod == 0) chartRef?.view?.let { ch ->
                     ch.timeSharing = StockData.getIntraday(stock)
                     ch.bars = emptyList()
-                    ch.refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
+                    ch.refPrice = StockData.intradayRefPrice(stock)
                     ch.resetToLatest()
                 }
             }
@@ -301,7 +301,7 @@ internal class StockDetailPage : BasePager() {
                         ref { ctx.chartRef = it }
                         attr { marginTop(8f) }
                         timeSharing = StockData.getIntraday(stock)
-                        refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
+                        refPrice = StockData.intradayRefPrice(stock)
                         onLoadMore = {
                             val added = 40
                             ctx.klineCount += added

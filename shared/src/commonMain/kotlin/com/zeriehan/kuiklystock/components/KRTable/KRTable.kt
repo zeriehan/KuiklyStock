@@ -171,14 +171,14 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                                 vif({ ctx.trendToggle }) {
                                                     KRMiniTimeSharing {
                                                         points = StockData.getIntraday(stock)
-                                                        refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
+                                                        refPrice = StockData.intradayRefPrice(stock)
                                                         color = Color(0xFFE54D42)
                                                     }
                                                 }
                                                 vif({ !ctx.trendToggle }) {
                                                     KRMiniTimeSharing {
                                                         points = StockData.getIntraday(stock)
-                                                        refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
+                                                        refPrice = StockData.intradayRefPrice(stock)
                                                         color = Color(0xFFE54D42)
                                                     }
                                                 }
