@@ -15,6 +15,7 @@ import com.tencent.kuikly.core.views.*
 import com.zeriehan.kuiklystock.components.KRStockBadge.KRStockBadge
 import com.zeriehan.kuiklystock.components.KRMiniTimeSharing.KRMiniTimeSharing
 import com.zeriehan.kuiklystock.core.Stock
+import com.zeriehan.kuiklystock.core.StockColor
 import com.zeriehan.kuiklystock.core.UserSettings
 import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.base.Utils
@@ -301,13 +302,13 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                             // 名称 + 代码（名称跟随涨跌配色，与价格/涨跌幅一致）
                             View {
                                 attr { flex(1f); flexDirectionColumn() }
-                                Text { attr { text(stock.name); fontSize(UserSettings.fs(16f)); color(if (stock.changePercent > 0f) Color(UserSettings.upMain()) else if (stock.changePercent < 0f) Color(UserSettings.downMain()) else Color(0xFF222222)) } }
+                                Text { attr { text(stock.name); fontSize(UserSettings.fs(16f)); color(StockColor.text(stock.changePercent)) } }
                                 Text { attr { text(stock.code); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)); marginTop(4f) } }
                             }
                             // 最新价（右对齐）
                             View {
                                 attr { flex(1f); flexDirectionRow(); justifyContentFlexEnd() }
-                                Text { attr { text(formatPrice(stock.price)); fontSize(UserSettings.fs(16f)); color(if (stock.changePercent > 0f) Color(UserSettings.upMain()) else if (stock.changePercent < 0f) Color(UserSettings.downMain()) else Color(0xFF222222)) } }
+                                Text { attr { text(formatPrice(stock.price)); fontSize(UserSettings.fs(16f)); color(StockColor.text(stock.changePercent)) } }
                             }
                             // 涨跌幅徽章
                             KRStockBadge { attr { changePercent = stock.changePercent } }

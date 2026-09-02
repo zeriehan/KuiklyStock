@@ -168,7 +168,7 @@ internal class StockDetailPage : BasePager() {
                     event { click { ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).closePage() } }
                     Text { attr { text("<"); fontSize(22f); color(Color(0xFF222222)); fontWeightSemisolid() } }
                 }
-                Text { attr { text(stock.name); fontSize(17f); color(Color(0xFF222222)); fontWeightSemisolid(); marginLeft(8f) } }
+                Text { attr { text(stock.name); fontSize(17f); color(StockColor.text(stock.changePercent)); fontWeightSemisolid(); marginLeft(8f) } }
                 Text { attr { text(stock.code); fontSize(12f); color(Color(0xFF999999)); marginLeft(8f) } }
                 View { attr { flex(1f) } }
                 // 加自选按钮（随 watchUIVersion 翻转刷新选中态；body 不随 observable 重跑，故需翻转）
@@ -188,7 +188,7 @@ internal class StockDetailPage : BasePager() {
                             text(formatPrice(stock.price))
                             fontSize(30f)
                             fontWeightSemisolid()
-                            color(if (stock.changePercent > 0f) Color(UserSettings.upMain()) else if (stock.changePercent < 0f) Color(UserSettings.downMain()) else Color(0xFF222222))
+                            color(StockColor.text(stock.changePercent))
                         }
                     }
                     Text {

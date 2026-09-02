@@ -223,6 +223,13 @@ object StockColor {
 
     fun of(changePercent: Float): Color =
         if (changePercent > 0f) UP else if (changePercent < 0f) DOWN else FLAT
+
+    /**
+     * 股票名称/价格文字的统一涨跌色：涨用涨色、跌用跌色、平用中性黑(0xFF222222)。
+     * 所有列表行的 名称+价格 都应走这一个函数，保证全 App 涨跌着色一致，避免漏改/漂移。
+     */
+    fun text(v: Float): Color =
+        if (v > 0f) UP else if (v < 0f) DOWN else Color(0xFF222222)
 }
 
 /**

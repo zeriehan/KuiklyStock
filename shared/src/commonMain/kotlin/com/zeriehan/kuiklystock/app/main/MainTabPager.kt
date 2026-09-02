@@ -445,6 +445,11 @@ internal class MainTabPager : BasePager(), StockNavigator {
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("SectorDetail", d)
     }
 
+    /** 大盘「市场热度」卡点击：打开行情池明细页（展示池内非指数股票） */
+    internal fun openHeatPool() {
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("HeatPool", JSONObject())
+    }
+
     /** 「大盘」Tab 的 AI 入口：就今日大盘问 AI（复用聊天页，按上证指数代码隔离会话） */
     internal fun askMarketAI() {
         closeSheet()
@@ -1171,7 +1176,7 @@ private fun ViewContainer<*, *>.renderIndexBox(ctx: MainTabPager, indices: List<
                     attr { flex(1f); flexDirectionColumn(); alignItemsCenter() }
                     event { click { ctx.openDetail(s) } }
                     Text { attr { text(s.name); fontSize(ctx.fs(13f)); color(Color(0xFF666666)) } }
-                    Text { attr { text(formatPrice(s.price)); fontSize(ctx.fs(16f)); color(if (s.changePercent > 0f) Color(UserSettings.upMain()) else if (s.changePercent < 0f) Color(UserSettings.downMain()) else Color(0xFF222222)); marginTop(4f) } }
+                    Text { attr { text(formatPrice(s.price)); fontSize(ctx.fs(16f)); color(StockColor.text(s.changePercent)); marginTop(4f) } }
                     Text {
                         attr {
                             text(formatPercent(s.changePercent))
@@ -1199,11 +1204,12 @@ private fun ViewContainer<*, *>.renderMarketHeat(ctx: MainTabPager, w: Float) {
             margin(left = 12f, right = 12f, top = 12f)
             padding(14f); backgroundColor(Color.WHITE); borderRadius(12f); width(w); flexDirectionColumn()
         }
-        Text {
-            attr {
-                text("市场热度 · 当前池 ${pool.size} 只")
-                fontSize(ctx.fs(13f)); fontWeightSemiBold(); color(Color(0xFF222222)); marginBottom(12f)
-            }
+        event { click { ctx.openHeatPool() } }
+        // 标题行（可点 → 打开行情池明细）
+        View {
+            attr { flexDirectionRow(); alignItemsCenter(); marginBottom(8f) }
+            Text { attr { text("市场热度 · 当前池 ${pool.size} 只"); fontSize(ctx.fs(13f)); fontWeightSemiBold(); color(Color(0xFF222222)); flex(1f) } }
+            Text { attr { text("查看 >"); fontSize(ctx.fs(12f)); color(Color(0xFF999999)) } }
         }
         // 三格统计：上涨 / 平盘 / 下跌
         View { attr { flexDirectionRow() }
@@ -1269,15 +1275,17 @@ private fun ViewContainer<*, *>.renderMarketLeaders(ctx: MainTabPager, w: Float)
         upStocks.forEach { s ->
             View {
                 attr { flexDirectionRow(); alignItemsCenter(); marginBottom(4f) }
-                Text { attr { text(s.name); fontSize(ctx.fs(13f)); color(Color(0xFF222222)); flex(1f) } }
-                Text { attr { text(formatPercent(s.changePercent)); fontSize(ctx.fs(13f)); color(Color(UserSettings.upMain())) } }
+                event { click { ctx.openDetail(s) } }
+                Text { attr { text(s.name); fontSize(ctx.fs(13f)); color(StockColor.text(s.changePercent)); flex(1f) } }
+                Text { attr { text(formatPercent(s.changePercent)); fontSize(ctx.fs(13f)); color(StockColor.text(s.changePercent)) } }
             }
         }
         upSectors.forEach { s ->
             View {
                 attr { flexDirectionRow(); alignItemsCenter(); marginBottom(4f) }
+                event { click { ctx.openSector(s) } }
                 Text { attr { text(s.name + " 板块"); fontSize(ctx.fs(12f)); color(Color(0xFF666666)); flex(1f) } }
-                Text { attr { text(formatPercent(s.changePercent)); fontSize(ctx.fs(12f)); color(Color(UserSettings.upMain())) } }
+                Text { attr { text(formatPercent(s.changePercent)); fontSize(ctx.fs(12f)); color(StockColor.of(s.changePercent)) } }
             }
         }
         View { attr { height(1f); marginTop(10f); marginBottom(10f); backgroundColor(Color(0xFFF0F0F0)) } }
@@ -1286,15 +1294,17 @@ private fun ViewContainer<*, *>.renderMarketLeaders(ctx: MainTabPager, w: Float)
         downStocks.forEach { s ->
             View {
                 attr { flexDirectionRow(); alignItemsCenter(); marginBottom(4f) }
-                Text { attr { text(s.name); fontSize(ctx.fs(13f)); color(Color(0xFF222222)); flex(1f) } }
-                Text { attr { text(formatPercent(s.changePercent)); fontSize(ctx.fs(13f)); color(Color(UserSettings.downMain())) } }
+                event { click { ctx.openDetail(s) } }
+                Text { attr { text(s.name); fontSize(ctx.fs(13f)); color(StockColor.text(s.changePercent)); flex(1f) } }
+                Text { attr { text(formatPercent(s.changePercent)); fontSize(ctx.fs(13f)); color(StockColor.text(s.changePercent)) } }
             }
         }
         downSectors.forEach { s ->
             View {
                 attr { flexDirectionRow(); alignItemsCenter(); marginBottom(4f) }
+                event { click { ctx.openSector(s) } }
                 Text { attr { text(s.name + " 板块"); fontSize(ctx.fs(12f)); color(Color(0xFF666666)); flex(1f) } }
-                Text { attr { text(formatPercent(s.changePercent)); fontSize(ctx.fs(12f)); color(Color(UserSettings.downMain())) } }
+                Text { attr { text(formatPercent(s.changePercent)); fontSize(ctx.fs(12f)); color(StockColor.of(s.changePercent)) } }
             }
         }
     }
@@ -1321,10 +1331,10 @@ internal fun ViewContainer<*, *>.renderMarketRow(nav: StockNavigator, stock: Sto
         // 内容（不感兴趣时整体降透明度，营造朦胧感）
         View {
             attr { flex(1f); flexDirectionRow(); alignItemsCenter(); opacity(if (dimmed) 0.3f else 1f) }
-            // 名称 + 代码
+            // 名称 + 代码（名称跟随涨跌配色，与价格一致）
             View {
                 attr { flex(1f); flexDirectionColumn() }
-                Text { attr { text(stock.name); fontSize(UserSettings.fs(16f)); color(Color(0xFF222222)) } }
+                Text { attr { text(stock.name); fontSize(UserSettings.fs(16f)); color(StockColor.text(stock.changePercent)) } }
                 Text { attr { text(stock.code); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)); marginTop(4f) } }
             }
             // 最新价（右对齐；随涨跌染色，涨红跌绿，平/其他保持中性黑）
@@ -1334,9 +1344,7 @@ internal fun ViewContainer<*, *>.renderMarketRow(nav: StockNavigator, stock: Sto
                     attr {
                         text(formatPrice(stock.price))
                         fontSize(UserSettings.fs(16f))
-                        color(if (stock.changePercent > 0f) Color(UserSettings.upMain())
-                              else if (stock.changePercent < 0f) Color(UserSettings.downMain())
-                              else Color(0xFF222222))
+                        color(StockColor.text(stock.changePercent))
                     }
                 }
             }
