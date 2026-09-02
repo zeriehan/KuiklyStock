@@ -416,14 +416,20 @@ object StockData {
     /** 返回某子榜最近一次拉到的有序股票；尚未拉过返回 null（UI 退化为按当前池排序） */
     fun rankOf(rankType: Int): List<Stock>? = rankCache[rankType]
 
+    /** 该子榜是否已拉到真实数据（用于决定是否还需显示"加载中"） */
+    fun hasRank(rankType: Int): Boolean = rankCache.containsKey(rankType)
+
+    /** 真实行业板块是否已拉到（用于决定是否还需显示"加载中"） */
+    fun hasRealSectors(): Boolean = realSectors.isNotEmpty()
+
     /**
      * 拉取真实个股榜单（行情页「个股」子榜用）。
      * @param rankType 0=涨幅榜 1=跌幅榜 2=换手率榜 3=振幅榜
      * @param pz 拉取条数（默认 30）
      * 成功后把榜内股票并入 [realPool]（同 code 覆盖），缓存有序榜单并触发 [DataSync.bump] 让行情/自选重建。
      */
-    fun loadRank(rankType: Int, pz: Int = 30) {
-        val b = bridge ?: return
+    fun loadRank(rankType: Int, pz: Int = 30, onDone: (() -> Unit)? = null) {
+        val b = bridge ?: run { onDone?.invoke(); return }
         val fid: String
         val desc: Boolean
         when (rankType) {
@@ -437,21 +443,25 @@ object StockData {
                 val ordered = mergeQuotesFromJson(resp, "quotes")
                 if (ordered.isNotEmpty()) rankCache[rankType] = ordered
                 DataSync.bump()
+                onDone?.invoke()
             }
         } catch (e: Throwable) {
             // 失败 → 维持 mock 榜
+            onDone?.invoke()
         }
     }
 
     /** 拉取真实行业板块列表，成功则替换 [realSectors]（mock 板块作为离线兜底保留） */
-    fun loadSectors() {
-        val b = bridge ?: return
+    fun loadSectors(onDone: (() -> Unit)? = null) {
+        val b = bridge ?: run { onDone?.invoke(); return }
         try {
             b.fetchSectors { resp ->
                 applySectors(resp)
+                onDone?.invoke()
             }
         } catch (e: Throwable) {
             // 失败 → 维持 mock 板块
+            onDone?.invoke()
         }
     }
 

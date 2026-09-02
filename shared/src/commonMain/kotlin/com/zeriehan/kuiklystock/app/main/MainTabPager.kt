@@ -92,6 +92,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal var stockRankTab: Int by observable(0)
     /** vif 翻转触发器：切换个股子榜时翻转，强制重建榜单 */
     internal var rankToggle: Boolean by observable(false)
+    /** 市场子页(板块/个股)正在拉真实数据 → 顶部显示"加载中…"（true 由 selectMarketSub/selectRankTab 置位，fetch onDone 清位） */
+    internal var mktLoading: Boolean by observable(false)
 
     // ===== 板块页交互状态（搜索 / 关注置顶）=====
     /** 关注板块 code 集合（持久化，载入于 viewDidLoad） */
@@ -466,8 +468,16 @@ internal class MainTabPager : BasePager(), StockNavigator {
         // 真实数据懒加载：切到「板块」拉真实行业板块、切到「个股」拉真实榜单。
         // 异步到达后由 DataSync.bump 翻转重建，用户看到的是真实内容而非 mock 那几个。
         when (i) {
-            1 -> StockData.loadSectors()
-            2 -> StockData.loadRank(stockRankTab)
+            1 -> {
+                if (StockData.hasRealSectors()) return
+                mktLoading = true
+                StockData.loadSectors { mktLoading = false }
+            }
+            2 -> {
+                if (StockData.hasRank(stockRankTab)) return
+                mktLoading = true
+                StockData.loadRank(stockRankTab) { mktLoading = false }
+            }
         }
     }
 
@@ -476,7 +486,9 @@ internal class MainTabPager : BasePager(), StockNavigator {
         if (i == stockRankTab) return
         stockRankTab = i
         rankToggle = !rankToggle
-        StockData.loadRank(i) // 切换即拉对应真实榜单
+        if (StockData.hasRank(i)) return
+        mktLoading = true
+        StockData.loadRank(i) { mktLoading = false } // 切换即拉对应真实榜单
     }
 
     private fun copyCode(stock: Stock) {
@@ -726,6 +738,16 @@ private fun ViewContainer<*, *>.renderMarketContent(ctx: MainTabPager) {
             attr {
                 text(if (StockData.isReal()) "数据来源：东方财富实时行情" else "当前为本地演示数据，联网后自动切换为实时行情")
                 fontSize(ctx.fs(11f)); color(Color(0xFFAAAAAA)); margin(10f)
+            }
+        }
+        // 板块/个股真实数据拉取中提示（随 mktLoading 显隐）
+        vif({ ctx.mktLoading }) {
+            View {
+                attr {
+                    flexDirectionRow(); alignItemsCenter(); justifyContentCenter()
+                    padding(10f); marginBottom(6f); backgroundColor(Color(0xFFE8F3FC))
+                }
+                Text { attr { text("加载中…"); fontSize(ctx.fs(12f)); color(Color(0xFF3478F6)) } }
             }
         }
         when (ctx.marketSubTab) {

@@ -82,7 +82,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     /** 初始自动滚动只排一次（body 会因缩放/横滚重跑，不能每次都排定时器） */
     private var scrollRetryArmed = false
     /** 视口宽度：scroll 事件实时回写；初始用 pagerData 估算（避免首帧 scroll 未触发时算错） */
-    private var viewportW: Float = 0f
+    private var viewportW: Float by observable(0f)
 
     /** 十字光标状态 */
     var crossActive: Boolean by observable(false)
@@ -750,13 +750,26 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
      * 显示十字光标所选（或最新）那根 K线/分时点的：均线图例 + 开/高/低/收/涨跌幅。
      * 横滚时不改变内容、位置固定，解决"往左滑信息飞出屏幕"的问题。
      */
+    /**
+     * 当前信息条应展示的 K线/分时点索引：
+     * - 有十字光标 → 光标吸附的那根；
+     * - 否则 → 可视区内「最新一根」（= 视口右缘对应的内容坐标那根），随滚动而变化，
+     *   保证顶部开高收低/MA 与当前看到的蜡烛一致（读 scrollOffsetX/viewportW 使滚动时自动重绘）。
+     */
+    private fun infoIdx(s: Float, n: Int): Int {
+        if (crossActive) return ((crossX - s / 2f) / s).toInt().coerceIn(0, n - 1)
+        val vw = if (viewportW > 0f) viewportW else 0f
+        val rightContentX = scrollOffsetX + vw
+        return ((rightContentX - s / 2f) / s).toInt().coerceIn(0, n - 1)
+    }
+
     private fun drawInfoBar(c: CanvasContext, w: Float, h: Float) {
         val n = if (isTimeSharing()) timeSharing.size else bars.size
         if (n == 0) return
         c.font(9f)
         if (isTimeSharing()) {
             val s = 6f * zoom
-            val idx = if (crossActive) ((crossX - s / 2f) / s).toInt().coerceIn(0, n - 1) else n - 1
+            val idx = infoIdx(s, n)
             val hp = timeSharing[idx]
             val chg = if (refPrice != 0f) (hp.price - refPrice) / refPrice * 100f else 0f
             c.fillStyle(Color(0xFF999999))
@@ -765,7 +778,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
             c.fillText("${hp.time}  价 ${formatPrice(hp.price)}  ${formatPercent(chg)}", 4f, 21f)
         } else {
             val s = 9f * zoom
-            val idx = if (crossActive) ((crossX - s / 2f) / s).toInt().coerceIn(0, n - 1) else n - 1
+            val idx = infoIdx(s, n)
             val b = bars[idx]
             // 涨跌幅 = (收盘 - 前一根收盘)/前一根收盘；第一根或前收为 0 则按平盘
             val prevClose = if (idx > 0) bars[idx - 1].close else 0f

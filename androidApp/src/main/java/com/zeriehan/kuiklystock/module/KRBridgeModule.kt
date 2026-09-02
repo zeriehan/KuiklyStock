@@ -633,38 +633,44 @@ private fun fetchKline(params: String?, callback: KuiklyRenderCallback?) {
     val count = p.optInt("count", 80).coerceIn(10, 500)
     thread(name = "em-kline") {
         val result = try {
-            // 用 lmt 只取最近 count 根，避免 beg=0 拉到海量数据；end=20500101 拿含最新
-            val url = "https://push2his.eastmoney.com/api/qt/stock/kline/get" +
-                "?secid=$secid&klt=$klt&fqt=1&lmt=$count&end=20500101" +
-                "&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56"
+            // 腾讯历史K线（沙箱与真机均可达；push2his 东财历史域在某些网络不可达）。
+            // secid "1.601318"/"0.000858" → 腾讯 "sh601318"/"sz000858"
+            val dot = secid.indexOf('.')
+            val market = if (dot > 0) secid.substring(0, dot) else "1"
+            val code = if (dot > 0) secid.substring(dot + 1) else secid
+            val prefix = if (market == "1") "sh" else "sz"
+            val periodKey = when (klt) { 102 -> "week"; 103 -> "month"; 104 -> "year"; else -> "day" }
+            val fqKey = "qfq" + when (klt) { 102 -> "week"; 103 -> "month"; else -> "day" } // qfqweek/qfqmonth/qfqday
+            val url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get" +
+                "?param=$prefix$code,$periodKey,,,$count,qfq"
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
                 setRequestProperty("User-Agent", "Mozilla/5.0")
-                setRequestProperty("Referer", "https://quote.eastmoney.com/")
+                setRequestProperty("Referer", "https://gu.qq.com/")
             }
             try {
                 if (conn.responseCode != HttpURLConnection.HTTP_OK) {
-                    Log.e("KRBridge", "EM kline HTTP ${conn.responseCode}")
+                    Log.e("KRBridge", "TX kline HTTP ${conn.responseCode}")
                     "[]"
                 } else {
                     val json = JSONObject(conn.inputStream.bufferedReader().readText())
-                    val klines = json.optJSONObject("data")?.optJSONArray("klines") ?: JSONArray()
+                    val root = json.optJSONObject("data")?.optJSONObject("$prefix$code")
+                    val arr = root?.optJSONArray(fqKey) ?: JSONArray()
                     val out = JSONArray()
-                    // kline 每根格式: "2026-09-02,开盘,收盘,最高,最低,成交量,..."
-                    for (i in 0 until klines.length()) {
-                        val line = klines.optString(i)
-                        val part = line.split(",")
-                        if (part.size < 6) continue
-                        val close = part[2].toDoubleOrNull() ?: continue
+                    // 腾讯每根: ["2026-09-02", open, close, high, low, volume]
+                    for (i in 0 until arr.length()) {
+                        val row = arr.optJSONArray(i) ?: continue
+                        if (row.length() < 5) continue
+                        val close = row.optDouble(2)
                         if (close <= 0.0) continue
                         out.put(
                             JSONObject().apply {
-                                put("date", part[0])
-                                put("open", part[1].toDouble())
+                                put("date", row.optString(0))
+                                put("open", row.optDouble(1))
                                 put("close", close)
-                                put("high", part[3].toDouble())
-                                put("low", part[4].toDouble())
-                                put("volume", part[5].toDouble())
+                                put("high", row.optDouble(3))
+                                put("low", row.optDouble(4))
+                                put("volume", if (row.length() > 5) row.optDouble(5) else 0.0)
                             }
                         )
                     }
