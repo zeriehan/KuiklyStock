@@ -346,10 +346,8 @@ private fun fetchQuotes(params: String?, callback: KuiklyRenderCallback?) {
 }
 
 private fun fetchEastMoneyQuotes(secids: String): String {
-    // 先试批量 ulist；返回为空(部分网络不可达/限流)则逐个用单股 qt/get 兜底，
-    // 保证 refresh() 能把行情池里的指数/mock 股刷新成真实价（否则大盘/主列表停假值）。
-    val bulk = fetchEastMoneyQuotesBulk(secids)
-    if (bulk != "[]") return bulk
+    // 直走单股 qt/get(实测可靠)；ulist 批量在某些网络空/超时，跳过以省时且保证能取到真实价。
+    // 逐只取每只的 现价/涨跌/开高低/昨收/量，归一化成与批量一致的结构。
     return fetchEastMoneyQuotesPerStock(secids)
 }
 
