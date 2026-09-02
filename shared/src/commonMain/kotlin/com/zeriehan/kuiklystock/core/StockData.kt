@@ -454,6 +454,39 @@ object StockData {
         }
     }
 
+    /**
+     * 单独刷新三大指数实时点位：走 loadTrends(分时) 这条在设备上已验证可达的链路，
+     * 取分时最后一点作为指数当前点位 + 昨收算涨跌幅 → applyRealQuote 写回 baseQuotes。
+     * 兜底：即使 fetchQuotes/qt-get 不可达，大盘指数也能显示真实值。
+     */
+    fun loadIndices(onDone: (() -> Unit)? = null) {
+        val b = bridge ?: run { onDone?.invoke(); return }
+        val indices = baseQuotes.filter { it.isIndex }
+        if (indices.isEmpty()) { onDone?.invoke(); return }
+        val done = IntArray(1)
+        for (idx in indices) {
+            try {
+                b.fetchTrends(secidOf(idx)) { resp ->
+                    done[0]++
+                    val pts = parseTrendsJson(resp?.optString("trends") ?: "")
+                    val pre = resp?.optDouble("preClose", 0.0)?.toFloat() ?: 0f
+                    if (pts.isNotEmpty() && pre > 0f) {
+                        val lastP = pts.last().price
+                        if (lastP > 0f) {
+                            trendPreClose[idx.code] = pre
+                            applyRealQuote(idx.code, lastP, (lastP - pre) / pre * 100f, lastP - pre)
+                            realHistoryLoaded = true
+                        }
+                    }
+                    if (done[0] >= indices.size) { DataSync.bump(); onDone?.invoke() }
+                }
+            } catch (e: Throwable) {
+                done[0]++
+                if (done[0] >= indices.size) { DataSync.bump(); onDone?.invoke() }
+            }
+        }
+    }
+
     /** 真实榜单缓存：rankType → 榜内有序股票（按东方财富排序，非重排） */
     private val rankCache = mutableMapOf<Int, List<Stock>>()
 
