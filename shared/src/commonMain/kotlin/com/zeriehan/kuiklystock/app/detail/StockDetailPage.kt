@@ -25,6 +25,7 @@ import com.zeriehan.kuiklystock.core.UserSettings
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.llm.AIAnalysisStore
+import com.zeriehan.kuiklystock.core.llm.DataSync
 import com.zeriehan.kuiklystock.core.llm.LLM
 import com.zeriehan.kuiklystock.components.KRRefreshButton.KRRefreshButton
 import com.zeriehan.kuiklystock.components.KRKLineChart.KRKLineChart
@@ -68,6 +69,10 @@ internal class StockDetailPage : BasePager() {
     /** 自选集合（响应式镜像）与「加自选」按钮刷新触发器 */
     internal var watchlistCodes: Set<String> by observable(emptySet())
     private var watchUIVersion: Boolean by observable(false)
+    /** 当前股票代码（params 读一次存字段，供 DataSync 回查最新报价） */
+    private var curCode: String = ""
+    /** 最新报价快照（observable）：行情刷新(DataSync)后更新，驱动 名称/现价/涨跌幅 顶栏与大字价实时跟上真实价 */
+    internal var liveStock: Stock? by observable(null)
 
     /**
      * 执行一次 AI 分析。
@@ -101,8 +106,12 @@ internal class StockDetailPage : BasePager() {
     override fun viewDidLoad() {
         super.viewDidLoad()
         watchlistCodes = UserStockStore.loadWatchlist(acquireModule(SharedPreferencesModule.MODULE_NAME))
+        curCode = pageData.params.optString("stockCode")
+        liveStock = if (curCode.isNotBlank()) StockData.findByCode(curCode) else null
+        // 行情(报价)刷新到达时，把顶栏/大字价同步到最新真实价，避免显示过期 mock 价而与真实分时/K线不一致
+        DataSync.addListener { if (curCode.isNotBlank()) liveStock = StockData.findByCode(curCode) }
         // 首屏拉真实K线/分时数据并缓存（到达后详情页图自动刷新成真实数据；失败维持本地兜底）
-        val c = pageData.params.optString("stockCode")
+        val c = curCode
         if (c.isNotBlank()) {
             val st = StockData.findByCode(c)
             StockData.loadTrends(st) {
@@ -206,7 +215,13 @@ internal class StockDetailPage : BasePager() {
                     event { click { ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).closePage() } }
                     Text { attr { text("<"); fontSize(22f); color(Color(0xFF222222)); fontWeightSemisolid() } }
                 }
-                Text { attr { text(stock.name); fontSize(17f); color(StockColor.text(stock.changePercent)); fontWeightSemisolid(); marginLeft(8f) } }
+                Text {
+                    attr {
+                        val ls = ctx.liveStock ?: stock
+                        text(ls.name)
+                        fontSize(17f); color(StockColor.text(ls.changePercent)); fontWeightSemisolid(); marginLeft(8f)
+                    }
+                }
                 Text { attr { text(stock.code); fontSize(12f); color(Color(0xFF999999)); marginLeft(8f) } }
                 View { attr { flex(1f) } }
                 // 加自选按钮（随 watchUIVersion 翻转刷新选中态；body 不随 observable 重跑，故需翻转）
@@ -218,22 +233,24 @@ internal class StockDetailPage : BasePager() {
             Scroller {
                 attr { flex(1f); flexDirectionColumn() }
 
-                // 实时价（价格与涨跌幅同处一行）
+                // 实时价（价格与涨跌幅同处一行；读 liveStock 以在报价刷新后同步真实价）
                 View {
                     attr { flexDirectionRow(); alignItemsCenter(); padding(16f); backgroundColor(Color.WHITE) }
                     Text {
                         attr {
-                            text(formatPrice(stock.price))
+                            val ls = ctx.liveStock ?: stock
+                            text(formatPrice(ls.price))
                             fontSize(30f)
                             fontWeightSemisolid()
-                            color(StockColor.text(stock.changePercent))
+                            color(StockColor.text(ls.changePercent))
                         }
                     }
                     Text {
                         attr {
-                            text(formatPrice(stock.change) + "  " + formatPercent(stock.changePercent))
+                            val ls = ctx.liveStock ?: stock
+                            text(formatPrice(ls.change) + "  " + formatPercent(ls.changePercent))
                             fontSize(14f)
-                            color(StockColor.of(stock.changePercent))
+                            color(StockColor.of(ls.changePercent))
                             marginLeft(10f)
                         }
                     }
