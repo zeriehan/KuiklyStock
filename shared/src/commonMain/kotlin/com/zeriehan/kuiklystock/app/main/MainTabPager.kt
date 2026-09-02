@@ -94,6 +94,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal var rankToggle: Boolean by observable(false)
     /** 市场子页(板块/个股)正在拉真实数据 → 顶部显示"加载中…"（true 由 selectMarketSub/selectRankTab 置位，fetch onDone 清位） */
     internal var mktLoading: Boolean by observable(false)
+    /** 行情数据到达 tick：DataSync 每次翻转，驱动「大盘」子内容(指数/热度/领涨领跌)强制重建读最新真实报价 */
+    internal var marketDataTick: Boolean by observable(false)
 
     // ===== 板块页交互状态（搜索 / 关注置顶）=====
     /** 关注板块 code 集合（持久化，载入于 viewDidLoad） */
@@ -147,6 +149,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
             marketSubToggle = !marketSubToggle
             // 任何真实数据到达即结束"加载中"（大盘指数/行情刷新也走 DataSync）
             mktLoading = false
+            // 行情数据 tick：驱动「大盘」子内容强制重建（即使一直停留在大盘子页也随新报价刷新）
+            marketDataTick = !marketDataTick
         }
         // 首屏大盘报价刷新：未就绪先显示"加载中"，DataSync 到达后自动消失
         if (!StockData.isReal()) mktLoading = true
@@ -762,7 +766,11 @@ private fun ViewContainer<*, *>.renderMarketContent(ctx: MainTabPager) {
             }
         }
         when (ctx.marketSubTab) {
-            0 -> renderMarketIndex(ctx)
+            // 大盘：包 marketDataTick 双分支——行情数据(报价)每到达一次即重建，读最新真实价刷新
+            0 -> {
+                vif({ ctx.marketDataTick }) { val c = this; c.renderMarketIndex(ctx) }
+                vif({ !ctx.marketDataTick }) { val c = this; c.renderMarketIndex(ctx) }
+            }
             1 -> renderSectorList(ctx)
             2 -> renderRankArea(ctx)
         }

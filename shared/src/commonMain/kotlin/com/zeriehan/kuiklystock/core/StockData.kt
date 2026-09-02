@@ -91,23 +91,21 @@ object StockData {
     fun findByCode(code: String): Stock =
         poolAll().firstOrNull { it.code == code } ?: baseQuotes.first()
 
-    /** 用真实价覆盖某股票在行情池中的快照（列表/自选随之显示真实价），并触发 DataSync 重建。
-     *  由真实 K线/分时拉取完成后调用：既修正详情页 K线所见的"最新真实价"，也让外部行情行不再停在过期 mock 价。 */
+    /** 用真实价覆盖某股票在行情池中的快照（列表/自选随之显示真实价）。
+     *  只更新内存池，**不触发 DataSync.bump**——避免在用户展开行看分时/K线等交互进行中，
+     *  bump 导致 MainTabPager 翻 listToggle 重建整表而把展开的行"自动缩回"。列表可见刷新
+     *  交由正常行情报价刷新(refresh 的 bump)驱动；此处写回保证下次任何重建读到真实价。 */
     fun applyRealQuote(code: String, price: Float, changePercent: Float, change: Float = price * changePercent / 100f) {
         if (price <= 0f) return
         val baseIdx = baseQuotes.indexOfFirst { it.code == code }
-        val updated: Stock?
         if (baseIdx >= 0) {
             val old = baseQuotes[baseIdx]
-            updated = old.copy(price = price, change = change, changePercent = changePercent)
-            baseQuotes[baseIdx] = updated
+            baseQuotes[baseIdx] = old.copy(price = price, change = change, changePercent = changePercent)
         } else {
             val old = realPool[code] ?: return
-            updated = old.copy(price = price, change = change, changePercent = changePercent)
-            realPool[code] = updated
+            realPool[code] = old.copy(price = price, change = change, changePercent = changePercent)
         }
         realLoaded = true
-        DataSync.bump()
     }
 
     private fun poolAll(): List<Stock> = baseQuotes + realPool.values
