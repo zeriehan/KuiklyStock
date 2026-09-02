@@ -512,6 +512,19 @@ internal class MainTabPager : BasePager(), StockNavigator {
         bridgeModule.toast("代码 ${stock.code} 已复制")
     }
 
+    /** 切换主 Tab。切到「行情」(1)时：若真实报价未就绪则显示加载中并触发刷新，且翻转 listToggle 让行情/大盘/主列表重建读最新池 */
+    internal fun selectMainTab(i: Int) {
+        selectedTab = i
+        if (i == 1) {
+            if (!StockData.isReal()) {
+                mktLoading = true
+                StockData.refresh()
+            }
+            listToggle = !listToggle
+            marketSubToggle = !marketSubToggle
+        }
+    }
+
     override fun body(): ViewBuilder {
         val ctx = this
         return {
@@ -549,7 +562,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                             flex(1f); flexDirectionColumn(); alignItemsCenter(); justifyContentCenter()
                             backgroundColor(if (ctx.selectedTab == i) Color(UserSettings.blend(ctx.themeColor, -1L, 0.86f)) else Color.WHITE)
                         }
-                        event { click { ctx.selectedTab = i } }
+                        event { click { ctx.selectMainTab(i) } }
                         Text {
                             attr {
                                 text(name)
