@@ -15,6 +15,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -78,6 +79,22 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
             "llmAnalyze" -> {
                 llmAnalyze(params, callback)
+            }
+
+            "fetchQuotes" -> {
+                fetchQuotes(params, callback)
+            }
+
+            "fetchClist" -> {
+                fetchClist(params, callback)
+            }
+
+            "fetchSectors" -> {
+                fetchSectors(params, callback)
+            }
+
+            "fetchSectorStocks" -> {
+                fetchSectorStocks(params, callback)
             }
 
             else -> callback?.invoke(
@@ -284,6 +301,314 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
     companion object {
         const val MODULE_NAME = "HRBridgeModule"
     }
+}
+
+/**
+ * 拉取东方财富实时行情（免 token 的 push2 批量接口）。
+ * 在子线程请求，结果切回主线程回调；任何失败回调空列表（shared 端保留 mock）。
+ *
+ * 接口：push2.eastmoney.com/api/qt/ulist.np/get
+ * 字段：f12=代码 f13=市场 f14=名称 f2=现价(元) f3=涨跌幅(%) f4=涨跌额(元)
+ *       f5=成交量(手) f15=最高 f16=最低 f17=今开 f18=昨收
+ * 返回给 shared 的归一化结构（quotes 用 JSON 字符串传递，规避桥对嵌套 List 的序列化差异）：
+ * { "quotes": "[ { secid, code, name, price, change, changePercent, high, low, volume(万手) }, ... ]" }
+ */
+private fun fetchQuotes(params: String?, callback: KuiklyRenderCallback?) {
+    val empty = mapOf("quotes" to "[]")
+    if (params == null) {
+        callback?.invoke(empty)
+        return
+    }
+    val secids = JSONObject(params).optString("secids")
+    if (secids.isBlank()) {
+        callback?.invoke(empty)
+        return
+    }
+    thread(name = "em-quotes") {
+        val result = try {
+            fetchEastMoneyQuotes(secids)
+        } catch (e: Throwable) {
+            Log.e("KRBridge", "fetchQuotes failed", e)
+            "[]"
+        }
+        Handler(Looper.getMainLooper()).post {
+            callback?.invoke(mapOf("quotes" to result))
+        }
+    }
+}
+
+private fun fetchEastMoneyQuotes(secids: String): String {
+    val url = "https://push2.eastmoney.com/api/qt/ulist.np/get" +
+        "?fltt=2&invt=2" +
+        "&fields=f12,f13,f14,f2,f3,f4,f5,f15,f16,f17,f18" +
+        "&secids=$secids"
+    val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 8000
+        readTimeout = 8000
+        setRequestProperty("User-Agent", "Mozilla/5.0")
+        setRequestProperty("Referer", "https://quote.eastmoney.com/")
+    }
+    try {
+        if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+            Log.e("KRBridge", "EM HTTP ${conn.responseCode}")
+            return "[]"
+        }
+        val json = JSONObject(conn.inputStream.bufferedReader().readText())
+        val diff = json.optJSONObject("data")?.optJSONArray("diff") ?: return "[]"
+        val out = JSONArray()
+        for (i in 0 until diff.length()) {
+            val it = diff.optJSONObject(i) ?: continue
+            val market = it.optInt("f13", 0)
+            val code = it.optString("f12")
+            val secid = "$market.$code"
+            val price = it.optDouble("f2", 0.0).toFloat()
+            if (price <= 0f) continue // 无数据（停牌/未开盘）跳过，保留 mock
+            val change = it.optDouble("f4", 0.0).toFloat()
+            val changePercent = it.optDouble("f3", 0.0).toFloat()
+            val high = it.optDouble("f15", 0.0).toFloat()
+            val low = it.optDouble("f16", 0.0).toFloat()
+            val open = it.optDouble("f17", 0.0).toFloat()
+            val prevClose = it.optDouble("f18", 0.0).toFloat()
+            val volumeWan = (it.optDouble("f5", 0.0) / 10000.0).toFloat() // 手 → 万手
+            val name = it.optString("f14")
+            out.put(
+                JSONObject().apply {
+                    put("secid", secid)
+                    put("code", code)
+                    put("name", name)
+                    put("price", price.toDouble())
+                    put("change", change.toDouble())
+                    put("changePercent", changePercent.toDouble())
+                    put("high", high.toDouble())
+                    put("low", low.toDouble())
+                    put("open", open.toDouble())
+                    put("prevClose", prevClose.toDouble())
+                    put("volume", volumeWan.toDouble())
+                }
+            )
+        }
+        return out.toString()
+    } finally {
+        conn.disconnect()
+    }
+}
+
+/**
+ * 拉取东方财富榜单个股（clist 排序接口），返回榜内股票列表。
+ * shared 传参：{ "fs": "市场过滤串", "fid": "排序字段(f3涨幅/f8换手/振幅用f3排序取高跌幅...)", "po": "1降/-1升", "pn": 页, "pz": 每页 }
+ * 统一由宿主构造 clist URL。字段与 fetchQuotes 一致（归一化 JSON 字符串）。
+ */
+private fun fetchClist(params: String?, callback: KuiklyRenderCallback?) {
+    val empty = mapOf("quotes" to "[]")
+    if (params == null) { callback?.invoke(empty); return }
+    val p = JSONObject(params)
+    val fs = p.optString("fs", "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23")
+    val fid = p.optString("fid", "f3")
+    val po = p.optInt("po", 1)
+    val pn = p.optInt("pn", 1)
+    val pz = p.optInt("pz", 30)
+    thread(name = "em-clist") {
+        val result = try {
+            fetchEastMoneyClist(fs, fid, po, pn, pz)
+        } catch (e: Throwable) {
+            Log.e("KRBridge", "fetchClist failed", e)
+            "[]"
+        }
+        Handler(Looper.getMainLooper()).post { callback?.invoke(mapOf("quotes" to result)) }
+    }
+}
+
+private fun fetchEastMoneyClist(fs: String, fid: String, po: Int, pn: Int, pz: Int): String {
+    val fsEnc = URLEncoder.encode(fs, "UTF-8")
+    val url = "https://push2.eastmoney.com/api/qt/clist/get" +
+        "?pn=$pn&pz=$pz&po=$po&np=1&fltt=2&invt=2&fid=$fid&fs=$fsEnc" +
+        "&fields=f12,f13,f14,f2,f3,f4,f5,f7,f8,f15,f16,f17,f18"
+    val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
+        setRequestProperty("User-Agent", "Mozilla/5.0")
+        setRequestProperty("Referer", "https://quote.eastmoney.com/")
+    }
+    try {
+        if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+            Log.e("KRBridge", "EM clist HTTP ${conn.responseCode}")
+            return "[]"
+        }
+        val json = JSONObject(conn.inputStream.bufferedReader().readText())
+        val diff = json.optJSONObject("data")?.optJSONArray("diff") ?: return "[]"
+        val out = JSONArray()
+        for (i in 0 until diff.length()) {
+            val it = diff.optJSONObject(i) ?: continue
+            val market = it.optInt("f13", 0)
+            val code = it.optString("f12")
+            val secid = "$market.$code"
+            val price = it.optDouble("f2", 0.0).toFloat()
+            if (price <= 0f) continue
+            val name = it.optString("f14")
+            out.put(
+                JSONObject().apply {
+                    put("secid", secid)
+                    put("code", code)
+                    put("name", name)
+                    put("price", price.toDouble())
+                    put("change", it.optDouble("f4", 0.0))
+                    put("changePercent", it.optDouble("f3", 0.0))
+                    put("high", it.optDouble("f15", 0.0))
+                    put("low", it.optDouble("f16", 0.0))
+                    put("open", it.optDouble("f17", 0.0))
+                    put("prevClose", it.optDouble("f18", 0.0))
+                    put("volume", (it.optDouble("f5", 0.0) / 10000.0)) // 手 → 万手
+                    put("turnover", it.optDouble("f8", 0.0))             // 换手率 %
+                    put("amplitude", it.optDouble("f7", 0.0))            // 振幅 %（若该榜未请求则为 0）
+                }
+            )
+        }
+        return out.toString()
+    } finally {
+        conn.disconnect()
+    }
+}
+
+/**
+ * 拉取东方财富真实行业板块列表（涨跌幅降序）。返回 { "sectors": "[ { secid, code, name, changePercent }, ... ]" }
+ */
+private fun fetchSectors(params: String?, callback: KuiklyRenderCallback?) {
+    thread(name = "em-sectors") {
+        val result = try {
+            fetchEastMoneySectors()
+        } catch (e: Throwable) {
+            Log.e("KRBridge", "fetchSectors failed", e)
+            "[]"
+        }
+        Handler(Looper.getMainLooper()).post { callback?.invoke(mapOf("sectors" to result)) }
+    }
+}
+
+private fun fetchEastMoneySectors(): String {
+    // 同时拉取「行业板块」(t:2) 与「概念板块」(t:3)。
+    // 之前只拉行业板块，导致种植业等概念板块根本没进列表、下跌板块数恒为 0；
+    // 概念板块（如种植业 BK0733）在绿盘日也会下跌，必须一起拉。
+    val boards = listOf("m:90+t:2+f:!50", "m:90+t:3+f:!50")
+    val out = JSONArray()
+    for (fsRaw in boards) {
+        try {
+            val fsEnc = URLEncoder.encode(fsRaw, "UTF-8")
+            val url = "https://push2.eastmoney.com/api/qt/clist/get" +
+                "?pn=1&pz=60&po=1&np=1&fltt=2&invt=2&fid=f3&fs=$fsEnc" +
+                "&fields=f12,f14,f3,f104,f105,f128,f140"
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+                setRequestProperty("Referer", "https://quote.eastmoney.com/")
+            }
+            try {
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                    Log.e("KRBridge", "EM sectors HTTP ${conn.responseCode}")
+                    continue
+                }
+                val json = JSONObject(conn.inputStream.bufferedReader().readText())
+                val diff = json.optJSONObject("data")?.optJSONArray("diff") ?: continue
+                for (i in 0 until diff.length()) {
+                    val it = diff.optJSONObject(i) ?: continue
+                    val code = it.optString("f12")            // 形如 BK0475
+                    if (code.isBlank()) continue
+                    val market = it.optInt("f13", 90)
+                    val price = it.optDouble("f2", 0.0)       // 板块指数点位，多数非 0
+                    out.put(
+                        JSONObject().apply {
+                            put("secid", "$market.$code")
+                            put("code", code)
+                            put("name", it.optString("f14"))
+                            put("changePercent", it.optDouble("f3", 0.0))
+                            put("price", price)
+                            put("volume", it.optDouble("f5", 0.0))  // 成交量
+                            // 板块可视化字段（板块页概览卡/行内领涨股用）：
+                            // f104=板块内上涨家数、f105=下跌家数、f128=领涨股名称、f140=领涨股涨跌幅(%)
+                            put("upCount", it.optInt("f104", 0))
+                            put("downCount", it.optInt("f105", 0))
+                            put("leaderName", it.optString("f128"))
+                            put("leaderChangePercent", it.optDouble("f140", 0.0))
+                        }
+                    )
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Throwable) {
+            Log.e("KRBridge", "fetchSectors board $fsRaw failed", e)
+        }
+    }
+    return out.toString()
+}
+
+/**
+ * 拉取某行业板块的实时成分股（clist 按板块过滤 fs=b:BKxxxx）。返回 { "quotes": "[ 同 quotes 结构 ]" }
+ * shared 传 { "code": "BK0475" }
+ */
+private fun fetchSectorStocks(params: String?, callback: KuiklyRenderCallback?) {
+    val empty = mapOf("quotes" to "[]")
+    if (params == null) { callback?.invoke(empty); return }
+    val bk = JSONObject(params).optString("code")
+    if (bk.isBlank()) { callback?.invoke(empty); return }
+    thread(name = "em-secstk") {
+        val result = try {
+            val fsEnc = URLEncoder.encode("b:$bk+f:!50", "UTF-8")
+            val url = "https://push2.eastmoney.com/api/qt/clist/get" +
+                "?pn=1&pz=60&po=1&np=1&fltt=2&invt=2&fid=f3&fs=$fsEnc" +
+                "&fields=f12,f13,f14,f2,f3,f4,f5,f8,f15,f16,f17,f18"
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+                setRequestProperty("Referer", "https://quote.eastmoney.com/")
+            }
+            try {
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                    Log.e("KRBridge", "EM secstk HTTP ${conn.responseCode}")
+                    "[]"
+                } else {
+                    val json = JSONObject(conn.inputStream.bufferedReader().readText())
+                    val diff = json.optJSONObject("data")?.optJSONArray("diff") ?: JSONArray()
+                    buildStocksJson(diff)
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Throwable) {
+            Log.e("KRBridge", "fetchSectorStocks failed", e)
+            "[]"
+        }
+        Handler(Looper.getMainLooper()).post { callback?.invoke(mapOf("quotes" to result)) }
+    }
+}
+
+/** 把 clist 的 diff JSONArray 统一转成 normalized quotes JSON 字符串（成分股复用） */
+private fun buildStocksJson(diff: JSONArray): String {
+    val out = JSONArray()
+    for (i in 0 until diff.length()) {
+        val it = diff.optJSONObject(i) ?: continue
+        val market = it.optInt("f13", 0)
+        val code = it.optString("f12")
+        val secid = "$market.$code"
+        val price = it.optDouble("f2", 0.0).toFloat()
+        if (price <= 0f) continue
+        out.put(
+            JSONObject().apply {
+                put("secid", secid)
+                put("code", code)
+                put("name", it.optString("f14"))
+                put("price", price.toDouble())
+                put("change", it.optDouble("f4", 0.0))
+                put("changePercent", it.optDouble("f3", 0.0))
+                put("high", it.optDouble("f15", 0.0))
+                put("low", it.optDouble("f16", 0.0))
+                put("open", it.optDouble("f17", 0.0))
+                put("prevClose", it.optDouble("f18", 0.0))
+                put("volume", (it.optDouble("f5", 0.0) / 10000.0))
+                put("turnover", it.optDouble("f8", 0.0))
+            }
+        )
+    }
+    return out.toString()
 }
 
 private fun JSONObject.toMap(): Map<Any, Any> {

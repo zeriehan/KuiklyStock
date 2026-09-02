@@ -17,10 +17,11 @@ import com.tencent.kuikly.core.layout.FlexJustifyContent
 import com.tencent.kuikly.core.views.ScrollerView
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.bridgeModule
-import com.zeriehan.kuiklystock.core.MockStockSource
+import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
+import com.zeriehan.kuiklystock.core.UserSettings
 import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 import com.zeriehan.kuiklystock.core.llm.ChatStore
 import com.zeriehan.kuiklystock.core.llm.ChatSync
@@ -54,6 +55,8 @@ internal class ChatPage : BasePager() {
 
     internal lateinit var code: String
     private lateinit var stock: Stock
+    /** 自由对话模式：不绑个股（主 Tab 直接聊大盘/宏观/选股）。此时 code 固定为 "free" */
+    internal var freeMode: Boolean by observable(false)
 
     /** 输入框当前文本（响应式，发送按钮据此启用） */
     private var inputText: String by observable("")
@@ -112,19 +115,23 @@ internal class ChatPage : BasePager() {
      */
     private fun ensureInit() {
         if (bootstrapped) return
-        code = pageData.params.optString("stockCode")
-        stock = MockStockSource.findByCode(code)
+        val raw = pageData.params.optString("stockCode")
+        // 自由对话：未带 stockCode（或显式 "free"）时进入，不绑个股
+        freeMode = raw.isBlank() || raw == "free"
+        code = if (freeMode) "free" else raw
+        // 自由模式仍取一个标的作兜底上下文（避免 lateinit 为空），但 UI 与 prompt 都不把它当唯一话题
+        stock = StockData.findByCode(if (freeMode) "000001" else code)
         if (ChatStore.messages(code).isEmpty()) {
-            ChatStore.append(
-                code,
-                ChatStore.ChatMessage(
-                    "assistant",
-                    "你好，我是 ${stock.name} 的 AI 助手。关于这只股票（现价 ${formatPrice(stock.price)}，" +
-                        "今日${if (stock.changePercent >= 0f) "涨" else "跌"}${formatPercent(
-                            kotlin.math.abs(stock.changePercent)
-                        )}），有什么想问的？"
-                )
-            )
+            val greeting = if (freeMode) {
+                "你好，我是你的 AI 财经助手。可以问我大盘走势、宏观热点、行业逻辑或选股思路，" +
+                    "也可以直接聊任意股票。想聊点什么？"
+            } else {
+                "你好，我是 ${stock.name} 的 AI 助手。关于这只股票（现价 ${formatPrice(stock.price)}，" +
+                    "今日${if (stock.changePercent >= 0f) "涨" else "跌"}${formatPercent(
+                        kotlin.math.abs(stock.changePercent)
+                    )}），有什么想问的？"
+            }
+            ChatStore.append(code, ChatStore.ChatMessage("assistant", greeting))
         }
         bootstrapped = true
         // 若上一条提问还在"后台"生成中，进入页面时继续保持思考态
@@ -186,7 +193,9 @@ internal class ChatPage : BasePager() {
 
         // 传完整历史给模型作为上下文
         val history = ChatStore.messages(code)
-        LLM.client.chat(stock, q, history) { text ->
+        // ⚠️ 回调必须用具名参数 callback = {...}：混用「尾随 lambda + 具名参数 freeMode」时
+        //    编译器会把尾随 lambda 误判成多余的实参（No value passed for parameter 'callback'）。
+        LLM.client.chat(stock, q, history, callback = { text ->
             val reply = text.ifBlank { "（暂时没有回复，请稍后再试）" }
             // 结果写进单例 ChatStore：即使本页已销毁，重新进入也能看到这条回复
             ChatStore.append(code, ChatStore.ChatMessage("assistant", reply))
@@ -194,9 +203,40 @@ internal class ChatPage : BasePager() {
             ChatSync.bump()
             // 后台跑完的提示：若用户已退出聊天页，用常驻桥弹 toast 告知（本页桥可能已失效）
             if (destroyed) {
-                AIJobCenter.toast("「${stock.name}」的 AI 已回复，点开对话查看")
+                AIJobCenter.toast(
+                    if (freeMode) "AI 自由问答已回复，点开查看"
+                    else "「${stock.name}」的 AI 已回复，点开对话查看"
+                )
             }
-        }
+        }, freeMode = freeMode)
+    }
+
+    /** 点按快捷问句：直接把该问句发出去（等同输入后点发送） */
+    private fun ask(q: String) {
+        if (ChatStore.isPending(code)) return
+        inputText = q
+        inputRef.view?.setText(q)
+        send()
+    }
+
+    /**
+     * 清空当前对话：清掉全部历史并重新开场，同时取消可能存在的等待态。
+     * 仅影响本 code 的会话（自由对话与个股对话互相隔离）。
+     */
+    private fun clearChat() {
+        ChatStore.clear(code)
+        ChatStore.setPending(code, false)
+        aiThinking = false
+        ChatStore.append(code, ChatStore.ChatMessage("assistant", "对话已清空，有什么想问的？"))
+        ChatSync.bump()
+        refreshMessages()
+        bridgeModule.toast("已清空对话")
+    }
+
+    /** 长按气泡复制文本到剪贴板（internal：文件级扩展函数 bubble 要调用） */
+    internal fun copyText(text: String) {
+        bridgeModule.copyToPasteboard(text)
+        bridgeModule.toast("已复制")
     }
 
     /**
@@ -239,16 +279,31 @@ internal class ChatPage : BasePager() {
                 View {
                     attr { width(32f); height(32f); justifyContentCenter(); alignItemsCenter() }
                     event { click { ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).closePage() } }
-                    Text { attr { text("<"); fontSize(22f); color(Color(0xFF222222)); fontWeightSemisolid() } }
+                    Text { attr { text("<"); fontSize(UserSettings.fs(22f)); color(Color(0xFF222222)); fontWeightSemisolid() } }
                 }
-                Text { attr { text(ctx.stock.name); fontSize(17f); color(Color(0xFF222222)); fontWeightSemisolid(); marginLeft(8f) } }
-                Text { attr { text(ctx.stock.code); fontSize(12f); color(Color(0xFF999999)); marginLeft(8f) } }
-                View { attr { flex(1f) } }
                 Text {
                     attr {
-                        text(formatPrice(ctx.stock.price))
-                        fontSize(15f); color(Color(0xFF222222)); fontWeightSemisolid()
+                        text(if (ctx.freeMode) "AI 助手 · 自由问答" else ctx.stock.name)
+                        fontSize(UserSettings.fs(17f)); color(Color(0xFF222222)); fontWeightSemisolid(); marginLeft(8f)
                     }
+                }
+                vif({ !ctx.freeMode }) {
+                    Text { attr { text(ctx.stock.code); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)); marginLeft(8f) } }
+                }
+                View { attr { flex(1f) } }
+                vif({ !ctx.freeMode }) {
+                    Text {
+                        attr {
+                            text(formatPrice(ctx.stock.price))
+                            fontSize(UserSettings.fs(15f)); color(Color(0xFF222222)); fontWeightSemisolid()
+                        }
+                    }
+                }
+                // 清空：仅清当前这一份对话（个股对话与自由问答互相隔离）
+                View {
+                    attr { padding(4f); marginLeft(12f); justifyContentCenter(); alignItemsCenter() }
+                    event { click { ctx.clearChat() } }
+                    Text { attr { text("清空"); fontSize(UserSettings.fs(14f)); color(Color(UserSettings.themeColor)) } }
                 }
             }
 
@@ -277,6 +332,47 @@ internal class ChatPage : BasePager() {
                 vif({ !ctx.renderToggle }) { val c = this; c.renderMessages(ctx) }
             }
 
+            // ===== 快捷问句（点按即问，降低冷启动成本）=====
+            // ⚠️ 用普通 View 分行 + flex(1f)，不用横 Scroller —— 横 Scroller 会吞掉子元素的 click。
+            View {
+                attr {
+                    flexDirectionColumn()
+                    padding(10f); paddingTop(8f); paddingBottom(2f)
+                    backgroundColor(Color.WHITE)
+                }
+                val qs = if (ctx.freeMode) {
+                    listOf("今日大盘怎么看", "当前市场主线是什么", "如何控制仓位", "短线选股思路")
+                } else {
+                    listOf("今日走势如何", "现在适合买入吗", "支撑压力位在哪", "量价关系怎么看")
+                }
+                qs.chunked(2).forEach { row ->
+                    View {
+                        attr { flexDirectionRow(); marginTop(6f) }
+                        row.forEachIndexed { i, q ->
+                            View {
+                                attr {
+                                    flex(1f)
+                                    if (i > 0) marginLeft(6f)
+                                    padding(7f); paddingLeft(10f); paddingRight(10f)
+                                    borderRadius(14f)
+                                    backgroundColor(Color(UserSettings.themeTint(0.12f)))
+                                    justifyContentCenter(); alignItemsCenter()
+                                }
+                                event { click { ctx.ask(q) } }
+                                Text {
+                                    attr {
+                                        text(q)
+                                        fontSize(UserSettings.fs(12.5f))
+                                        color(Color(UserSettings.themeColor))
+                                        maxWidth(150f)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // ===== 输入栏 =====
             View {
                 attr {
@@ -288,9 +384,9 @@ internal class ChatPage : BasePager() {
                     ref { ctx.inputRef = it }
                     attr {
                         flex(1f); height(38f)
-                        fontSize(15f); color(Color(0xFF222222))
+                        fontSize(UserSettings.fs(15f)); color(Color(0xFF222222))
                         backgroundColor(Color(0xFFF2F3F5)); borderRadius(19f)
-                        placeholder("")
+                        placeholder(if (ctx.freeMode) "问大盘、行业或任意股票…" else "问点什么…")
                         placeholderColor(Color(0xFF999999))
                     }
                     event {
@@ -305,8 +401,14 @@ internal class ChatPage : BasePager() {
                 Button {
                     attr {
                         size(64f, 38f); marginLeft(10f); borderRadius(19f)
-                        backgroundColor(if (ctx.aiThinking || ctx.inputText.isBlank()) Color(0xFFB9E6F5) else Color(0xFF23D3FD))
-                        titleAttr { text("发送"); fontSize(14f); color(Color.WHITE) }
+                        backgroundColor(
+                            if (ctx.aiThinking || ctx.inputText.isBlank()) Color(UserSettings.themeTint(0.45f))
+                            else Color(UserSettings.themeColor)
+                        )
+                        titleAttr {
+                            text(if (ctx.aiThinking) "…" else "发送")
+                            fontSize(UserSettings.fs(14f)); color(Color.WHITE)
+                        }
                     }
                     event { click { ctx.send() } }
                 }
@@ -322,9 +424,9 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
     val msgs = ChatStore.messages(ctx.code)
     val maxBubbleW = (ctx.pagerData.pageViewWidth - 40f).coerceIn(200f, 300f)
     if (msgs.isEmpty()) {
-        Text { attr { text("（暂无消息）"); fontSize(13f); color(Color(0xFF999999)); marginTop(20f) } }
+        Text { attr { text("（暂无消息）"); fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginTop(20f) } }
     }
-    msgs.forEach { m -> bubble(m.role, m.text, maxBubbleW) }
+    msgs.forEach { m -> bubble(ctx, m.role, m.text, maxBubbleW) }
     // 思考中占位气泡（与 AI 气泡同款灰白底，保持视觉一致）
     vif({ ctx.aiThinking }) {
         View {
@@ -332,7 +434,7 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
                 alignSelfFlexStart(); marginBottom(10f)
                 padding(10f); borderRadius(12f); backgroundColor(Color(0xFFFFFFFF))
             }
-            Text { attr { text("AI 思考中…"); fontSize(14f); color(Color(0xFF999999)) } }
+            Text { attr { text("AI 思考中…"); fontSize(UserSettings.fs(14f)); color(Color(0xFF999999)) } }
         }
     }
 }
@@ -344,7 +446,7 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
  * 用 justifyContent 控制气泡靠右(用户)/靠左(AI)。气泡只给 maxWidth 上限，文本在其中自动换行。
  * 不显式给行宽（避免依赖 pageViewWidth 算成 0 宽）、不给气泡 flex(1f)（否则列宽未定时循环塌缩）。
  */
-private fun ViewContainer<*, *>.bubble(role: String, text: String, maxBubbleW: Float) {
+private fun ViewContainer<*, *>.bubble(ctx: ChatPage, role: String, text: String, maxBubbleW: Float) {
     val isUser = role == "user"
     View {
         attr {
@@ -359,12 +461,17 @@ private fun ViewContainer<*, *>.bubble(role: String, text: String, maxBubbleW: F
                 borderRadius(12f)
                 // AI 气泡用「灰白」底：页面背景是 0xFFF2F3F5（浅灰），气泡用近白 0xFFFAFBFC 会几乎融进背景，
                 // 故直接用纯白 0xFFFFFFFF —— 在浅灰页面上呈现为清晰可辨的「灰白色气泡」（微信同款观感）。
-                backgroundColor(if (isUser) Color(0xFF23D3FD) else Color(0xFFFFFFFF))
+                // 用户气泡跟随个性化主题色（长按时可复制文本）。
+                backgroundColor(if (isUser) Color(UserSettings.themeColor) else Color(0xFFFFFFFF))
+            }
+            event {
+                // 长按复制：便于把 AI 结论分享出去或留存
+                longPress { ctx.copyText(text) }
             }
             Text {
                 attr {
                     text(text)
-                    fontSize(14f)
+                    fontSize(UserSettings.fs(14f))
                     color(if (isUser) Color.WHITE else Color(0xFF333333))
                     // 关键：文本必须显式限宽，否则在「气泡只给 maxWidth、自身宽自适应」的情况下不换行，
                     // 长内容只显示一行并溢出气泡（右侧被裁掉）。20f 为左右内边距。

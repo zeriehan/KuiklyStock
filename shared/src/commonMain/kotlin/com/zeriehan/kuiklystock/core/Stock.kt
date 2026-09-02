@@ -37,7 +37,7 @@ data class KLineBar(
  * 由"距今天数"推算 MM-DD 标签（演示用，按真实月长回退，基准日 2026-08-29）。
  * 说明：这是 mock 演示标签，并非真实交易日历，仅用于 X 轴可读性，不影响任何逻辑。
  */
-/** 两位补零（internal，供 MockStockSource 复用生成时分标签） */
+/** 两位补零（internal，供 StockData 复用生成时分标签） */
 internal fun pad2(v: Int): String = if (v < 10) "0$v" else v.toString()
 
 /**
@@ -209,12 +209,17 @@ fun computeBOLL(closes: List<Float>, period: Int = 20, k: Int = 2): BollResult {
 }
 
 /**
- * 涨红跌绿配色（中国股市惯例）
+ * 涨跌配色（跟随 [UserSettings.colorMode]：0=A股红涨绿跌 / 1=欧美红跌绿涨）。
+ * UP/DOWN/FLAT 用自定义 getter，每次访问按当前模式返回，供行情文字、K线蜡烛、
+ * 进度条等所有涨跌红绿标注统一读取。调用点无需感知模式切换。
  */
 object StockColor {
-    val UP: Color = Color(0xFFE54D42)   // 涨：红
-    val DOWN: Color = Color(0xFF1ABE5B) // 跌：绿
-    val FLAT: Color = Color(0xFF999999) // 平：灰
+    /** 涨：A股=红，欧美=绿 */
+    val UP: Color get() = Color(UserSettings.upMain())
+    /** 跌：A股=绿，欧美=红 */
+    val DOWN: Color get() = Color(UserSettings.downMain())
+    /** 平：灰 */
+    val FLAT: Color get() = Color(0xFF999999)
 
     fun of(changePercent: Float): Color =
         if (changePercent > 0f) UP else if (changePercent < 0f) DOWN else FLAT
@@ -237,4 +242,29 @@ fun formatPrice(v: Float): String {
 fun formatPercent(v: Float): String {
     val prefix = if (v > 0f) "+" else ""
     return prefix + formatPrice(v) + "%"
+}
+
+/**
+ * 板块（行业 / 概念）数据模型。
+ * 字段对齐 Tushare 板块指数（申万行业 sw_index / 同花顺概念 ths_index）：
+ * - [code]            板块代码（如 "sw_bank" / "BK0473"，接入真实数据时即 Tushare 的板块指数代码）
+ * - [name]            板块名称（如 "银行" / "白酒"）
+ * - [changePercent]   板块涨跌幅（%），真实数据下取自板块指数行情；mock 下由成分股均值推导，保证与成分一致
+ * - [constituentCodes] 成分股代码列表（对应 [Stock.code]，接入真实数据时由 Tushare 成分股接口回填）
+ * - [upCount]/[downCount] 板块内上涨/下跌家数（真实数据取自东财 f104/f105，mock/未拉取为 0 → UI 据此降级隐藏）
+ * - [leaderName]/[leaderChangePercent] 领涨股名称及其涨跌幅 %（东财 f128/f140，mock 为空 → UI 隐藏）
+ *
+ * 设计目标：让行情页「板块」Tab 与未来真实数据源结构对齐，替换 StockData 即可无缝接入。
+ */
+data class Sector(
+    val code: String,
+    val name: String,
+    val changePercent: Float,
+    val constituentCodes: List<String>,
+    val upCount: Int = 0,
+    val downCount: Int = 0,
+    val leaderName: String = "",
+    val leaderChangePercent: Float = 0f,
+) {
+    val isUp: Boolean get() = changePercent >= 0f
 }

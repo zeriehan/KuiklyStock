@@ -14,10 +14,16 @@ import com.zeriehan.kuiklystock.core.Stock
 interface LLMClient {
     fun analyze(stock: Stock, kline: List<KLineBar>, callback: (String) -> Unit)
 
+    /**
+     * 多轮问答。
+     * @param freeMode 自由对话模式：不绑定具体个股，可问大盘/宏观/选股思路等泛财经问题。
+     *                 此时 [stock] 仅作为兜底上下文传入（可为任意标的），实现方不应把它当唯一话题。
+     */
     fun chat(
         stock: Stock,
         question: String,
         history: List<ChatStore.ChatMessage>,
         callback: (String) -> Unit,
+        freeMode: Boolean = false,
     )
 }

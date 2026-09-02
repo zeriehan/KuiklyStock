@@ -27,8 +27,33 @@ class MockLLMClient : LLMClient {
         question: String,
         history: List<ChatStore.ChatMessage>,
         callback: (String) -> Unit,
+        freeMode: Boolean,
     ) {
-        callback(buildChat(stock, question))
+        callback(if (freeMode) buildFreeChat(question) else buildChat(stock, question))
+    }
+
+    /** 自由对话（不绑个股）的离线兜底：给出通用财经问答框架，并如实说明未接模型 */
+    private fun buildFreeChat(question: String): String {
+        val q = question.trim()
+        return buildString {
+            appendLine("【自由问答】")
+            appendLine("")
+            appendLine("你问的是：$q")
+            appendLine("")
+            appendLine("【简要回应】")
+            appendLine(
+                "当前未连接大模型（离线兜底），无法就该问题给出实时分析。" +
+                    "请在「我的-外观与个性化」之外确保已配置智谱 GLM Key，联网后即可获得真实回答。"
+            )
+            appendLine("")
+            appendLine("【参考思路】")
+            appendLine(
+                "涉及大盘可先看三大指数涨跌与量能；涉及个股先看趋势、位置与量价配合；" +
+                    "任何决策都应设置止损，并以实时行情为准。"
+            )
+            appendLine("")
+            appendLine("（以上为离线兜底内容，仅供参考，不构成投资建议）")
+        }.trimEnd()
     }
 
     private fun buildChat(stock: Stock, question: String): String {

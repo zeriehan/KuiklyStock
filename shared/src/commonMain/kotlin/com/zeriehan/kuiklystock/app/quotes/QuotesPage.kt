@@ -9,7 +9,7 @@ import com.tencent.kuikly.core.views.*
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.components.KRTable.KRStockList
-import com.zeriehan.kuiklystock.core.MockStockSource
+import com.zeriehan.kuiklystock.core.StockData
 
 /**
  * 行情 Tab 宿主页（测试用）。
@@ -41,7 +41,7 @@ internal class QuotesPage : BasePager() {
             // 否则其内部 Scroller 因父高度未约束而塌缩为 0 -> 整块空白。
             KRStockList {
                 attr { flex(1f) }
-                stocks = MockStockSource.getQuotes()
+                stocks = StockData.getQuotes()
                 onRowClick = { /* 展开/收起由 KRStockList 内部 expandedIndex 处理 */ }
                 onDetailClick = { stock ->
                     val data = JSONObject()

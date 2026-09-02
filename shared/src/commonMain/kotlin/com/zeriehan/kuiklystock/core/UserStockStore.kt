@@ -17,6 +17,7 @@ internal object UserStockStore {
     const val KEY_WATCH = "kb_watchlist"
     const val KEY_HIDDEN = "kb_hidden"
     const val KEY_HIDE_DAYS = "kb_hide_days"
+    const val KEY_FOLLOW_SECTORS = "kb_follow_sectors"
 
     fun loadWatchlist(prefs: SharedPreferencesModule): Set<String> {
         val raw = prefs.getItem(KEY_WATCH)
@@ -47,5 +48,16 @@ internal object UserStockStore {
 
     fun saveHideDays(prefs: SharedPreferencesModule, days: Int) {
         prefs.setItem(KEY_HIDE_DAYS, days.toString())
+    }
+
+    // ===== 关注板块（code CSV）=====
+    fun loadFollowSectors(prefs: SharedPreferencesModule): Set<String> {
+        val raw = prefs.getItem(KEY_FOLLOW_SECTORS)
+        if (raw.isBlank()) return emptySet()
+        return raw.split(',').filter { it.isNotBlank() }.toSet()
+    }
+
+    fun saveFollowSectors(prefs: SharedPreferencesModule, set: Set<String>) {
+        prefs.setItem(KEY_FOLLOW_SECTORS, set.joinToString(","))
     }
 }

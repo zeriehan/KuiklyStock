@@ -81,6 +81,49 @@ internal class BridgeModule : Module() {
         callNativeMethod(LLM_ANALYZE, methodArgs, callbackFn)
     }
 
+    /**
+     * 拉取实时行情：把待查 secid 列表下发到 Android 宿主，由宿主请求东方财富后回调。
+     * 回调参数形如 { "quotes": [ { "secid","code","name","price","change","changePercent","high","low","volume" }, ... ] }；
+     * 失败时 quotes 为空数组（上层保留 mock，不崩）。
+     */
+    fun fetchQuotes(secids: String, callbackFn: CallbackFn) {
+        val methodArgs = JSONObject()
+        methodArgs.put("secids", secids)
+        callNativeMethod(FETCH_QUOTES, methodArgs, callbackFn)
+    }
+
+    /**
+     * 拉取东方财富榜单个股（clist 排序）。回调 { "quotes": "JSON字符串" }；失败为空数组。
+     * @param fs 市场过滤串（全A股默认由宿主兜底）
+     * @param fid 排序字段（f3 涨幅 / f8 换手 / f2 现价），配合 [desc]
+     */
+    fun fetchClist(
+        fs: String,
+        fid: String,
+        desc: Boolean,
+        pz: Int = 30,
+        callbackFn: CallbackFn,
+    ) {
+        val methodArgs = JSONObject()
+        methodArgs.put("fs", fs)
+        methodArgs.put("fid", fid)
+        methodArgs.put("po", if (desc) 1 else 0)
+        methodArgs.put("pz", pz)
+        callNativeMethod(FETCH_CLIST, methodArgs, callbackFn)
+    }
+
+    /** 拉取真实行业板块列表。回调 { "sectors": "JSON字符串" }；失败为空数组。 */
+    fun fetchSectors(callbackFn: CallbackFn) {
+        callNativeMethod(FETCH_SECTORS, null, callbackFn)
+    }
+
+    /** 拉取某行业板块的实时成分股。回调 { "quotes": "JSON字符串" }；失败为空数组。 */
+    fun fetchSectorStocks(code: String, callbackFn: CallbackFn) {
+        val methodArgs = JSONObject()
+        methodArgs.put("code", code)
+        callNativeMethod(FETCH_SECTOR_STOCKS, methodArgs, callbackFn)
+    }
+
     fun openPage(
         url: String,
         closeCurPage: Boolean = false,
@@ -363,6 +406,10 @@ internal class BridgeModule : Module() {
         const val SHOW_PHOTO_BROWSER = "showPhotoBrowser"
         const val HUMAN_VERIFICATION = "humanVerification"
         const val LLM_ANALYZE = "llmAnalyze"
+        const val FETCH_QUOTES = "fetchQuotes"
+        const val FETCH_CLIST = "fetchClist"
+        const val FETCH_SECTORS = "fetchSectors"
+        const val FETCH_SECTOR_STOCKS = "fetchSectorStocks"
     }
 
 }

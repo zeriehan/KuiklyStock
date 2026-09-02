@@ -15,8 +15,8 @@ import com.tencent.kuikly.core.views.*
 import com.zeriehan.kuiklystock.components.KRStockBadge.KRStockBadge
 import com.zeriehan.kuiklystock.components.KRMiniTimeSharing.KRMiniTimeSharing
 import com.zeriehan.kuiklystock.core.Stock
-import com.zeriehan.kuiklystock.core.StockColor
-import com.zeriehan.kuiklystock.core.MockStockSource
+import com.zeriehan.kuiklystock.core.UserSettings
+import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.base.Utils
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.llm.LLM
@@ -41,8 +41,8 @@ private val ROW_HEIGHT = 64f
 private fun ViewContainer<*, *>.briefCell(label: String, value: String) {
     View {
         attr { flex(1f); flexDirectionColumn() }
-        Text { attr { text(label); fontSize(11f); color(Color(0xFF999999)) } }
-        Text { attr { text(value); fontSize(13f); color(Color(0xFF333333)); marginTop(3f) } }
+        Text { attr { text(label); fontSize(UserSettings.fs(11f)); color(Color(0xFF999999)) } }
+        Text { attr { text(value); fontSize(UserSettings.fs(13f)); color(Color(0xFF333333)); marginTop(3f) } }
     }
 }
 
@@ -66,7 +66,7 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
         val code = stock.code
         if (!force && (AIAnalysisStore.get(code) != null || aiLoadingCodes.contains(code))) return
         aiLoadingCodes = aiLoadingCodes + code
-        LLM.client.analyze(stock, MockStockSource.getKLine(stock, "日")) { result ->
+        LLM.client.analyze(stock, StockData.getKLine(stock, "日")) { result ->
             val ts = Utils.currentBridgeModule().currentTimeStamp()
             val tText = if (ts > 0) Utils.currentBridgeModule().dateFormatter(ts, "MM-dd HH:mm") else ""
             AIAnalysisStore.put(code, result, tText)
@@ -137,123 +137,139 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                     border(Border(1f, BorderStyle.SOLID, Color(0xFFE3E5E8)))
                                     backgroundColor(Color.WHITE)
                                 }
-                                // 分页轮播
+                                // ===== 分页轮播（组件按「我的」设置动态增减：趋势=0 / AI=1 / 简况=2）=====
+                                val pages = UserSettings.expandPages()
                                 Scroller {
                                     attr {
                                         flexDirectionRow()
-                                        height(150f)
-                                        pagingEnable(true)
+                                        height(if (pages.isEmpty()) 0f else 150f)
+                                        pagingEnable(pages.size > 1)
                                         showScrollerIndicator(false)
                                     }
                                     event {
                                         scroll(sync = true) { p ->
                                             val vw = if (p.viewWidth > 0f) p.viewWidth else 1f
-                                            ctx.currentPage = (p.offsetX / vw + 0.5f).toInt().coerceIn(0, 2)
+                                            ctx.currentPage = (p.offsetX / vw + 0.5f).toInt()
+                                                .coerceIn(0, (pages.size - 1).coerceAtLeast(0))
                                         }
                                     }
-                                    // ===== Page 1：当天分时图（休市取最近交易日；带价格 + 十字光标）=====
-                                    View {
-                                        attr {
-                                            width(pageW)
-                                            height(150f)
-                                            flexDirectionColumn()
-                                            padding(12f)
-                                            backgroundColor(Color(0xFFF7F8FA))
-                                        }
-                                        KRMiniTimeSharing {
-                                            points = MockStockSource.getIntraday(stock)
-                                            refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
-                                            color = StockColor.of(stock.changePercent)
-                                        }
-                                    }
-                                    // ===== Page 2：AI 智能分析（引用共享 AIAnalysisStore，与详情页完全一致）=====
-                                    View {
-                                        attr {
-                                            width(pageW)
-                                            height(150f)
-                                            flexDirectionColumn()
-                                            padding(16f)
-                                            backgroundColor(Color(0xFFF7F8FA))
-                                        }
-                                        View {
-                                            attr { flexDirectionRow(); alignItemsCenter() }
-                                            View { attr { width(18f); height(18f); borderRadius(9f); backgroundColor(Color(0xFFE6F1FB)); marginRight(6f) } }
-                                            Text { attr { text("AI 智能分析"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
-                                            View { attr { flex(1f) } }
-                                            Text {
+                                    pages.forEach { id ->
+                                        when (id) {
+                                            // ===== Page 1：当天分时图 =====
+                                            0 -> View {
                                                 attr {
-                                                    val busy = ctx.aiLoadingCodes.contains(stock.code)
-                                                    val t = AIAnalysisStore.get(stock.code)?.timeText ?: ""
-                                                    text(if (busy) "分析中…" else t)
-                                                    fontSize(12f); color(Color(0xFF999999)); marginRight(8f)
+                                                    width(pageW); height(150f); flexDirectionColumn()
+                                                    padding(12f); backgroundColor(Color(0xFFF7F8FA))
+                                                }
+                                                KRMiniTimeSharing {
+                                                    points = StockData.getIntraday(stock)
+                                                    refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
+                                                    // 分时图统一红线，不再随涨跌幅变红绿
+                                                    color = Color(0xFFE54D42)
                                                 }
                                             }
-                                            KRRefreshButton({ ctx.aiLoadingCodes.contains(stock.code) }) { ctx.loadAI(index, stock, force = true) }
-                                        }
-                                        // ⚠️ 必须在 attr 闭包内直接读取 observable（aiLoadingCodes 与 AIAnalysisStore），
-                                        // 否则只在 vif 挂载时捕获一次旧值，AI 回调回填后不会重渲染（卡在"分析中"）。
-                                        Text {
-                                            attr {
-                                                val busy = ctx.aiLoadingCodes.contains(stock.code)
-                                                val cached = AIAnalysisStore.get(stock.code)?.text
-                                                text(if (busy) "AI 分析中…" else (cached ?: "AI 分析中…"))
-                                                fontSize(13f); color(Color(0xFF555555)); marginTop(8f)
-                                                lines(5); textOverFlowTail()   // 超长文本末尾省略号，避免溢出卡片
+                                            // ===== Page 2：AI 智能分析（引用共享 AIAnalysisStore，与详情页完全一致）=====
+                                            1 -> View {
+                                                attr {
+                                                    width(pageW); height(150f); flexDirectionColumn()
+                                                    padding(16f); backgroundColor(Color(0xFFF7F8FA))
+                                                }
+                                                View {
+                                                    attr { flexDirectionRow(); alignItemsCenter() }
+                                                    View { attr { width(18f); height(18f); borderRadius(9f); backgroundColor(Color(0xFFE6F1FB)); marginRight(6f) } }
+                                                    Text { attr { text("AI 智能分析"); fontSize(UserSettings.fs(14f)); fontWeightSemiBold(); color(Color(0xFF222222)) } }
+                                                    View { attr { flex(1f) } }
+                                                    Text {
+                                                        attr {
+                                                            val busy = ctx.aiLoadingCodes.contains(stock.code)
+                                                            val t = AIAnalysisStore.get(stock.code)?.timeText ?: ""
+                                                            text(if (busy) "分析中…" else t)
+                                                            fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)); marginRight(8f)
+                                                        }
+                                                    }
+                                                    KRRefreshButton({ ctx.aiLoadingCodes.contains(stock.code) }) { ctx.loadAI(index, stock, force = true) }
+                                                }
+                                                // ⚠️ 必须在 attr 闭包内直接读取 observable（aiLoadingCodes 与 AIAnalysisStore），
+                                                // 否则只在 vif 挂载时捕获一次旧值，AI 回调回填后不会重渲染（卡在"分析中"）。
+                                                Text {
+                                                    attr {
+                                                        val busy = ctx.aiLoadingCodes.contains(stock.code)
+                                                        val cached = AIAnalysisStore.get(stock.code)?.text
+                                                        text(if (busy) "AI 分析中…" else (cached ?: "AI 分析中…"))
+                                                        fontSize(UserSettings.fs(13f)); color(Color(0xFF555555)); marginTop(8f)
+                                                        lines(5); textOverFlowTail()   // 超长文本末尾省略号，避免溢出卡片
+                                                    }
+                                                }
                                             }
-                                        }
-                                    }
-                                    // ===== Page 3：用户自定义模块（暂为「简况」，后续「我的-设置」可增删顺序）=====
-                                    View {
-                                        attr {
-                                            width(pageW)
-                                            height(150f)
-                                            flexDirectionColumn()
-                                            padding(14f)
-                                            backgroundColor(Color(0xFFF7F8FA))
-                                        }
-                                        Text { attr { text("简况"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
-                                        View {
-                                            attr { flexDirectionRow(); marginTop(10f) }
-                                            briefCell("行业", ctx.deriveIndustry(stock.name))
-                                            briefCell("总市值", ctx.deriveMarketCap(stock.code) + "亿")
-                                            briefCell("市盈率TTM", ctx.derivePE(stock.code))
-                                        }
-                                        View {
-                                            attr { flexDirectionRow(); marginTop(8f) }
-                                            briefCell("换手率", ctx.deriveTurnover(stock.code))
-                                            briefCell("最高", formatPrice(stock.high))
-                                            briefCell("最低", formatPrice(stock.low))
-                                        }
-                                        Text {
-                                            attr {
-                                                text("简介：" + ctx.deriveIntro(stock.name))
-                                                fontSize(12f); color(Color(0xFF777777)); marginTop(10f)
+                                            // ===== Page 3：简况 =====
+                                            2 -> View {
+                                                attr {
+                                                    width(pageW); height(150f); flexDirectionColumn()
+                                                    padding(14f); backgroundColor(Color(0xFFF7F8FA))
+                                                }
+                                                Text { attr { text("简况"); fontSize(UserSettings.fs(14f)); fontWeightSemiBold(); color(Color(0xFF222222)) } }
+                                                View {
+                                                    attr { flexDirectionRow(); marginTop(10f) }
+                                                    briefCell("行业", ctx.deriveIndustry(stock.name))
+                                                    briefCell("总市值", ctx.deriveMarketCap(stock.code) + "亿")
+                                                    briefCell("市盈率TTM", ctx.derivePE(stock.code))
+                                                }
+                                                View {
+                                                    attr { flexDirectionRow(); marginTop(8f) }
+                                                    briefCell("换手率", ctx.deriveTurnover(stock.code))
+                                                    briefCell("最高", formatPrice(stock.high))
+                                                    briefCell("最低", formatPrice(stock.low))
+                                                }
+                                                Text {
+                                                    attr {
+                                                        text("简介：" + ctx.deriveIntro(stock.name))
+                                                        fontSize(UserSettings.fs(12f)); color(Color(0xFF777777)); marginTop(10f)
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
-                                // 分页圆点指示（当前页高亮）
-                                View {
-                                    attr { flexDirectionRow(); justifyContentCenter(); height(18f); marginTop(2f) }
-                                    View { attr { width(7f); height(7f); borderRadius(3.5f); marginRight(6f); backgroundColor(if (ctx.currentPage == 0) Color(0xFF23D3FD) else Color(0xFFD0D3D8)) } }
-                                    View { attr { width(7f); height(7f); borderRadius(3.5f); marginRight(6f); backgroundColor(if (ctx.currentPage == 1) Color(0xFF23D3FD) else Color(0xFFD0D3D8)) } }
-                                    View { attr { width(7f); height(7f); borderRadius(3.5f); backgroundColor(if (ctx.currentPage == 2) Color(0xFF23D3FD) else Color(0xFFD0D3D8)) } }
+                                // 分页圆点指示（随组件数量动态；当前页高亮为主题色）
+                                if (pages.isNotEmpty()) {
+                                    View {
+                                        attr { flexDirectionRow(); justifyContentCenter(); height(18f); marginTop(2f) }
+                                        pages.forEachIndexed { di, _ ->
+                                            View {
+                                                attr {
+                                                    width(7f); height(7f); borderRadius(3.5f)
+                                                    marginRight(if (di < pages.size - 1) 6f else 0f)
+                                                    backgroundColor(if (ctx.currentPage == di) Color(UserSettings.themeColor) else Color(0xFFD0D3D8))
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    View {
+                                        attr { flexDirectionRow(); justifyContentCenter(); height(18f); marginTop(2f) }
+                                        Text {
+                                            attr {
+                                                text("展开组件已全部关闭，可到「我的 → 行情展开组件」开启")
+                                                fontSize(UserSettings.fs(12f)); color(Color(0xFF999999))
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             // ===== 常驻：关键信息 + 详细按钮（同行，字号缩小、留白收紧）=====
                             View {
                                 attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f); paddingLeft(12f); paddingRight(12f) }
-                                Text { attr { text("最高 " + formatPrice(stock.high)); fontSize(12f); color(Color(0xFF666666)) } }
-                                Text { attr { text("最低 " + formatPrice(stock.low)); fontSize(12f); color(Color(0xFF666666)); marginLeft(10f) } }
-                                Text { attr { text("量 " + formatPrice(stock.volume) + "万"); fontSize(12f); color(Color(0xFF666666)); marginLeft(10f) } }
+                                Text { attr { text("最高 " + formatPrice(stock.high)); fontSize(UserSettings.fs(12f)); color(Color(0xFF666666)) } }
+                                Text { attr { text("最低 " + formatPrice(stock.low)); fontSize(UserSettings.fs(12f)); color(Color(0xFF666666)); marginLeft(10f) } }
+                                Text { attr { text("量 " + formatPrice(stock.volume) + "万"); fontSize(UserSettings.fs(12f)); color(Color(0xFF666666)); marginLeft(10f) } }
                                 View { attr { flex(1f) } }   // 把「详细」推到最右
                                 Button {
                                     attr {
                                         size(58f, 26f)
                                         marginLeft(10f)
                                         borderRadius(13f)
-                                        backgroundColor(Color(0xFF23D3FD))
-                                        titleAttr { text("详细"); fontSize(12f); color(Color.WHITE) }
+                                        backgroundColor(Color(UserSettings.themeColor))
+                                        titleAttr { text("详细"); fontSize(UserSettings.fs(12f)); color(Color.WHITE) }
                                     }
                                     event { click { ctx.onDetailClick?.invoke(stock) } }
                                 }
@@ -267,7 +283,7 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                 padding(all = 14f)
                                 flexDirectionRow()
                                 alignItemsCenter()
-                                backgroundColor(if (ctx.expandedIndex == index) Color(0xFFEAFBFF) else Color.WHITE)
+                                backgroundColor(if (ctx.expandedIndex == index) Color(UserSettings.themeTint(0.9f)) else Color.WHITE)
                             }
                             event {
                             click {
@@ -285,13 +301,13 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                             // 名称 + 代码
                             View {
                                 attr { flex(1f); flexDirectionColumn() }
-                                Text { attr { text(stock.name); fontSize(16f); color(Color(0xFF222222)) } }
-                                Text { attr { text(stock.code); fontSize(12f); color(Color(0xFF999999)); marginTop(4f) } }
+                                Text { attr { text(stock.name); fontSize(UserSettings.fs(16f)); color(Color(0xFF222222)) } }
+                                Text { attr { text(stock.code); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)); marginTop(4f) } }
                             }
                             // 最新价（右对齐）
                             View {
                                 attr { flex(1f); flexDirectionRow(); justifyContentFlexEnd() }
-                                Text { attr { text(formatPrice(stock.price)); fontSize(16f); color(Color(0xFF222222)) } }
+                                Text { attr { text(formatPrice(stock.price)); fontSize(UserSettings.fs(16f)); color(if (stock.changePercent > 0f) Color(UserSettings.upMain()) else if (stock.changePercent < 0f) Color(UserSettings.downMain()) else Color(0xFF222222)) } }
                             }
                             // 涨跌幅徽章
                             KRStockBadge { attr { changePercent = stock.changePercent } }

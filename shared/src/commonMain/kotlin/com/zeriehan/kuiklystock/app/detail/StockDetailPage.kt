@@ -8,16 +8,20 @@ import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.module.RouterModule
+import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.views.*
 import com.tencent.kuikly.core.directives.vif
+import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.compose.Button
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.Utils
 import com.zeriehan.kuiklystock.base.bridgeModule
-import com.zeriehan.kuiklystock.core.MockStockSource
+import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.StockColor
+import com.zeriehan.kuiklystock.core.UserStockStore
+import com.zeriehan.kuiklystock.core.UserSettings
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.llm.AIAnalysisStore
@@ -61,6 +65,9 @@ internal class StockDetailPage : BasePager() {
     private var aiLoading: Boolean by observable(false)
     /** AI 分析时间文案（如 08-29 17:52）；首次进入为空，分析完成后写入；再次进入直接读缓存 */
     private var aiTimeText: String by observable("")
+    /** 自选集合（响应式镜像）与「加自选」按钮刷新触发器 */
+    internal var watchlistCodes: Set<String> by observable(emptySet())
+    private var watchUIVersion: Boolean by observable(false)
 
     /**
      * 执行一次 AI 分析。
@@ -76,7 +83,7 @@ internal class StockDetailPage : BasePager() {
             }
         }
         aiLoading = true
-        LLM.client.analyze(stock, MockStockSource.getKLine(stock, "日")) { text ->
+        LLM.client.analyze(stock, StockData.getKLine(stock, "日")) { text ->
             val ts = Utils.currentBridgeModule().currentTimeStamp()
             val tText = if (ts > 0) Utils.currentBridgeModule().dateFormatter(ts, "MM-dd HH:mm") else ""
             aiText = text
@@ -91,20 +98,35 @@ internal class StockDetailPage : BasePager() {
         runAnalysis(stock, code, force = true)
     }
 
+    override fun viewDidLoad() {
+        super.viewDidLoad()
+        watchlistCodes = UserStockStore.loadWatchlist(acquireModule(SharedPreferencesModule.MODULE_NAME))
+    }
+
+    /** 切换自选（加/取消），落盘 + 翻转 watchUIVersion 刷新按钮态 + 提示 */
+    internal fun toggleWatch(code: String) {
+        watchlistCodes = if (watchlistCodes.contains(code)) watchlistCodes - code else watchlistCodes + code
+        UserStockStore.saveWatchlist(acquireModule(SharedPreferencesModule.MODULE_NAME), watchlistCodes)
+        watchUIVersion = !watchUIVersion
+        bridgeModule.toast(if (watchlistCodes.contains(code)) "已加入自选" else "已取消自选")
+    }
+
     /** 按周期切换 K线图数据 / 分时数据，并同步当前指标与十字光标清理 */
     private fun applyPeriod(stock: Stock, i: Int) {
         chartRef?.view?.let { chart ->
             chart.clearCrosshair()
+            // 换周期 / 换股 = 重新看这只票：清掉「用户已滑动」标记，允许重新定位到最新一根
+            chart.resetToLatest()
             if (i == 0) {
                 // 分时模式：下发分时数据 + 昨收基准，清空 K线，指标置空
                 chart.bars = emptyList()
-                chart.timeSharing = MockStockSource.getIntraday(stock)
+                chart.timeSharing = StockData.getIntraday(stock)
                 chart.refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
                 chart.indicator = KRKLineChart.IND_NONE
             } else {
                 // K线模式：下发对应周期（含已加载历史根数），清空分时，恢复所选指标
                 chart.timeSharing = emptyList()
-                chart.bars = MockStockSource.getKLine(stock, periods[i], klineCount)
+                chart.bars = StockData.getKLine(stock, periods[i], klineCount)
                 chart.indicator = selectedIndicator
             }
         }
@@ -121,7 +143,7 @@ internal class StockDetailPage : BasePager() {
     override fun body(): ViewBuilder {
         val ctx = this
         val code = pageData.params.optString("stockCode")
-        val stock = MockStockSource.findByCode(code)
+        val stock = StockData.findByCode(code)
         // 触发 AI 分析：首次进入自动分析；若已有缓存（同一股票再次进入）则直接展示缓存结果 + 时间
         ctx.runAnalysis(stock, code, false)
         return {
@@ -148,6 +170,10 @@ internal class StockDetailPage : BasePager() {
                 }
                 Text { attr { text(stock.name); fontSize(17f); color(Color(0xFF222222)); fontWeightSemisolid(); marginLeft(8f) } }
                 Text { attr { text(stock.code); fontSize(12f); color(Color(0xFF999999)); marginLeft(8f) } }
+                View { attr { flex(1f) } }
+                // 加自选按钮（随 watchUIVersion 翻转刷新选中态；body 不随 observable 重跑，故需翻转）
+                vif({ ctx.watchUIVersion }) { val c = this; c.renderWatchButton(ctx, code) }
+                vif({ !ctx.watchUIVersion }) { val c = this; c.renderWatchButton(ctx, code) }
             }
 
             // ===== 滚动内容 =====
@@ -162,7 +188,7 @@ internal class StockDetailPage : BasePager() {
                             text(formatPrice(stock.price))
                             fontSize(30f)
                             fontWeightSemisolid()
-                            color(Color(0xFF222222))
+                            color(if (stock.changePercent > 0f) Color(UserSettings.upMain()) else if (stock.changePercent < 0f) Color(UserSettings.downMain()) else Color(0xFF222222))
                         }
                     }
                     Text {
@@ -236,13 +262,17 @@ internal class StockDetailPage : BasePager() {
                     KRKLineChart {
                         ref { ctx.chartRef = it }
                         attr { marginTop(8f) }
-                        timeSharing = MockStockSource.getIntraday(stock)
+                        timeSharing = StockData.getIntraday(stock)
                         refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
                         onLoadMore = {
-                            ctx.klineCount += 40
+                            val added = 40
+                            ctx.klineCount += added
                             if (ctx.selectedPeriod != 0) {
                                 ctx.chartRef?.view?.let { ch ->
-                                    ch.bars = MockStockSource.getKLine(stock, ctx.periods[ctx.selectedPeriod], ctx.klineCount)
+                                    // 先登记「左侧将插入 added 根历史」，等宽度更新后补偿 offset：
+                                    // 用户视野停在同一根 K线上，不会被弹回最新一根。
+                                    ch.notifyPrepend(added)
+                                    ch.bars = StockData.getKLine(stock, ctx.periods[ctx.selectedPeriod], ctx.klineCount)
                                 }
                             }
                         }
@@ -368,6 +398,27 @@ internal class StockDetailPage : BasePager() {
                 }
 
                 View { attr { height(16f) } }
+            }
+        }
+    }
+}
+
+/** 详情页「加自选」按钮（文件级：在 vif 翻转闭包内调用，须为文件级扩展函数）。
+ *  随 watchUIVersion 翻转重建以刷新选中态（body 不随 observable 重跑）。 */
+internal fun ViewContainer<*, *>.renderWatchButton(ctx: StockDetailPage, code: String) {
+    val watched = ctx.watchlistCodes.contains(code)
+    View {
+        attr {
+            height(32f); paddingLeft(14f); paddingRight(14f); borderRadius(16f)
+            backgroundColor(if (watched) Color(0xFFFFF4E0) else Color(0xFF23D3FD))
+            flexDirectionRow(); alignItemsCenter(); justifyContentCenter(); marginRight(8f)
+        }
+        event { click { ctx.toggleWatch(code) } }
+        Text {
+            attr {
+                text(if (watched) "★ 已自选" else "☆ 加自选")
+                fontSize(13f)
+                color(if (watched) Color(0xFFE58A00) else Color.WHITE)
             }
         }
     }

@@ -20,7 +20,7 @@ import com.zeriehan.kuiklystock.core.formatPrice
  *
  * 用法：
  *   KRMiniTimeSharing {
- *       points  = MockStockSource.getIntraday(stock)  // 当天分时（休市则取最近交易日）
+ *       points  = StockData.getIntraday(stock)  // 当天分时（休市则取最近交易日）
  *       refPrice = (stock.price - stock.change)        // 昨收基准
  *       color   = StockColor.of(stock.changePercent)
  *   }

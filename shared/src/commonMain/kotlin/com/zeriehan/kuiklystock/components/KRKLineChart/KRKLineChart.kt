@@ -65,8 +65,18 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
 
     /** 主图 Scroller ref：初次/换股时把可视区定位到最新一根（最右） */
     private lateinit var scrollerRef: ViewRef<ScrollerView<*, *>>
-    /** 已为当前数据集自动滚到最新一次，避免重复回弹 */
-    private var autoScrolledFor: Any? = null
+    /**
+     * 自动滚到最新的去重键（内容指纹）。
+     * ⚠️ 不能用 List 对象引用去重：加载更多历史 / 任何重建都会产生新的 List 实例，
+     *    引用一变守卫就失效 → 用户正看着历史 K线却被弹回最新一根（已修的回弹 bug 根因）。
+     */
+    private var autoScrollKey: String? = null
+    /** 用户是否已手动横向滑动过：一旦滑动就尊重其浏览位置，绝不再自动弹回最新一根 */
+    private var userScrolled: Boolean = false
+    /** 程序滚动的目标 X：用于识别「自己发的 setContentOffset 引起的 scroll 回调」，避免误判为用户滑动 */
+    private var suppressTargetX: Float? = null
+    /** 左侧新插入的历史 K线根数（加载更多时登记），等宽度更新后补偿 offset，保持用户视野不跳 */
+    private var pendingPrependCount: Int = 0
     /** 最近一次 contentSizeChanged 拿到的真实内容宽度（用于精确滚到最右：target = contentW - viewportW） */
     private var lastChartContentW: Float = 0f
     /** 初始自动滚动只排一次（body 会因缩放/横滚重跑，不能每次都排定时器） */
@@ -122,20 +132,57 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
      * 关键：offset 必须「在范围内」才生效。2.7.0 的 Scroller 对超出 [0, content-viewport]
      * 的 offset 会直接忽略（不会自动 clamp），所以之前传极大值 / viewport 算成 0 时永远停在最左。
      * 这里用 contentSizeChanged 拿到的真实内容宽度，减去真实视口宽度，得到精确且在范围内的 target。
-     * 按当前数据集引用去重（[autoScrolledFor]）：换股/换周期（新 list）才再次自动滚；
-     * 用户手动滑动或缩放（同一 list 不变）不再被回弹。
+     *
+     * 两道守卫，缺一不可：
+     * 1. [userScrolled]：用户已手动横向浏览历史 → 完全不再自动滚动（这是「看历史被弹回最新」的主因）；
+     * 2. [autoScrollKey] 内容指纹：同一数据集的任何重建都不重复滚动，只有换股/换周期/换数据集才重新定位。
      */
     private fun tryScrollToLatest() {
         val data = if (isTimeSharing()) timeSharing else bars
         if (data.isEmpty()) return
+        // 用户正在看历史：保持其浏览位置，不要打扰
+        if (userScrolled) return
         val accurate = viewportW > 0f
         val vw = if (accurate) viewportW else estimateViewportW()
         if (lastChartContentW <= 0f || vw <= 0f) return
         // 已用准确视口滚过则不再回弹；仅用估算视口时，等 scroll 事件回写准确视口后再精修一次
-        if (autoScrolledFor === data && accurate) return
-        autoScrolledFor = data
+        val key = dataKey()
+        if (autoScrollKey == key && accurate) return
+        autoScrollKey = key
         val x = (lastChartContentW - vw).coerceAtLeast(0f)
+        suppressTargetX = x
         scrollerRef.view?.setContentOffset(x, 0f, false)
+    }
+
+    /**
+     * 当前数据集的「内容指纹」：用于判断数据是否真的换了（换股/换周期/换数据集）。
+     * 用 首末日期 + 根数，而不是 List 引用 —— 引用会在每次重建时变化，误判成"换了数据"。
+     */
+    private fun dataKey(): String = if (isTimeSharing()) {
+        "ts:${timeSharing.size}"
+    } else {
+        "k:${bars.size}:${bars.firstOrNull()?.date ?: ""}:${bars.lastOrNull()?.date ?: ""}"
+    }
+
+    /**
+     * 换股 / 切换周期时由外层调用：清掉「用户已滑动」标记，允许重新自动定位到最新一根。
+     * 加载更多历史（[notifyPrepend]）**不要**调它，否则用户看历史时会被弹回最新。
+     */
+    fun resetToLatest() {
+        userScrolled = false
+        autoScrollKey = null
+        pendingPrependCount = 0
+        suppressTargetX = null
+    }
+
+    /**
+     * 登记「左侧将插入 [added] 根历史 K线」（滚到最左触发加载更多时调用）。
+     * 等 Canvas 宽度更新（contentSizeChanged）后，把 offset 右移相同距离 ——
+     * 用户视野停在同一根 K线上，既不弹回最新，也不会跳到更老的数据。
+     */
+    fun notifyPrepend(added: Int) {
+        pendingPrependCount = added
+        userScrolled = true
     }
 
     /** 视口宽度估算：页面宽 - 卡片外边距/内边距(48) - 左价格轴(46)；用于 scroll 事件尚未回写时兜底 */
@@ -259,6 +306,14 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
                                 val offX = params.offsetX
                                 ctx.viewportW = params.viewWidth
                                 ctx.scrollOffsetX = offX
+                                // 区分「程序滚动」与「用户手动滑动」：命中程序目标值就吞掉这一次回调，
+                                // 否则会被误判成用户滑动 → 永久禁用自动定位（首次进页就不再显示最新一根）。
+                                val target = ctx.suppressTargetX
+                                if (target != null && abs(offX - target) < 2f) {
+                                    ctx.suppressTargetX = null
+                                } else {
+                                    ctx.userScrolled = true
+                                }
                                 if (offX <= 4f) {
                                     if (!ctx.atStart) {
                                         ctx.atStart = true
@@ -271,8 +326,21 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
                             // 真实内容宽度就绪（主画布布局完成后触发）：用「contentW - 真实视口」精确滚到最右（最新一根）。
                             // 官方 setContentOffset 的正确用法；offset 必须在范围内才生效，故绝不再传极大值。
                             contentSizeChanged { w, _ ->
+                                val prevW = ctx.lastChartContentW
                                 ctx.lastChartContentW = w
-                                ctx.tryScrollToLatest()
+                                val added = ctx.pendingPrependCount
+                                if (added > 0 && prevW > 0f) {
+                                    // 加载更多历史：内容从左侧变宽，把 offset 右移相同距离，
+                                    // 让用户视野停在同一根 K线上（既不弹回最新，也不跳到更老的数据）。
+                                    ctx.pendingPrependCount = 0
+                                    val step = 9f * ctx.zoom
+                                    val maxX = (w - ctx.viewportW).coerceAtLeast(0f)
+                                    val newX = (ctx.scrollOffsetX + added * step).coerceIn(0f, maxX)
+                                    ctx.suppressTargetX = newX
+                                    ctx.scrollerRef.view?.setContentOffset(newX, 0f, false)
+                                } else {
+                                    ctx.tryScrollToLatest()
+                                }
                             }
                         }
                         Canvas(
@@ -389,9 +457,12 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
         else bars.lastOrNull()?.close ?: 0f
         if (lastPrice > 0f) {
             val y = r.candleTop + (1f - (lastPrice - min) / range) * candleH
-            val up = if (isTimeSharing()) lastPrice >= refPrice
-            else (bars.lastOrNull()?.close ?: 0f) >= (bars.lastOrNull()?.open ?: lastPrice)
-            val col = if (up) StockColor.UP else StockColor.DOWN
+            // 分时模式统一用红线标记最新价；K线模式沿用涨红跌绿
+            val col = if (isTimeSharing()) Color(0xFFE54D42)
+            else {
+                val up = (bars.lastOrNull()?.close ?: 0f) >= (bars.lastOrNull()?.open ?: lastPrice)
+                if (up) StockColor.UP else StockColor.DOWN
+            }
             fillRect(c, 1f, y - 7f, w - 2f, 14f, col)
             c.fillStyle(Color.WHITE)
             c.fillText(formatPrice(lastPrice), 4f, y + 3f)
@@ -531,19 +602,16 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
             dashLine(c, 0f, yRef, w, yRef)
         }
 
-        // 价格线（分段着色）
+        // 价格线（统一红线，不再按昨收上下分段着色，避免红绿混合）
+        c.strokeStyle(Color(0xFFE54D42))
         c.lineWidth(1.2f)
+        c.beginPath()
         ts.forEachIndexed { i, p ->
             val x = i * s + s / 2f
             val y = priceToY(p.price)
-            if (i == 0) { c.beginPath(); c.moveTo(x, y) }
-            else {
-                val prev = ts[i - 1]
-                c.strokeStyle(if (prev.price >= refPrice) StockColor.UP else StockColor.DOWN)
-                c.lineTo(x, y); c.stroke()
-                if (i < n - 1) { c.beginPath(); c.moveTo(x, y) }
-            }
+            if (i == 0) c.moveTo(x, y) else c.lineTo(x, y)
         }
+        c.stroke()
         // 均价黄线
         c.strokeStyle(Color(0xFFF5A623)); c.lineWidth(1f)
         ts.forEachIndexed { i, p ->

@@ -11,9 +11,8 @@ import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.*
 import com.tencent.kuikly.core.views.compose.Button
 import com.zeriehan.kuiklystock.base.BasePager
-import com.zeriehan.kuiklystock.base.Utils
 import com.zeriehan.kuiklystock.base.bridgeModule
-import com.zeriehan.kuiklystock.core.MockStockSource
+import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.UserStockStore
 
 /**
@@ -28,18 +27,13 @@ import com.zeriehan.kuiklystock.core.UserStockStore
 @Page("HiddenStocks", supportInLocal = true)
 internal class HiddenStocksPage : BasePager() {
 
-    private val DAY_MS = 86_400_000L
-
     /** code -> 隐藏时刻(ms) */
     internal var hiddenMap: Map<String, Long> by observable(emptyMap())
-    internal var hideDays: Int by observable(7)
     /** vif 翻转触发器：列表随其翻转强制重建 */
     internal var listToggle: Boolean by observable(false)
 
     private val prefs: SharedPreferencesModule
         get() = acquireModule(SharedPreferencesModule.MODULE_NAME)
-
-    internal fun nowMs(): Long = Utils.currentBridgeModule().currentTimeStamp()
 
     override fun viewDidLoad() {
         super.viewDidLoad()
@@ -54,7 +48,6 @@ internal class HiddenStocksPage : BasePager() {
 
     private fun reload() {
         hiddenMap = UserStockStore.loadHidden(prefs)
-        hideDays = UserStockStore.loadHideDays(prefs)
         listToggle = !listToggle
     }
 
@@ -131,13 +124,13 @@ private fun ViewContainer<*, *>.renderHiddenList(ctx: HiddenStocksPage, contentW
         }
         Text {
             attr {
-                text("共 ${map.size} 只股票被标记为「不感兴趣」，已从行情和自选列表中隐藏。")
+                text("共 ${map.size} 只股票被标记为「不感兴趣」，在行情/板块/个股列表中以灰幕显示，可随时手动恢复。")
                 fontSize(14f); color(Color(0xFF222222))
             }
         }
         Text {
             attr {
-                text("到达自动恢复周期（${ctx.hideDays} 天）后会重新出现，也可以在这里随时手动恢复。")
+                text("标记为不感兴趣后不再从列表消失，可在此随时手动恢复。")
                 fontSize(12f); color(Color(0xFF999999)); marginTop(6f)
             }
         }
@@ -165,25 +158,19 @@ private fun ViewContainer<*, *>.renderHiddenList(ctx: HiddenStocksPage, contentW
             flexDirectionColumn(); marginTop(10f); padding(14f)
             backgroundColor(Color.WHITE); borderRadius(10f); width(contentW)
         }
-        map.toList().forEachIndexed { i, (code, ts) ->
-            val s = MockStockSource.findByCode(code)
-            val remainMs = ctx.hideDays * 86_400_000L - (ctx.nowMs() - ts)
-            val remainText = if (remainMs <= 0L) {
-                "已到点，即将自动恢复"
-            } else {
-                "还有 ${(remainMs + 86_399_999L) / 86_400_000L} 天自动恢复"
-            }
-            View {
-                attr { flexDirectionRow(); alignItemsCenter(); marginTop(if (i == 0) 0f else 12f) }
-                View { attr { flex(1f); flexDirectionColumn() }
-                    Text { attr { text(s.name); fontSize(15f); color(Color(0xFF222222)) } }
-                    Text {
-                        attr {
-                            text("$code · $remainText")
-                            fontSize(12f); color(Color(0xFF999999)); marginTop(3f)
+            map.toList().forEachIndexed { i, (code, _) ->
+                val s = StockData.findByCode(code)
+                View {
+                    attr { flexDirectionRow(); alignItemsCenter(); marginTop(if (i == 0) 0f else 12f) }
+                    View { attr { flex(1f); flexDirectionColumn() }
+                        Text { attr { text(s.name); fontSize(15f); color(Color(0xFF222222)) } }
+                        Text {
+                            attr {
+                                text("$code · 已标记不感兴趣")
+                                fontSize(12f); color(Color(0xFF999999)); marginTop(3f)
+                            }
                         }
                     }
-                }
                 Button {
                     attr {
                         size(56f, 28f); borderRadius(14f); backgroundColor(Color(0xFFF2F3F5))
