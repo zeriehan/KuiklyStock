@@ -141,7 +141,8 @@ object StockData {
         // 真实板块：若 Sector 实例未带成分（如未先经过板块列表就直达详情），则回退到成分缓存
         val codes = if (sector.constituentCodes.isNotEmpty()) sector.constituentCodes
         else sectorConstituents[sector.code] ?: emptyList()
-        return codes.mapNotNull { findByCode(it) }
+        // ⚠️ 用严格匹配(不命中就跳过，绝不 fallback 成上证指数)，避免池未并入成分时列表被上证填充/错乱
+        return codes.mapNotNull { poolAll().firstOrNull { p -> p.code == it } }
     }
 
     /** 生成一组平滑起伏的采样点，用于迷你走势图（仅演示，真实数据下仅作占位） */
