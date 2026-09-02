@@ -478,11 +478,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
         // 异步到达后由 DataSync.bump 翻转重建，用户看到的是真实内容而非 mock 那几个。
         when (i) {
             0 -> {
-                // 大盘：真实报价未就绪时先给"加载中"，refresh() 完成经 DataSync 后自动消失
-                if (!StockData.isReal() && mktLoading.not()) {
-                    mktLoading = true
-                    StockData.refresh()
-                }
+                // 大盘：始终 refresh 一次 baseQuotes(指数+种子) —— 不能用 isReal() 判断(榜单/成分拉到即 true)，
+                // 大盘页组件(指数/热度/领涨)依赖 baseQuotes 实时价，每次进入大盘都重拉确保刷成真实。
+                mktLoading = true
+                StockData.refresh()
             }
             1 -> {
                 if (StockData.hasRealSectors()) return
