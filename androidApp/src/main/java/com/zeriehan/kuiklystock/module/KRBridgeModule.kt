@@ -346,6 +346,14 @@ private fun fetchQuotes(params: String?, callback: KuiklyRenderCallback?) {
 }
 
 private fun fetchEastMoneyQuotes(secids: String): String {
+    // 先试批量 ulist；返回为空(部分网络不可达/限流)则逐个用单股 qt/get 兜底，
+    // 保证 refresh() 能把行情池里的指数/mock 股刷新成真实价（否则大盘/主列表停假值）。
+    val bulk = fetchEastMoneyQuotesBulk(secids)
+    if (bulk != "[]") return bulk
+    return fetchEastMoneyQuotesPerStock(secids)
+}
+
+private fun fetchEastMoneyQuotesBulk(secids: String): String {
     val url = "https://push2.eastmoney.com/api/qt/ulist.np/get" +
         "?fltt=2&invt=2" +
         "&fields=f12,f13,f14,f2,f3,f4,f5,f15,f16,f17,f18" +
@@ -400,6 +408,54 @@ private fun fetchEastMoneyQuotes(secids: String): String {
     } finally {
         conn.disconnect()
     }
+}
+
+/** 逐个用单股接口 qt/get 拉取，合并成一个与批量一致的 JSON 数组 */
+private fun fetchEastMoneyQuotesPerStock(secids: String): String {
+    val ids = secids.split(",").filter { it.isNotBlank() }
+    if (ids.isEmpty()) return "[]"
+    val out = JSONArray()
+    for (s in ids) {
+        try {
+            // f43价 f44高 f45低 f46开 f60昨收 f169涨跌额 f170涨跌幅 f47量(手) f58名 f57码
+            val url = "https://push2.eastmoney.com/api/qt/stock/get" +
+                "?secid=$s&fltt=2&invt=2&fields=f43,f44,f45,f46,f47,f57,f58,f60,f169,f170"
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"; connectTimeout = 6000; readTimeout = 6000
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+                setRequestProperty("Referer", "https://quote.eastmoney.com/")
+            }
+            try {
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) continue
+                val json = JSONObject(conn.inputStream.bufferedReader().readText())
+                val d = json.optJSONObject("data") ?: continue
+                val price = d.optDouble("f43", 0.0).toFloat()
+                if (price <= 0f) continue
+                val dot = s.indexOf('.')
+                val code = if (dot >= 0) s.substring(dot + 1) else s
+                out.put(
+                    JSONObject().apply {
+                        put("secid", s)
+                        put("code", code)
+                        put("name", d.optString("f58"))
+                        put("price", price.toDouble())
+                        put("change", d.optDouble("f169", 0.0))
+                        put("changePercent", d.optDouble("f170", 0.0))
+                        put("high", d.optDouble("f44", 0.0))
+                        put("low", d.optDouble("f45", 0.0))
+                        put("open", d.optDouble("f46", 0.0))
+                        put("prevClose", d.optDouble("f60", 0.0))
+                        put("volume", (d.optDouble("f47", 0.0) / 10000.0))
+                    }
+                )
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Throwable) {
+            Log.e("KRBridge", "EM qt get $s failed", e)
+        }
+    }
+    return out.toString()
 }
 
 /**
