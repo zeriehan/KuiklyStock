@@ -155,6 +155,14 @@ internal class MainTabPager : BasePager(), StockNavigator {
         // 首屏大盘报价刷新：未就绪先显示"加载中"，DataSync 到达后自动消失
         if (!StockData.isReal()) mktLoading = true
         StockData.refresh()
+        // 冷启动即预加载真实榜单/板块，尽早把行情池填成真实价，避免"第一次进入各页(热度/领涨/板块/个股)时还是 mock、
+        // 第二次才变真"的观感。这些异步到达各自 DataSync.bump 触发行情区重建。
+        StockData.loadRank(0)
+        StockData.loadRank(1)
+        StockData.loadRank(2)
+        StockData.loadRank(3)
+        StockData.loadSectors()
+        StockData.loadIndices()
     }
 
     /** 从子页（如 ChatPage / HiddenStocks）返回时强制刷新：已隐藏列表 / 最近对话即时同步 */
