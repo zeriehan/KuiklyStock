@@ -116,7 +116,11 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     }
 
     private fun setCross(x: Float, y: Float) {
-        crossX = x
+        // 吸附到最近一根 K线/分时点：把交点 X 对齐到该点中心，避免十字光标与蜡烛错位
+        val s = (if (isTimeSharing()) 6f else 9f) * zoom
+        val n = if (isTimeSharing()) timeSharing.size else bars.size
+        val idx = if (n > 0) ((x - s / 2f) / s + 0.5f).toInt().coerceIn(0, n - 1) else 0
+        crossX = idx * s + s / 2f
         crossY = y
         crossActive = true
     }
