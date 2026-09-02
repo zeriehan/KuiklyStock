@@ -154,16 +154,19 @@ internal class SectorDetailPage : BasePager(), StockNavigator {
             }
 
             // ===== 成分股列表（随 sectorListToggle 翻转重建；读响应式 curStocks，异步拉成分后自动补齐）=====
+            // ⚠️ 必须用 vif(curStocks.isEmpty/isNotEmpty) 双分支：异步拉取完成后 curStocks 变化，
+            //    只有 vif 条件里读该 observable 才会重跑；若用普通 if 则加载态→列表态不刷新（表现为卡"正在加载"）。
             Scroller {
                 attr { flex(1f); flexDirectionColumn(); marginTop(8f) }
-                if (ctx.curStocks.isEmpty()) {
+                vif({ ctx.curStocks.isEmpty() }) {
                     Text {
                         attr {
                             text(if (ctx.sectorCode.startsWith("BK")) "正在加载板块成分股…" else "该板块暂无成分股数据")
                             fontSize(13f); color(Color(0xFF999999)); marginTop(16f); marginLeft(12f)
                         }
                     }
-                } else {
+                }
+                vif({ ctx.curStocks.isNotEmpty() }) {
                     vif({ ctx.sectorListToggle }) { val c = this; ctx.curStocks.forEach { s -> c.renderMarketRow(ctx, s) } }
                     vif({ !ctx.sectorListToggle }) { val c = this; ctx.curStocks.forEach { s -> c.renderMarketRow(ctx, s) } }
                 }
