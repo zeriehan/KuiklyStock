@@ -437,12 +437,14 @@ object StockData {
         }
     }
 
-    /** 刷新「当前池内全部标的」的实时价（base + 真实并入），成功则覆盖并标记 isReal；失败保留 mock */
+    /** 刷新「base 行情池（含大盘指数 + mock 种子）」的实时价。真实价覆盖后标记 isReal；失败保留 mock。
+     *  ⚠️ 只刷 baseQuotes：这些(指数+种子股)正是大盘页/主列表可能停在假值的部分；realPool 里的真实标的
+     *     在各自榜单/成分拉取时已带真实价，无需在此重复逐只刷（避免 realPool 很大时逐只请求过慢）。 */
     fun refresh() {
         val b = bridge ?: return
+        if (baseQuotes.isEmpty()) return
         val map = mutableMapOf<String, Stock>()
-        poolAll().forEach { map[secidOf(it)] = it }
-        if (map.isEmpty()) return
+        baseQuotes.forEach { map[secidOf(it)] = it }
         val secids = map.keys.joinToString(",")
         try {
             b.fetchQuotes(secids) { resp -> applyQuotes(resp, map) }

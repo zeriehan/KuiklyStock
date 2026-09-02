@@ -182,8 +182,9 @@ internal class MainTabPager : BasePager(), StockNavigator {
         // ⚠️ 必须翻转 listToggle：行情/自选列表由 vif(listToggle) 包裹，
         // 否则从 HiddenStocks 恢复股票后，行情页不会重新显示该股票（hiddenMap 已更新但列表未重建）。
         listToggle = !listToggle
-        // 回到主框架时若真实行情还没拉到（首次启动无网/被限流），再试一次；已成功则不再打扰。
-        if (!StockData.isReal()) StockData.refresh()
+        // ⚠️ 始终刷新行情池：isReal() 在拉过榜单/成分后即 true，不代表大盘指数/baseQuotes 已刷新；
+        // 从详情/设置返回时 refresh 一次，保证行情池(含指数)回到真实价，随 listToggle 翻转重建显示。
+        StockData.refresh()
     }
 
     // ===== 持久化读写 =====
@@ -516,10 +517,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal fun selectMainTab(i: Int) {
         selectedTab = i
         if (i == 1) {
-            if (!StockData.isReal()) {
-                mktLoading = true
-                StockData.refresh()
-            }
+            // ⚠️ 始终刷新行情池：不能只用 isReal() 判断——isReal 在拉过榜单/成分后即为 true，
+            // 但大盘指数/baseQuotes 的实时价可能还没刷新到，需每次进行情都 refresh 兜底。
+            if (!StockData.isReal()) mktLoading = true
+            StockData.refresh()
             listToggle = !listToggle
             marketSubToggle = !marketSubToggle
         }
