@@ -97,6 +97,14 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
                 fetchSectorStocks(params, callback)
             }
 
+            "fetchKline" -> {
+                fetchKline(params, callback)
+            }
+
+            "fetchTrends" -> {
+                fetchTrends(params, callback)
+            }
+
             else -> callback?.invoke(
                 mapOf(
                     "code" to -1,
@@ -609,6 +617,127 @@ private fun buildStocksJson(diff: JSONArray): String {
         )
     }
     return out.toString()
+}
+
+/**
+ * 拉取个股历史 K线（东方财富 push2his kline）。返回 { "kline": "[{date,open,close,high,low,volume},...]" }（最老→最新）
+ * shared 传 { "secid": "1.601318", "klt": 101, "count": 80 }；klt: 101日/102周/103月/104年（fqt=1 前复权）
+ */
+private fun fetchKline(params: String?, callback: KuiklyRenderCallback?) {
+    val empty = mapOf("kline" to "[]")
+    if (params == null) { callback?.invoke(empty); return }
+    val p = JSONObject(params)
+    val secid = p.optString("secid")
+    if (secid.isBlank()) { callback?.invoke(empty); return }
+    val klt = p.optInt("klt", 101)
+    val count = p.optInt("count", 80).coerceIn(10, 500)
+    thread(name = "em-kline") {
+        val result = try {
+            // 用 lmt 只取最近 count 根，避免 beg=0 拉到海量数据；end=20500101 拿含最新
+            val url = "https://push2his.eastmoney.com/api/qt/stock/kline/get" +
+                "?secid=$secid&klt=$klt&fqt=1&lmt=$count&end=20500101" +
+                "&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56"
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+                setRequestProperty("Referer", "https://quote.eastmoney.com/")
+            }
+            try {
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                    Log.e("KRBridge", "EM kline HTTP ${conn.responseCode}")
+                    "[]"
+                } else {
+                    val json = JSONObject(conn.inputStream.bufferedReader().readText())
+                    val klines = json.optJSONObject("data")?.optJSONArray("klines") ?: JSONArray()
+                    val out = JSONArray()
+                    // kline 每根格式: "2026-09-02,开盘,收盘,最高,最低,成交量,..."
+                    for (i in 0 until klines.length()) {
+                        val line = klines.optString(i)
+                        val part = line.split(",")
+                        if (part.size < 6) continue
+                        val close = part[2].toDoubleOrNull() ?: continue
+                        if (close <= 0.0) continue
+                        out.put(
+                            JSONObject().apply {
+                                put("date", part[0])
+                                put("open", part[1].toDouble())
+                                put("close", close)
+                                put("high", part[3].toDouble())
+                                put("low", part[4].toDouble())
+                                put("volume", part[5].toDouble())
+                            }
+                        )
+                    }
+                    out.toString()
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Throwable) {
+            Log.e("KRBridge", "fetchKline failed", e)
+            "[]"
+        }
+        Handler(Looper.getMainLooper()).post { callback?.invoke(mapOf("kline" to result)) }
+    }
+}
+
+/**
+ * 拉取个股当日分时（东方财富 push2 trends2）。返回 { "trends": "[{time,price,avg},...]", "preClose": 57.23 }
+ * shared 传 { "secid": "1.601318" }
+ */
+private fun fetchTrends(params: String?, callback: KuiklyRenderCallback?) {
+    val empty = mapOf("trends" to "[]", "preClose" to 0.0)
+    if (params == null) { callback?.invoke(empty); return }
+    val secid = JSONObject(params).optString("secid")
+    if (secid.isBlank()) { callback?.invoke(empty); return }
+    thread(name = "em-trends") {
+        val (trendsJson, preClose) = try {
+            val url = "https://push2.eastmoney.com/api/qt/stock/trends2/get" +
+                "?secid=$secid&ndays=1&iscr=0" +
+                "&fields1=f1,f2,f3,f7,f8&fields2=f51,f52,f53,f54,f55,f56,f57,f58"
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+                setRequestProperty("Referer", "https://quote.eastmoney.com/")
+            }
+            try {
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                    Log.e("KRBridge", "EM trends HTTP ${conn.responseCode}")
+                    "[]" to 0.0
+                } else {
+                    val json = JSONObject(conn.inputStream.bufferedReader().readText())
+                    val data = json.optJSONObject("data")
+                    val pre = data?.optDouble("preClose", 0.0) ?: 0.0
+                    val arr = data?.optJSONArray("trends") ?: JSONArray()
+                    val out = JSONArray()
+                    // trends 每项: "2026-09-02 09:30,price,?,?,?,?,?,avg"
+                    for (i in 0 until arr.length()) {
+                        val line = arr.optString(i)
+                        val part = line.split(",")
+                        if (part.size < 8) continue
+                        val price = part[1].toDoubleOrNull() ?: continue
+                        if (price <= 0.0) continue
+                        out.put(
+                            JSONObject().apply {
+                                put("time", part[0].substring(11)) // 只留 HH:mm
+                                put("price", price)
+                                put("avg", part[7].toDouble())
+                            }
+                        )
+                    }
+                    out.toString() to pre
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Throwable) {
+            Log.e("KRBridge", "fetchTrends failed", e)
+            "[]" to 0.0
+        }
+        Handler(Looper.getMainLooper()).post {
+            callback?.invoke(mapOf("trends" to trendsJson, "preClose" to preClose))
+        }
+    }
 }
 
 private fun JSONObject.toMap(): Map<Any, Any> {

@@ -101,6 +101,20 @@ internal class StockDetailPage : BasePager() {
     override fun viewDidLoad() {
         super.viewDidLoad()
         watchlistCodes = UserStockStore.loadWatchlist(acquireModule(SharedPreferencesModule.MODULE_NAME))
+        // 首屏拉真实K线/分时数据并缓存（到达后详情页图自动刷新成真实数据；失败维持本地兜底）
+        val c = pageData.params.optString("stockCode")
+        if (c.isNotBlank()) {
+            val st = StockData.findByCode(c)
+            StockData.loadTrends(st) {
+                if (selectedPeriod == 0) chartRef?.view?.let { ch ->
+                    ch.timeSharing = StockData.getIntraday(st)
+                    ch.bars = emptyList()
+                    ch.refPrice = (st.price - st.change).coerceAtLeast(0.01f)
+                    ch.resetToLatest()
+                }
+            }
+            StockData.loadKline(st, "日", 80) {}
+        }
     }
 
     /** 切换自选（加/取消），落盘 + 翻转 watchUIVersion 刷新按钮态 + 提示 */
@@ -128,6 +142,30 @@ internal class StockDetailPage : BasePager() {
                 chart.timeSharing = emptyList()
                 chart.bars = StockData.getKLine(stock, periods[i], klineCount)
                 chart.indicator = selectedIndicator
+            }
+        }
+        // 拉到真实K线/分时后自动刷新当前视图（无网络则维持上方兜底数据，不阻塞）
+        loadRealAndRefresh(stock, i)
+    }
+
+    /** 异步拉取真实数据（分时 i=0 / 该周期K线 i>0），到达后更新当前图 */
+    private fun loadRealAndRefresh(stock: Stock, i: Int) {
+        if (i == 0) {
+            StockData.loadTrends(stock) {
+                if (selectedPeriod == 0) chartRef?.view?.let { ch ->
+                    ch.timeSharing = StockData.getIntraday(stock)
+                    ch.bars = emptyList()
+                    ch.refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
+                    ch.resetToLatest()
+                }
+            }
+        } else {
+            val period = periods[i]
+            StockData.loadKline(stock, period, klineCount) {
+                if (selectedPeriod == i) chartRef?.view?.let { ch ->
+                    ch.bars = StockData.getKLine(stock, period, klineCount)
+                    ch.resetToLatest()
+                }
             }
         }
     }

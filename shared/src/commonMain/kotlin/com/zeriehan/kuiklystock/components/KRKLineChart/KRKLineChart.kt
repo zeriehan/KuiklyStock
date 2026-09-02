@@ -767,7 +767,9 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
             val s = 9f * zoom
             val idx = if (crossActive) ((crossX - s / 2f) / s).toInt().coerceIn(0, n - 1) else n - 1
             val b = bars[idx]
-            val chg = if (b.open != 0f) (b.close - b.open) / b.open * 100f else 0f
+            // 涨跌幅 = (收盘 - 前一根收盘)/前一根收盘；第一根或前收为 0 则按平盘
+            val prevClose = if (idx > 0) bars[idx - 1].close else 0f
+            val chg = if (prevClose != 0f) (b.close - prevClose) / prevClose * 100f else 0f
             val closes = bars.map { it.close }
             val ma5 = computeMA(closes, 5)
             val ma10 = computeMA(closes, 10)

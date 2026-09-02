@@ -61,6 +61,12 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
      *  分析结果与时间统一写入共享 [AIAnalysisStore]（详情页也读同一份），保证两边内容一模一样。 */
     private var aiLoadingCodes: Set<String> by observable(emptySet())
 
+    /** 展开某行时异步拉取真实分时（迷你图用）。到达后翻转 trendToggle 让迷你图重读真实数据。 */
+    private var trendToggle: Boolean by observable(false)
+    private fun loadTrendsFor(stock: Stock) {
+        StockData.loadTrends(stock) { trendToggle = !trendToggle }
+    }
+
     /** 展开某行时按需拉取 AI 分析（首次自动；force=true 用于「重试」按钮强制刷新）。
      *  结果写入共享 [AIAnalysisStore]（key=股票代码），与详情页读取同一份，确保内容完全一致。 */
     private fun loadAI(index: Int, stock: Stock, force: Boolean = false) {
@@ -156,17 +162,25 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                     }
                                     pages.forEach { id ->
                                         when (id) {
-                                            // ===== Page 1：当天分时图 =====
+                                            // ===== Page 1：当天分时图（真实分时拉取到达后随 trendToggle 重建）=====
                                             0 -> View {
                                                 attr {
                                                     width(pageW); height(150f); flexDirectionColumn()
                                                     padding(12f); backgroundColor(Color(0xFFF7F8FA))
                                                 }
-                                                KRMiniTimeSharing {
-                                                    points = StockData.getIntraday(stock)
-                                                    refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
-                                                    // 分时图统一红线，不再随涨跌幅变红绿
-                                                    color = Color(0xFFE54D42)
+                                                vif({ ctx.trendToggle }) {
+                                                    KRMiniTimeSharing {
+                                                        points = StockData.getIntraday(stock)
+                                                        refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
+                                                        color = Color(0xFFE54D42)
+                                                    }
+                                                }
+                                                vif({ !ctx.trendToggle }) {
+                                                    KRMiniTimeSharing {
+                                                        points = StockData.getIntraday(stock)
+                                                        refPrice = (stock.price - stock.change).coerceAtLeast(0.01f)
+                                                        color = Color(0xFFE54D42)
+                                                    }
                                                 }
                                             }
                                             // ===== Page 2：AI 智能分析（引用共享 AIAnalysisStore，与详情页完全一致）=====
@@ -290,7 +304,7 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                             click {
                                 val willExpand = ctx.expandedIndex != index
                                 ctx.expandedIndex = if (willExpand) index else -1
-                                if (willExpand) { ctx.loadAI(index, stock); ctx.currentPage = 0 }
+                                if (willExpand) { ctx.loadAI(index, stock); ctx.currentPage = 0; ctx.loadTrendsFor(stock) }
                                 ctx.onRowClick?.invoke(stock)
                             }
                             longPress { p ->

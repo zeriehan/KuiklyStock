@@ -120,6 +120,15 @@ object StockData {
     /** 真实板块成分股（code → 成分股代码），供 getSectorStocks 用 */
     private val sectorConstituents = mutableMapOf<String, MutableList<String>>()
 
+    // ===================== 真实 K线 / 分时 缓存（loadKline / loadTrends 填入）=====================
+    // key: "secid|period" → 真实历史K线（最老→最新）。命中则 getKLine 用它，不再本地生成。
+    private val realKline = mutableMapOf<String, List<KLineBar>>()
+    // key: "secid" → 真实当日分时（逐分钟）。命中则 getIntraday 用它。
+    private val realTrends = mutableMapOf<String, List<TimeSharingPoint>>()
+    /** 是否已真正接入过真实K线/分时（用于图源标注） */
+    var realHistoryLoaded = false
+        private set
+
     fun getSectors(): List<Sector> {
         if (realSectors.isNotEmpty()) {
             return realSectors.values.toList().sortedByDescending { it.changePercent }
@@ -157,7 +166,77 @@ object StockData {
         return pts
     }
 
-    // ===================== 迷你图表（本地算法派生）=====================
+    // ===================== 真实 K线 / 分时（优先真实缓存，缺失才本地生成兜底）=====================
+
+    /** 周期 → 东财 klt（101日/102周/103月/104年） */
+    private fun kltOf(period: String): Int = when (period) {
+        "周" -> 102
+        "月" -> 103
+        "年" -> 104
+        else -> 101
+    }
+
+    /**
+     * 取某股票某周期 K线：优先返回真实缓存（[loadKline] 拉取后填入）；无缓存则本地生成兜底。
+     * 真实数据最老→最新；若请求 count 小于缓存长度则截取最近 count 根。
+     */
+    fun getKLine(stock: Stock, period: String = "日", count: Int = 40): List<KLineBar> {
+        val cached = realKline["${stock.code}|${period}"]
+        if (!cached.isNullOrEmpty()) {
+            return if (count <= 0) emptyList()
+            else if (cached.size <= count) cached
+            else cached.takeLast(count)
+        }
+        return genKLine(stock, period, count)
+    }
+
+    /**
+     * 异步拉取真实历史K线并缓存，成功后回调（详情页据此刷新图表）。
+     * 失败（无桥/网络）维持原状，getKLine 自动回退本地生成，不崩。
+     */
+    fun loadKline(stock: Stock, period: String, count: Int, onDone: (() -> Unit)? = null) {
+        val b = bridge ?: run { onDone?.invoke(); return }
+        try {
+            b.fetchKline(secidOf(stock), kltOf(period), count.coerceAtLeast(20)) { resp ->
+                val raw = resp?.optString("kline") ?: ""
+                val bars = if (raw.isBlank() || raw == "[]") emptyList() else parseKlineJson(raw)
+                if (bars.isNotEmpty()) {
+                    realKline["${stock.code}|${period}"] = bars
+                    realHistoryLoaded = true
+                }
+                onDone?.invoke()
+            }
+        } catch (e: Throwable) {
+            onDone?.invoke()
+        }
+    }
+
+    /** 解析宿主回传的 {date,open,close,high,low,volume} JSON 数组为 KLineBar 列表 */
+    private fun parseKlineJson(raw: String): List<KLineBar> {
+        val out = mutableListOf<KLineBar>()
+        try {
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val it = arr.optJSONObject(i) ?: continue
+                val close = it.optDouble("close").toFloat()
+                if (close <= 0f) continue
+                val date = it.optString("date").let { if (it.length >= 10) it.substring(5, 10).replace("-", "-") else it }
+                out.add(
+                    KLineBar(
+                        open = it.optDouble("open").toFloat(),
+                        high = it.optDouble("high").toFloat(),
+                        low = it.optDouble("low").toFloat(),
+                        close = close,
+                        volume = it.optDouble("volume").toFloat(),
+                        date = date, // 保留 "MM-DD" 用于 X 轴
+                    )
+                )
+            }
+        } catch (e: Throwable) {
+            // 解析失败 → 返回空，调用方回退本地
+        }
+        return out
+    }
 
     /**
      * 生成一根股票的 K线（确定性，便于演示）。以「当前（真实）价」为最新一根收盘价，向历史按 offset 回退。
@@ -169,7 +248,8 @@ object StockData {
      * @param period 周期："日"/"周"/"月"/"年"
      * @param count  根数（最新一根在最右，最老一根在最左）
      */
-    fun getKLine(stock: Stock, period: String = "日", count: Int = 40): List<KLineBar> {
+    /** 本地生成K线的兜底实现（无真实数据时用），仅 [getKLine] 在真实缓存未命中时调用。 */
+    private fun genKLine(stock: Stock, period: String, count: Int): List<KLineBar> {
         if (count <= 0) return emptyList()
         // 相邻两根之间的单期收益率标准差（跨期放大，让更久历史的价格波动幅度不至于太小/太离谱）
         val stepVol = when (period) {
@@ -222,8 +302,52 @@ object StockData {
         }
     }
 
-    /** 生成分时图采样点（围绕昨收随机游走，给出逐步均价） */
-    fun getIntraday(stock: Stock): List<TimeSharingPoint> {
+    /**
+     * 取某股票当日分时：优先返回真实缓存（[loadTrends] 填入）；无则本地生成兜底。
+     */
+    fun getIntraday(stock: Stock): List<TimeSharingPoint> =
+        realTrends[stock.code] ?: genIntraday(stock)
+
+    /**
+     * 异步拉取真实当日分时并缓存（含昨收基准），成功后回调（详情页/迷你图据此刷新）。
+     * 失败维持原状，getIntraday 自动回退本地生成。
+     */
+    fun loadTrends(stock: Stock, onDone: (() -> Unit)? = null) {
+        val b = bridge ?: run { onDone?.invoke(); return }
+        try {
+            b.fetchTrends(secidOf(stock)) { resp ->
+                val raw = resp?.optString("trends") ?: ""
+                val pts = if (raw.isBlank() || raw == "[]") emptyList() else parseTrendsJson(raw)
+                if (pts.isNotEmpty()) {
+                    realTrends[stock.code] = pts
+                    realHistoryLoaded = true
+                }
+                onDone?.invoke()
+            }
+        } catch (e: Throwable) {
+            onDone?.invoke()
+        }
+    }
+
+    /** 解析宿主回传 {time,price,avg} JSON 数组为 TimeSharingPoint 列表 */
+    private fun parseTrendsJson(raw: String): List<TimeSharingPoint> {
+        val out = mutableListOf<TimeSharingPoint>()
+        try {
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val it = arr.optJSONObject(i) ?: continue
+                val price = it.optDouble("price").toFloat()
+                if (price <= 0f) continue
+                out.add(TimeSharingPoint(it.optString("time"), price, it.optDouble("avg").toFloat()))
+            }
+        } catch (e: Throwable) {
+            // 解析失败 → 返回空，调用方回退本地
+        }
+        return out
+    }
+
+    /** 本地生成分时采样点的兜底实现（无真实数据时用） */
+    private fun genIntraday(stock: Stock): List<TimeSharingPoint> {
         val ref = (stock.price - stock.change).coerceAtLeast(0.01f)
         val n = 49
         val pts = mutableListOf<TimeSharingPoint>()

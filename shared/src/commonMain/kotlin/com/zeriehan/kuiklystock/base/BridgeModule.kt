@@ -124,6 +124,27 @@ internal class BridgeModule : Module() {
         callNativeMethod(FETCH_SECTOR_STOCKS, methodArgs, callbackFn)
     }
 
+    /**
+     * 拉取个股历史 K线。回调 { "kline": "JSON字符串[{date,open,close,high,low,volume}]" }，最老→最新；失败为 "[]"。
+     * @param klt 101日/102周/103月/104年
+     */
+    fun fetchKline(secid: String, klt: Int, count: Int, callbackFn: CallbackFn) {
+        val methodArgs = JSONObject()
+        methodArgs.put("secid", secid)
+        methodArgs.put("klt", klt)
+        methodArgs.put("count", count)
+        callNativeMethod(FETCH_KLINE, methodArgs, callbackFn)
+    }
+
+    /**
+     * 拉取个股当日分时。回调 { "trends": "JSON字符串[{time,price,avg}]", "preClose": Double }；失败 trends="[]"。
+     */
+    fun fetchTrends(secid: String, callbackFn: CallbackFn) {
+        val methodArgs = JSONObject()
+        methodArgs.put("secid", secid)
+        callNativeMethod(FETCH_TRENDS, methodArgs, callbackFn)
+    }
+
     fun openPage(
         url: String,
         closeCurPage: Boolean = false,
@@ -410,6 +431,8 @@ internal class BridgeModule : Module() {
         const val FETCH_CLIST = "fetchClist"
         const val FETCH_SECTORS = "fetchSectors"
         const val FETCH_SECTOR_STOCKS = "fetchSectorStocks"
+        const val FETCH_KLINE = "fetchKline"
+        const val FETCH_TRENDS = "fetchTrends"
     }
 
 }
