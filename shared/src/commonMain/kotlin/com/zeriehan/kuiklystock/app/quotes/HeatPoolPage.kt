@@ -29,7 +29,6 @@ internal class HeatPoolPage : BasePager() {
         val ups = pool.filter { it.changePercent > 0f }.sortedByDescending { it.changePercent }
         val flats = pool.filter { it.changePercent == 0f }
         val downs = pool.filter { it.changePercent < 0f }.sortedBy { it.changePercent }
-        val contentW = (ctx.pagerData.pageViewWidth - 24f).coerceAtLeast(200f)
         return {
             attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
 
@@ -51,27 +50,26 @@ internal class HeatPoolPage : BasePager() {
                 Text { attr { text("行情池 · ${pool.size} 只"); fontSize(17f); color(Color(0xFF222222)); fontWeightSemisolid(); marginLeft(8f) } }
             }
 
-            // ===== 列表 =====
+            // ===== 列表（行整宽铺满，左右对称无右侧悬空）=====
             Scroller {
-                attr { flex(1f); flexDirectionColumn(); marginTop(8f) }
+                attr { flex(1f); flexDirectionColumn(); marginTop(8f); paddingBottom(16f) }
                 if (pool.isEmpty()) {
                     Text { attr { text("当前行情池为空"); fontSize(14f); color(Color(0xFF999999)); margin(24f) } }
                 } else {
                     val openD: (Stock) -> Unit = { ctx.openDetail(it) }
                     if (ups.isNotEmpty()) {
-                        Text { attr { text("上涨 ${ups.size}"); fontSize(12f); color(Color(UserSettings.upDeep())); margin(left = 16f, top = 6f, bottom = 4f) } }
-                        ups.forEach { s -> heatRow(s, contentW, openD) }
+                        Text { attr { text("上涨 ${ups.size}"); fontSize(12f); color(Color(UserSettings.upDeep())); margin(left = 12f, top = 8f, bottom = 4f) } }
+                        ups.forEach { s -> heatRow(s, openD) }
                     }
                     if (flats.isNotEmpty()) {
-                        Text { attr { text("平盘 ${flats.size}"); fontSize(12f); color(Color(0xFF8A8A8A)); margin(left = 16f, top = 8f, bottom = 4f) } }
-                        flats.forEach { s -> heatRow(s, contentW, openD) }
+                        Text { attr { text("平盘 ${flats.size}"); fontSize(12f); color(Color(0xFF8A8A8A)); margin(left = 12f, top = 8f, bottom = 4f) } }
+                        flats.forEach { s -> heatRow(s, openD) }
                     }
                     if (downs.isNotEmpty()) {
-                        Text { attr { text("下跌 ${downs.size}"); fontSize(12f); color(Color(UserSettings.downDeep())); margin(left = 16f, top = 8f, bottom = 4f) } }
-                        downs.forEach { s -> heatRow(s, contentW, openD) }
+                        Text { attr { text("下跌 ${downs.size}"); fontSize(12f); color(Color(UserSettings.downDeep())); margin(left = 12f, top = 8f, bottom = 4f) } }
+                        downs.forEach { s -> heatRow(s, openD) }
                     }
                 }
-                View { attr { height(16f) } }
             }
         }
     }
@@ -87,11 +85,11 @@ internal class HeatPoolPage : BasePager() {
 }
 
 /** 单行：名称(随涨跌) + 价格 + 涨跌幅；点击进详情 */
-private fun ViewContainer<*, *>.heatRow(stock: Stock, w: Float, open: (Stock) -> Unit) {
+private fun ViewContainer<*, *>.heatRow(stock: Stock, open: (Stock) -> Unit) {
     View {
         attr {
             flexDirectionRow(); alignItemsCenter(); marginTop(2f)
-            padding(left = 12f, right = 12f); backgroundColor(Color.WHITE); width(w)
+            padding(left = 12f, right = 12f); backgroundColor(Color.WHITE)
         }
         event { click { open(stock) } }
         View { attr { flex(1f); flexDirectionColumn() }
