@@ -145,7 +145,11 @@ internal class MainTabPager : BasePager(), StockNavigator {
             // StockData.getSectors 才能拿到新数据（body 与普通 attr 不随非 observable 数据变化重跑）。
             rankToggle = !rankToggle
             marketSubToggle = !marketSubToggle
+            // 任何真实数据到达即结束"加载中"（大盘指数/行情刷新也走 DataSync）
+            mktLoading = false
         }
+        // 首屏大盘报价刷新：未就绪先显示"加载中"，DataSync 到达后自动消失
+        if (!StockData.isReal()) mktLoading = true
         StockData.refresh()
     }
 
@@ -468,6 +472,13 @@ internal class MainTabPager : BasePager(), StockNavigator {
         // 真实数据懒加载：切到「板块」拉真实行业板块、切到「个股」拉真实榜单。
         // 异步到达后由 DataSync.bump 翻转重建，用户看到的是真实内容而非 mock 那几个。
         when (i) {
+            0 -> {
+                // 大盘：真实报价未就绪时先给"加载中"，refresh() 完成经 DataSync 后自动消失
+                if (!StockData.isReal() && mktLoading.not()) {
+                    mktLoading = true
+                    StockData.refresh()
+                }
+            }
             1 -> {
                 if (StockData.hasRealSectors()) return
                 mktLoading = true

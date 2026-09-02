@@ -91,6 +91,25 @@ object StockData {
     fun findByCode(code: String): Stock =
         poolAll().firstOrNull { it.code == code } ?: baseQuotes.first()
 
+    /** 用真实价覆盖某股票在行情池中的快照（列表/自选随之显示真实价），并触发 DataSync 重建。
+     *  由真实 K线/分时拉取完成后调用：既修正详情页 K线所见的"最新真实价"，也让外部行情行不再停在过期 mock 价。 */
+    fun applyRealQuote(code: String, price: Float, changePercent: Float, change: Float = price * changePercent / 100f) {
+        if (price <= 0f) return
+        val baseIdx = baseQuotes.indexOfFirst { it.code == code }
+        val updated: Stock?
+        if (baseIdx >= 0) {
+            val old = baseQuotes[baseIdx]
+            updated = old.copy(price = price, change = change, changePercent = changePercent)
+            baseQuotes[baseIdx] = updated
+        } else {
+            val old = realPool[code] ?: return
+            updated = old.copy(price = price, change = change, changePercent = changePercent)
+            realPool[code] = updated
+        }
+        realLoaded = true
+        DataSync.bump()
+    }
+
     private fun poolAll(): List<Stock> = baseQuotes + realPool.values
 
     private var bridge: BridgeModule? = null
@@ -213,6 +232,13 @@ object StockData {
                     realKline["${stock.code}|${period}"] = bars
                     realHistoryLoaded = true
                 }
+                // 用真实K线最新一根回写行情池报价：修正外部行情行仍显示过期 mock 价的问题
+                if (period == "日" && bars.size >= 2) {
+                    val last = bars.last()
+                    val prev = bars[bars.size - 2]
+                    val chg = if (prev.close != 0f) (last.close - prev.close) / prev.close * 100f else 0f
+                    applyRealQuote(stock.code, last.close, chg)
+                }
                 onDone?.invoke()
             }
         } catch (e: Throwable) {
@@ -333,6 +359,12 @@ object StockData {
                 }
                 val pre = resp?.optDouble("preClose", 0.0)?.toFloat() ?: 0f
                 if (pre > 0f) trendPreClose[stock.code] = pre
+                // 用真实分时最后一点回写行情池报价：外部行情行/大字价与分时一致
+                if (pts.isNotEmpty()) {
+                    val lastP = pts.last().price
+                    val chg = if (pre > 0f) (lastP - pre) / pre * 100f else stock.changePercent
+                    applyRealQuote(stock.code, lastP, chg, if (pre > 0f) lastP - pre else stock.change)
+                }
                 onDone?.invoke()
             }
         } catch (e: Throwable) {
