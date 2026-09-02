@@ -88,6 +88,8 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     var crossActive: Boolean by observable(false)
     var crossX: Float by observable(0f)   // 主画布局部 X
     var crossY: Float by observable(0f)   // 主画布局部 Y
+    /** 主画布最近一次实际内容宽（吸附十字光标用，与 drawMain 的 s=w/n 对齐） */
+    private var lastCanvasW: Float = 0f
 
     /** 交互内部状态 */
     private var atStart = false
@@ -116,9 +118,10 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     }
 
     private fun setCross(x: Float, y: Float) {
-        // 吸附到最近一根 K线/分时点：把交点 X 对齐到该点中心，避免十字光标与蜡烛错位
-        val s = (if (isTimeSharing()) 6f else 9f) * zoom
+        // 吸附到最近一根 K线/分时点：交点 X 对齐该点中心（与 drawMain 同用 s=canvasW/n，保证逐像素对齐）。
         val n = if (isTimeSharing()) timeSharing.size else bars.size
+        val s = if (n > 0 && lastCanvasW > 0f) lastCanvasW / n
+        else (if (isTimeSharing()) 6f else 9f) * zoom
         val idx = if (n > 0) ((x - s / 2f) / s + 0.5f).toInt().coerceIn(0, n - 1) else 0
         crossX = idx * s + s / 2f
         crossY = y
@@ -485,6 +488,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     // ===================== 主画布 =====================
 
     private fun drawMain(c: CanvasContext, w: Float, h: Float) {
+        lastCanvasW = w
         val r = regions(h)
         val (max, min) = priceBounds()
         val range = (max - min).coerceAtLeast(0.01f)
