@@ -945,13 +945,14 @@ private fun ViewContainer<*, *>.chatChip(
     View {
         attr {
             padding(6f, 10f); marginRight(8f); borderRadius(14f)
+            alignItemsCenter(); justifyContentCenter()
             backgroundColor(if (active) Color(ctx.themeColor) else Color(0xFFF2F3F5))
         }
         event {
             click { onClick() }
             if (onLongPress != null) longPress { onLongPress.invoke() }
         }
-        Text { attr { text(label); fontSize(ctx.fs(12f)); color(if (active) Color.WHITE else Color(0xFF666666)) } }
+        Text { attr { text(label); fontSize(ctx.fs(12f)); color(if (active) Color.WHITE else Color(0xFF666666)); textAlignCenter() } }
     }
 }
 
@@ -1013,7 +1014,7 @@ private fun ViewContainer<*, *>.renderRecents(ctx: MainTabPager, contentW: Float
     // 分组筛选 chips
     val groups = ChatStore.groups()
     View {
-        attr { width(contentW); flexDirectionRow(); alignItemsCenter(); justifyContentCenter(); marginBottom(8f) }
+        attr { width(contentW); flexDirectionRow(); alignItemsCenter(); justifyContentFlexStart(); marginBottom(8f) }
         chatChip(ctx, "全部", ctx.groupFilter.isEmpty()) { ctx.groupFilter = ""; ctx.refreshConvs() }
         groups.forEach { g ->
             chatChip(ctx, g.name, ctx.groupFilter == g.id, onLongPress = { ctx.openGroupSheet(g.id) }) { ctx.groupFilter = g.id; ctx.refreshConvs() }
