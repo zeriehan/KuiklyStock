@@ -96,14 +96,16 @@ object StockData {
      *  bump 导致 MainTabPager 翻 listToggle 重建整表而把展开的行"自动缩回"。列表可见刷新
      *  交由正常行情报价刷新(refresh 的 bump)驱动；此处写回保证下次任何重建读到真实价。 */
     fun applyRealQuote(code: String, price: Float, changePercent: Float, change: Float = price * changePercent / 100f) {
+        // 防御：真实数据退化(如新股除零)可能产生 NaN/Infinity，直接丢弃，避免污染行情池后被 formatPrice 触发闪退
+        if (!price.isFinite() || !changePercent.isFinite() || !change.isFinite()) return
         if (price <= 0f) return
         val baseIdx = baseQuotes.indexOfFirst { it.code == code }
         if (baseIdx >= 0) {
             val old = baseQuotes[baseIdx]
-            baseQuotes[baseIdx] = old.copy(price = price, change = change, changePercent = changePercent)
+            baseQuotes[baseIdx] = old.copy(price = price, change = change, changePercent = changePercent).sanitize()
         } else {
             val old = realPool[code] ?: return
-            realPool[code] = old.copy(price = price, change = change, changePercent = changePercent)
+            realPool[code] = old.copy(price = price, change = change, changePercent = changePercent).sanitize()
         }
         realLoaded = true
     }
@@ -152,8 +154,14 @@ object StockData {
     fun trendPreCloseOf(code: String): Float? = trendPreClose[code]
 
     /** 分时图昨收基准统一入口：优先真实分时的 preClose（避免用可能过期的 stock.change），无则回退 price-change */
-    fun intradayRefPrice(stock: Stock): Float =
-        trendPreCloseOf(stock.code) ?: (stock.price - stock.change).coerceAtLeast(0.01f)
+    fun intradayRefPrice(stock: Stock): Float {
+        // 防御：新股/异常真实数据退化(price/change 为 NaN/Infinity)时，
+        // 直接 (price-change) 也会是 NaN → 后续图表坐标算成 NaN → Canvas 抛异常闪退。兜底成有限正值。
+        val t = trendPreCloseOf(stock.code)
+        val base = if (t != null && t.isFinite() && t > 0f) t else (stock.price - stock.change)
+        val r = base.coerceAtLeast(0.01f)
+        return if (r.isFinite()) r else 1f
+    }
 
     fun getSectors(): List<Sector> {
         if (realSectors.isNotEmpty()) {
@@ -208,13 +216,19 @@ object StockData {
      */
     fun getKLine(stock: Stock, period: String = "日", count: Int = 40): List<KLineBar> {
         val cached = realKline["${stock.code}|${period}"]
-        if (!cached.isNullOrEmpty()) {
-            return if (count <= 0) emptyList()
+        val src = if (!cached.isNullOrEmpty()) {
+            if (count <= 0) emptyList()
             else if (cached.size <= count) cached
             else cached.takeLast(count)
+        } else {
+            genKLine(stock, period, count)
         }
-        return genKLine(stock, period, count)
+        return cleanBars(src)
     }
+
+    /** 边界兜底：任何来源的K线只要含非法浮点（NaN/Infinity）一律滤掉，指标/蜡烛计算绝不吃到 */
+    private fun cleanBars(bars: List<KLineBar>): List<KLineBar> =
+        bars.filter { it.open.isFinite() && it.high.isFinite() && it.low.isFinite() && it.close.isFinite() }
 
     /**
      * 异步拉取真实历史K线并缓存，成功后回调（详情页据此刷新图表）。
@@ -252,7 +266,8 @@ object StockData {
             for (i in 0 until arr.length()) {
                 val it = arr.optJSONObject(i) ?: continue
                 val close = it.optDouble("close").toFloat()
-                if (close <= 0f) continue
+                // 防御：真实K线偶发字段为空/除零 → NaN/Infinity，直接丢弃
+                if (close <= 0f || !close.isFinite()) continue
                 val date = it.optString("date").let { if (it.length >= 10) it.substring(5, 10).replace("-", "-") else it }
                 out.add(
                     KLineBar(
@@ -301,6 +316,8 @@ object StockData {
         // 确定性种子：代码数字和 + 周期 → 同股同周期，任意 offset 的数据恒定
         val codeSeed = (stock.code.filter { it.isDigit() }.sumOf { it.code }.toLong() % 97L + 11L).toInt()
         val periodSeed = period.sumBy { it.code }
+        // 防御：新股/退化数据股价可能为 NaN/0，兜底成有限正值，避免 close=NaN 污染蜡烛/指标计算
+        val basePrice = stock.price.finiteOr(1f).coerceAtLeast(0.01f)
 
         /** 无状态哈希：offset → [0,1)。只依赖 (offset, codeSeed, periodSeed)，与 count 无关。 */
         fun hash(o: Int): Float {
@@ -318,7 +335,7 @@ object StockData {
         val closeByOffset = FloatArray(count)
         var prod = 1f
         for (o in 0 until count) {
-            closeByOffset[o] = stock.price / prod
+            closeByOffset[o] = basePrice / prod
             val r = (hash(o * 2 + 5) - 0.5f) * 2f * stepVol
             prod *= 1f + r
         }
@@ -338,8 +355,12 @@ object StockData {
     /**
      * 取某股票当日分时：优先返回真实缓存（[loadTrends] 填入）；无则本地生成兜底。
      */
-    fun getIntraday(stock: Stock): List<TimeSharingPoint> =
-        realTrends[stock.code] ?: genIntraday(stock)
+    fun getIntraday(stock: Stock): List<TimeSharingPoint> {
+        val raw = realTrends[stock.code] ?: genIntraday(stock)
+        // 边界兜底：任何来源的分时只要含 NaN/Infinity 一律滤掉，图表绝不吃到非法坐标
+        val clean = raw.filter { it.price.isFinite() && it.avg.isFinite() }
+        return clean
+    }
 
     /**
      * 异步拉取真实当日分时并缓存（含昨收基准），成功后回调（详情页/迷你图据此刷新）。
@@ -378,8 +399,10 @@ object StockData {
             for (i in 0 until arr.length()) {
                 val it = arr.optJSONObject(i) ?: continue
                 val price = it.optDouble("price").toFloat()
-                if (price <= 0f) continue
-                out.add(TimeSharingPoint(it.optString("time"), price, it.optDouble("avg").toFloat()))
+                val avg = it.optDouble("avg").toFloat()
+                // 防御：真实分时偶发字段为空/除零 → NaN/Infinity，直接丢弃，避免污染图表坐标致闪退
+                if (price <= 0f || !price.isFinite() || !avg.isFinite()) continue
+                out.add(TimeSharingPoint(it.optString("time"), price, avg))
             }
         } catch (e: Throwable) {
             // 解析失败 → 返回空，调用方回退本地
@@ -389,7 +412,10 @@ object StockData {
 
     /** 本地生成分时采样点的兜底实现（无真实数据时用） */
     private fun genIntraday(stock: Stock): List<TimeSharingPoint> {
-        val ref = (stock.price - stock.change).coerceAtLeast(0.01f)
+        // 防御：新股/退化数据股价可能为 NaN/0，兜底成有限正值，避免整条分时退化成 NaN
+        val basePrice = stock.price.finiteOr(1f).coerceAtLeast(0.01f)
+        val baseChange = stock.change.finiteOr(0f)
+        val ref = (basePrice - baseChange).coerceAtLeast(0.01f)
         val n = 49
         val pts = mutableListOf<TimeSharingPoint>()
         var seed = (stock.code.filter { it.isDigit() }.sumOf { it.code } % 131 + 17)
@@ -400,7 +426,7 @@ object StockData {
         var price = ref
         var sum = 0f
         repeat(n) { i ->
-            val drift = (rnd() - 0.47f) * stock.price * 0.010f
+            val drift = (rnd() - 0.47f) * basePrice * 0.010f
             price = (price + drift).coerceAtLeast(0.01f)
             sum += price
             val avg = sum / (i + 1)
@@ -619,9 +645,10 @@ object StockData {
             }
             if (updated.isNotEmpty()) {
                 for (u in updated) {
-                    val idx = baseQuotes.indexOfFirst { it.code == u.code }
-                    if (idx >= 0) baseQuotes[idx] = u
-                    else if (realPool.containsKey(u.code)) realPool[u.code] = u
+                    val clean = u.sanitize()
+                    val idx = baseQuotes.indexOfFirst { it.code == clean.code }
+                    if (idx >= 0) baseQuotes[idx] = clean
+                    else if (realPool.containsKey(clean.code)) realPool[clean.code] = clean
                     else { /* 池外标的忽略（榜单/成分股另有并入通道） */ }
                 }
                 realLoaded = true
@@ -661,10 +688,11 @@ object StockData {
                     volume = it.optDouble("volume").toFloat(),
                 )
                 // 已存在同 code：覆盖（可能是 mock 同名价）
+                val clean = stock.sanitize()
                 val idx = baseQuotes.indexOfFirst { it.code == code }
-                if (idx >= 0) baseQuotes[idx] = stock
-                else realPool[code] = stock
-                merged.add(stock)
+                if (idx >= 0) baseQuotes[idx] = clean
+                else realPool[code] = clean
+                merged.add(clean)
             }
             if (merged.isNotEmpty()) realLoaded = true
         } catch (e: Throwable) {

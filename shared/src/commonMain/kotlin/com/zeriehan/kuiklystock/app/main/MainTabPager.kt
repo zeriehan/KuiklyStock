@@ -1394,10 +1394,12 @@ private fun ViewContainer<*, *>.renderMarketHeat(ctx: MainTabPager, w: Float) {
         event { click { ctx.openHeatPool() } }
         // 标题行（可点 → 打开行情池明细）
         View {
-            attr { flexDirectionRow(); alignItemsCenter(); marginBottom(8f) }
+            attr { flexDirectionRow(); alignItemsCenter(); marginBottom(4f) }
             Text { attr { text("市场热度 · 当前池 ${pool.size} 只"); fontSize(ctx.fs(13f)); fontWeightSemiBold(); color(Color(0xFF222222)); flex(1f) } }
             Text { attr { text("查看 >"); fontSize(ctx.fs(12f)); color(Color(0xFF999999)) } }
         }
+        // 样本说明小字：内存池随浏览扩充，计数会变属正常（见选项 B）
+        Text { attr { text("样本随浏览扩充，非全市场数据"); fontSize(ctx.fs(11f)); color(Color(0xFF999999)); marginBottom(8f) } }
         // 三格统计：上涨 / 平盘 / 下跌
         View { attr { flexDirectionRow() }
             View {

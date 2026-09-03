@@ -236,6 +236,9 @@ object StockColor {
  * 保留两位小数（KMP common 安全，避免使用 JVM-only 的 String.format）
  */
 fun formatPrice(v: Float): String {
+    // 非有限值(NaN/Infinity)直接转 "0.00"：避免 abs.toInt() 抛 IllegalArgumentException 导致闪退
+    // （新股/异常真实数据偶发字段为 0 触发除零产生 NaN，需在此兜底）
+    if (!v.isFinite()) return "0.00"
     val sign = if (v < 0f) "-" else ""
     val abs = kotlin.math.abs(v)
     val intPart = abs.toInt()
@@ -247,9 +250,32 @@ fun formatPrice(v: Float): String {
  * 涨跌幅格式化，如 "+2.35%" / "-1.20%" / "0.00%"
  */
 fun formatPercent(v: Float): String {
+    if (!v.isFinite()) return "0.00%"
     val prefix = if (v > 0f) "+" else ""
     return prefix + formatPrice(v) + "%"
 }
+
+/**
+ * 把股票所有浮点字段里的 NaN/Infinity 归一成 0f。
+ * 真实接口（尤其新股首日）偶发字段为空/除零，产生 NaN/Infinity，若直接进行情池，
+ * 下游 formatPrice/图表坐标/指标计算会抛异常 → 主线程闪退。在任何「真实数据并入行情池」的入口都先过一遍本函数。
+ */
+fun Stock.sanitize(): Stock {
+    if (price.isFinite() && change.isFinite() && changePercent.isFinite()
+        && high.isFinite() && low.isFinite() && volume.isFinite()
+    ) return this
+    return copy(
+        price = if (price.isFinite()) price else 0f,
+        change = if (change.isFinite()) change else 0f,
+        changePercent = if (changePercent.isFinite()) changePercent else 0f,
+        high = if (high.isFinite()) high else 0f,
+        low = if (low.isFinite()) low else 0f,
+        volume = if (volume.isFinite()) volume else 0f,
+    )
+}
+
+/** 单个浮点安全取用：非有限值回退 [fallback] */
+fun Float?.finiteOr(fallback: Float): Float = if (this != null && this.isFinite()) this else fallback
 
 /**
  * 板块（行业 / 概念）数据模型。

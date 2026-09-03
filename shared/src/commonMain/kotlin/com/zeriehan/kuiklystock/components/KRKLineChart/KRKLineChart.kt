@@ -208,9 +208,9 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
         if (n <= 0) return 6f
         return if (isTimeSharing()) {
             val avail = max(estimateViewportW(), 120f)
-            (avail / n) * zoom
+            ((avail / n) * zoom).coerceAtLeast(0.5f)
         } else {
-            9f * zoom
+            (9f * zoom).coerceAtLeast(0.5f)
         }
     }
 
@@ -222,6 +222,8 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
             var mx = ts.maxOf { maxOf(it.price, it.avg) }
             var mn = ts.minOf { minOf(it.price, it.avg) }
             if (refPrice > 0f) { mx = max(mx, refPrice); mn = min(mn, refPrice) }
+            // 防御：数据仍含非法浮点（理论上已被 getIntraday 滤掉）时，直接退化为安全区间
+            if (!mx.isFinite() || !mn.isFinite()) return Pair(1f, 0f)
             val pad = (mx - mn) * 0.08f + 0.01f
             Pair(mx + pad, mn - pad)
         } else {
@@ -229,6 +231,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
             if (bs.isEmpty()) return Pair(1f, 0f)
             val mx = bs.maxOf { it.high }
             val mn = bs.minOf { it.low }
+            if (!mx.isFinite() || !mn.isFinite()) return Pair(1f, 0f)
             val pad = (mx - mn) * 0.08f + 0.01f
             Pair(mx + pad, mn - pad)
         }
@@ -513,7 +516,8 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
         val dateTop = h - DATE_BOTTOM
         val n = if (isTimeSharing()) timeSharing.size else bars.size
         if (n == 0) return
-        val s = w / n
+        // 画布宽尚未就绪(w=0)时退化为 1f，避免后续 (x-s/2f)/s 除零 → toInt() 抛异常
+        val s = if (w > 0f) w / n else 1f
 
         val priceToY: (Float) -> Float = { p -> r.candleTop + (1f - (p - min) / range) * candleH }
 
@@ -771,7 +775,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
      * 否则索引对不上 → 顶部那行 开高收低/MA 与图上蜡烛不一致。
      */
     private fun chartStep(n: Int): Float =
-        if (n > 0 && lastCanvasW > 0f) lastCanvasW / n
+        if (n > 0 && lastCanvasW > 0f) (lastCanvasW / n).coerceAtLeast(0.5f)
         else contentStepPx()
 
     /**

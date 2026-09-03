@@ -49,6 +49,8 @@ internal class HeatPoolPage : BasePager() {
                 }
                 Text { attr { text("行情池 · ${pool.size} 只"); fontSize(17f); color(Color(0xFF222222)); fontWeightSemisolid(); marginLeft(8f) } }
             }
+            // 样本说明小字：内存池随浏览扩充，计数会变属正常（见选项 B）
+            Text { attr { text("样本随浏览扩充 · 非全市场实时数据"); fontSize(12f); color(Color(0xFF999999)); margin(left = 12f, top = 4f, bottom = 4f) } }
 
             // ===== 列表（行整宽铺满，左右对称无右侧悬空）=====
             Scroller {

@@ -114,15 +114,20 @@ internal class StockDetailPage : BasePager() {
         val c = curCode
         if (c.isNotBlank()) {
             val st = StockData.findByCode(c)
-            StockData.loadTrends(st) {
-                if (selectedPeriod == 0) chartRef?.view?.let { ch ->
-                    ch.timeSharing = StockData.getIntraday(st)
-                    ch.bars = emptyList()
-                    ch.refPrice = StockData.intradayRefPrice(st)
-                    ch.resetToLatest()
+            // 退化数据/新股：跳过真实数据拉取。其 secid 可能触发原生桥(fetchTrends/fetchKline)
+            // 在 native 侧异常并导致整进程闪退，而该异常无法被 shared 的 Kotlin try/catch 捕获。
+            // 这类股票直接走安全页，不触碰原生桥，从根源避免崩溃。
+            if (!isUnsafeStock(st)) {
+                StockData.loadTrends(st) {
+                    if (selectedPeriod == 0) chartRef?.view?.let { ch ->
+                        ch.timeSharing = StockData.getIntraday(st)
+                        ch.bars = emptyList()
+                        ch.refPrice = StockData.intradayRefPrice(st)
+                        ch.resetToLatest()
+                    }
                 }
+                StockData.loadKline(st, "日", 80) {}
             }
-            StockData.loadKline(st, "日", 80) {}
         }
     }
 
@@ -187,10 +192,48 @@ internal class StockDetailPage : BasePager() {
         }
     }
 
+    /** 判断该股票是否「数据不可靠」：新股(N开头)或任意数值字段退化(NaN/Infinity)。
+     *  命中则跳过图表、跳过真实数据拉取，避免原生 Canvas/桥异常导致闪退。 */
+    private fun isUnsafeStock(stock: Stock): Boolean {
+        if (stock.name.startsWith("N", ignoreCase = true)) return true
+        if (!stock.price.isFinite() || !stock.change.isFinite() || !stock.changePercent.isFinite()) return true
+        if (!StockData.intradayRefPrice(stock).isFinite()) return true
+        if (StockData.getIntraday(stock).any { !it.price.isFinite() || !it.avg.isFinite() }) return true
+        if (StockData.getKLine(stock, "日").any { !it.close.isFinite() || !it.open.isFinite() || !it.high.isFinite() || !it.low.isFinite() }) return true
+        return false
+    }
+
     override fun body(): ViewBuilder {
         val ctx = this
         val code = pageData.params.optString("stockCode")
         val stock = StockData.findByCode(code)
+        // 退化数据兜底：新股首日/行情缺失的标的会产生 NaN/Infinity，而 K线图在原生 Canvas 上绘制，
+        // 原生层异常无法被 Kotlin try/catch 捕获，会直接导致闪退。因此对「数据不可靠」的标的
+        // 直接跳过图表详情，改显轻量安全页（仅名称 + 暂不支持提示），彻底避开崩溃路径。
+        val unsafe = ctx.isUnsafeStock(stock)
+        if (unsafe) {
+            return {
+                attr { flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
+                // 返回栏
+                View {
+                    attr { padding(12f); paddingTop(pagerData.statusBarHeight); height(44f + pagerData.statusBarHeight); flexDirectionRow(); alignItemsCenter(); backgroundColor(Color.WHITE) }
+                    View {
+                        attr { width(32f); height(32f); justifyContentCenter(); alignItemsCenter() }
+                        event { click { ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).closePage() } }
+                        Text { attr { text("<"); fontSize(22f); color(Color(0xFF222222)); fontWeightSemisolid() } }
+                    }
+                    Text { attr { text(stock.name); fontSize(17f); color(Color(0xFF222222)); fontWeightSemisolid(); marginLeft(8f) } }
+                    Text { attr { text(stock.code); fontSize(12f); color(Color(0xFF999999)); marginLeft(8f) } }
+                }
+                // 提示区（无图表，绝不触发原生绘制崩溃）
+                View {
+                    attr { flex(1f); flexDirectionColumn(); justifyContentCenter(); alignItemsCenter(); padding(24f) }
+                    Text { attr { text("该股票暂不支持查看详情"); fontSize(16f); color(Color(0xFF222222)); fontWeightSemisolid() } }
+                    View { attr { height(10f) } }
+                    Text { attr { text("（新股上市首日或行情数据暂不完整，图表详情暂不可用）"); fontSize(13f); color(Color(0xFF999999)) } }
+                }
+            }
+        }
         // 触发 AI 分析：首次进入自动分析；若已有缓存（同一股票再次进入）则直接展示缓存结果 + 时间
         ctx.runAnalysis(stock, code, false)
         return {
@@ -199,6 +242,7 @@ internal class StockDetailPage : BasePager() {
                 backgroundColor(Color(0xFFF2F3F5))
             }
 
+            try {
             // ===== 返回栏 =====
             View {
                 attr {
@@ -453,6 +497,18 @@ internal class StockDetailPage : BasePager() {
                 }
 
                 View { attr { height(16f) } }
+            }
+            } catch (e: Throwable) {
+                // 兜底：任何渲染期异常（如极端退化数据）都不再闪退，改为展示可读错误，便于排查
+                View {
+                    attr { margin(16f); padding(16f); backgroundColor(Color.WHITE); borderRadius(12f) }
+                    Text {
+                        attr {
+                            text("该股票数据异常，暂时无法展示详情：\n${e.message ?: e.toString()}")
+                            fontSize(14f); color(Color(0xFFE54D42)); lineHeight(20f)
+                        }
+                    }
+                }
             }
         }
     }
