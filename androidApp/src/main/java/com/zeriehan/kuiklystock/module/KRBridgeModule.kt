@@ -752,36 +752,49 @@ private fun fetchTrends(params: String?, callback: KuiklyRenderCallback?) {
     if (secid.isBlank()) { callback?.invoke(empty); return }
     thread(name = "em-trends") {
         val (trendsJson, preClose) = try {
-            val url = "https://push2.eastmoney.com/api/qt/stock/trends2/get" +
-                "?secid=$secid&ndays=1&iscr=0" +
-                "&fields1=f1,f2,f3,f7,f8&fields2=f51,f52,f53,f54,f55,f56,f57,f58"
+            // 腾讯分时（与K线同源，K线可达时分时也可靠；东财 trends2 部分网络限流/不可达）
+            // secid "1.601318"/"0.000858" → sh601318 / sz000858
+            val dot = secid.indexOf('.')
+            val market = if (dot > 0) secid.substring(0, dot) else "1"
+            val code = if (dot > 0) secid.substring(dot + 1) else secid
+            val prefix = if (market == "1") "sh" else "sz"
+            val tcode = "$prefix$code"
+            val url = "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=$tcode"
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
                 setRequestProperty("User-Agent", "Mozilla/5.0")
-                setRequestProperty("Referer", "https://quote.eastmoney.com/")
+                setRequestProperty("Referer", "https://gu.qq.com/")
             }
             try {
                 if (conn.responseCode != HttpURLConnection.HTTP_OK) {
-                    Log.e("KRBridge", "EM trends HTTP ${conn.responseCode}")
+                    Log.e("KRBridge", "TX minute HTTP ${conn.responseCode}")
                     "[]" to 0.0
                 } else {
                     val json = JSONObject(conn.inputStream.bufferedReader().readText())
-                    val data = json.optJSONObject("data")
-                    val pre = data?.optDouble("preClose", 0.0) ?: 0.0
-                    val arr = data?.optJSONArray("trends") ?: JSONArray()
+                    val node = json.optJSONObject("data")?.optJSONObject(tcode)
+                    val dataArr = node?.optJSONObject("data")?.optJSONArray("data") ?: JSONArray()
+                    val pre = node?.optJSONObject("qt")?.optJSONArray(tcode)?.optDouble(4) ?: 0.0
                     val out = JSONArray()
-                    // trends 每项: "2026-09-02 09:30,price,?,?,?,?,?,avg"
-                    for (i in 0 until arr.length()) {
-                        val line = arr.optString(i)
-                        val part = line.split(",")
-                        if (part.size < 8) continue
+                    var cumAmount = 0.0
+                    var cumVol = 0.0
+                    // 腾讯每项: "HHmm price vol(手) amount(元)" → 累计均价 = Σamount/Σ(vol*100)
+                    for (i in 0 until dataArr.length()) {
+                        val line = dataArr.optString(i)
+                        val part = line.split(" ")
+                        if (part.size < 3) continue
                         val price = part[1].toDoubleOrNull() ?: continue
                         if (price <= 0.0) continue
+                        val vol = part[2].toDoubleOrNull() ?: 0.0
+                        val amount = if (part.size >= 4) part[3].toDoubleOrNull() ?: 0.0 else 0.0
+                        cumAmount += amount
+                        cumVol += vol * 100.0
+                        val hhmm = part[0]
+                        val time = if (hhmm.length >= 4) hhmm.substring(0, 2) + ":" + hhmm.substring(2, 4) else hhmm
                         out.put(
                             JSONObject().apply {
-                                put("time", part[0].substring(11)) // 只留 HH:mm
+                                put("time", time)
                                 put("price", price)
-                                put("avg", part[7].toDouble())
+                                put("avg", if (cumVol > 0.0) cumAmount / cumVol else price)
                             }
                         )
                     }
