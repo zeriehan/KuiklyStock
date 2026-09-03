@@ -1236,16 +1236,16 @@ private fun ViewContainer<*, *>.renderRankList(ctx: MainTabPager) {
 private fun ViewContainer<*, *>.renderStockSearch(ctx: MainTabPager) {
     View {
         attr {
-            margin(left = 12f, right = 12f, top = 12f)
-            padding(left = 12f, right = 8f); height(40f)
+            margin(left = 12f, right = 12f, top = 8f)
+            padding(left = 12f, right = 8f); height(32f)
             backgroundColor(Color.WHITE); borderRadius(10f); width(ctx.pagerData.pageViewWidth - 24f)
             flexDirectionRow(); alignItemsCenter()
         }
         // 搜索图标（左侧灰色，替代纯文字占位，醒目且不依赖占位符颜色）
-        Text { attr { text("🔍"); fontSize(ctx.fs(15f)); color(Color(0xFF999999)); marginRight(6f) } }
+        Text { attr { text("🔍"); fontSize(ctx.fs(14f)); color(Color(0xFF999999)); marginRight(4f) } }
         Input {
             attr {
-                flex(1f); height(34f); fontSize(ctx.fs(14f)); color(Color(0xFF222222))
+                flex(1f); height(28f); fontSize(ctx.fs(14f)); color(Color(0xFF222222))
                 text(ctx.stockQuery)
                 placeholder("搜索个股"); placeholderColor(Color(0xFFBBBBBB))
             }
@@ -1254,7 +1254,7 @@ private fun ViewContainer<*, *>.renderStockSearch(ctx: MainTabPager) {
         // 清空按钮：query 非空时可点
         View {
             attr {
-                width(30f); height(30f); justifyContentCenter(); alignItemsCenter()
+                width(28f); height(28f); justifyContentCenter(); alignItemsCenter()
                 opacity(if (ctx.stockQuery.isEmpty()) 0f else 1f)
             }
             event { click { ctx.onStockQueryChange("") } }
