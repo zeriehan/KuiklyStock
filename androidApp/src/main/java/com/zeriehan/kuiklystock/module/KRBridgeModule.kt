@@ -45,6 +45,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
                 copyToPasteboard(params)
             }
 
+            "showSelectableText" -> {
+                showSelectableText(params)
+            }
+
             "toast" -> {
                 toast(params)
             }
@@ -149,6 +153,58 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         val paramJSON = JSONObject(params)
         (context?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.also {
             it.setPrimaryClip(ClipData.newPlainText(MODULE_NAME, paramJSON.optString("content")))
+        }
+    }
+
+    private fun showSelectableText(params: String?) {
+        if (params == null) {
+            return
+        }
+        val paramJSON = JSONObject(params)
+        val text = paramJSON.optString("text")
+        if (text.isEmpty()) {
+            return
+        }
+        val title = paramJSON.optString("title", "选取文字")
+        val ctx = context ?: return
+        val act = activity ?: return
+        act.runOnUiThread {
+            val dm = ctx.resources.displayMetrics
+            val density = dm.density
+            val pad = (18 * density + 0.5f).toInt()
+            // 文本：宽度撑满、左对齐、自动换行，确保文字落在框内
+            val textView = android.widget.TextView(ctx).apply {
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                setTextIsSelectable(true)
+                setText(text)
+                textSize = 16f
+                gravity = android.view.Gravity.START or android.view.Gravity.TOP
+                setTextColor(android.graphics.Color.parseColor("#FF222222"))
+                setPadding(pad, pad / 2, pad, pad / 2)
+                setLineSpacing(2 * density, 1.0f)
+            }
+            val scrollView = android.widget.ScrollView(ctx).apply {
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                isVerticalScrollBarEnabled = true
+                addView(textView)
+            }
+            val dialog = android.app.AlertDialog.Builder(ctx)
+                .setTitle(title)
+                .setView(scrollView)
+                .setPositiveButton("关闭", null)
+                .create()
+            dialog.show()
+            // 贴底、加宽，避免居中悬浮小框
+            dialog.window?.apply {
+                setGravity(android.view.Gravity.BOTTOM)
+                setLayout((dm.widthPixels * 0.94f).toInt(), android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+            }
         }
     }
 

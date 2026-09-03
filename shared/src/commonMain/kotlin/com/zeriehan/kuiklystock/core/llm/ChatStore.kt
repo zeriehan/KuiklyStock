@@ -1,6 +1,7 @@
 package com.zeriehan.kuiklystock.core.llm
 
 import com.tencent.kuikly.core.module.SharedPreferencesModule
+import com.zeriehan.kuiklystock.core.StockData
 
 /**
  * AI 聊天会话存储（按股票代码隔离），**已持久化**到 SharedPreferences。
@@ -71,6 +72,7 @@ object ChatStore {
             }
             if (list.isNotEmpty()) conversations[code] = list
         }
+        loadMeta()
     }
 
     private fun save() {
@@ -79,6 +81,52 @@ object ChatStore {
             code + SEP_KV + list.joinToString(SEP_MSG) { m -> m.role + SEP_KV + esc(m.text) }
         }
         p.setItem(KEY_CHAT, raw)
+        saveMeta()
+    }
+
+    // ===== 分组 / 置顶 / 重命名 元数据持久化 =====
+    private const val KEY_GROUPS = "kb_chat_groups"
+    private const val KEY_META = "kb_chat_meta"
+
+    data class ConvGroup(val id: String, var name: String)
+
+    private data class Meta(var customName: String? = null, var groupId: String = "", var pinned: Boolean = false)
+
+    private val groups = mutableListOf<ConvGroup>()
+    private val convMeta = linkedMapOf<String, Meta>()
+
+    private fun loadMeta() {
+        val p = prefs ?: return
+        groups.clear(); convMeta.clear()
+        val g = p.getItem(KEY_GROUPS)
+        if (g.isNotBlank()) g.split(SEP_CONV).forEach { seg ->
+            if (seg.isBlank()) return@forEach
+            val kv = seg.split(SEP_KV, limit = 2)
+            val id = kv.getOrNull(0)?.trim() ?: return@forEach
+            if (id.isEmpty()) return@forEach
+            groups.add(ConvGroup(id, unesc(kv.getOrNull(1) ?: "分组")))
+        }
+        val m = p.getItem(KEY_META)
+        if (m.isNotBlank()) m.split(SEP_CONV).forEach { seg ->
+            if (seg.isBlank()) return@forEach
+            val parts = seg.split(SEP_KV)
+            val code = parts.getOrNull(0)?.trim() ?: return@forEach
+            if (code.isEmpty()) return@forEach
+            val customName = parts.getOrNull(1)?.let { unesc(it) }.takeIf { !it.isNullOrBlank() }
+            val groupId = parts.getOrNull(2)?.trim() ?: ""
+            val pinned = parts.getOrNull(3)?.trim() == "1"
+            convMeta[code] = Meta(customName, groupId, pinned)
+        }
+    }
+
+    private fun saveMeta() {
+        val p = prefs ?: return
+        val g = groups.joinToString(SEP_CONV) { it.id + SEP_KV + esc(it.name) }
+        p.setItem(KEY_GROUPS, g)
+        val m = convMeta.entries.joinToString(SEP_CONV) { (code, meta) ->
+            code + SEP_KV + esc(meta.customName ?: "") + SEP_KV + meta.groupId + SEP_KV + (if (meta.pinned) "1" else "0")
+        }
+        p.setItem(KEY_META, m)
     }
 
     private fun esc(s: String): String = s
@@ -130,6 +178,86 @@ object ChatStore {
     /** 所有有对话的股票代码（用于「最近对话」列表，避免依赖外部股票表过滤导致漏显） */
     fun conversationCodes(): List<String> =
         conversations.filter { it.value.isNotEmpty() }.keys.toList()
+
+    // ===== 分组 / 置顶 / 重命名 / 删除 =====
+
+    /** 有序代码列表：置顶的在前（保持插入序），其余在后 */
+    fun orderedCodes(): List<String> {
+        val keys = conversations.keys.filter { it.isNotBlank() }
+        val pinned = keys.filter { isPinned(it) }
+        val rest = keys.filter { !isPinned(it) }
+        return pinned + rest
+    }
+
+    fun isPinned(code: String): Boolean = convMeta[code]?.pinned == true
+
+    fun togglePin(code: String): Boolean {
+        val m = convMeta.getOrPut(code) { Meta() }
+        m.pinned = !m.pinned
+        saveMeta()
+        return m.pinned
+    }
+
+    fun setPinned(code: String, value: Boolean) {
+        val m = convMeta.getOrPut(code) { Meta() }
+        if (m.pinned != value) { m.pinned = value; saveMeta() }
+    }
+
+    /** 展示名：重命名优先；其次自由问答固定；否则股票名 */
+    fun displayName(code: String): String {
+        val meta = convMeta[code]
+        if (meta?.customName?.isNotBlank() == true) return meta.customName!!
+        if (code == "free") return "AI 自由问答"
+        return StockData.findByCode(code).name
+    }
+
+    fun setCustomName(code: String, name: String) {
+        val m = convMeta.getOrPut(code) { Meta() }
+        m.customName = name.trim().ifBlank { null }
+        saveMeta()
+    }
+
+    fun groupOf(code: String): String = convMeta[code]?.groupId ?: ""
+
+    fun setGroup(code: String, groupId: String) {
+        val m = convMeta.getOrPut(code) { Meta() }
+        m.groupId = groupId
+        saveMeta()
+    }
+
+    fun groups(): List<ConvGroup> = groups.toList()
+
+    fun groupName(id: String): String = groups.find { it.id == id }?.name ?: "未分组"
+
+    fun createGroup(name: String): ConvGroup {
+        val g = ConvGroup("g${System.currentTimeMillis()}", name.trim().ifBlank { "新分组" })
+        groups.add(g); saveMeta(); return g
+    }
+
+    fun renameGroup(id: String, name: String) {
+        groups.find { it.id == id }?.let { it.name = name.trim().ifBlank { "新分组" } }
+        saveMeta()
+    }
+
+    fun deleteGroup(id: String) {
+        groups.removeAll { it.id == id }
+        convMeta.values.forEach { if (it.groupId == id) it.groupId = "" }
+        saveMeta()
+    }
+
+    /** 彻底删除某段对话（含消息与元数据） */
+    fun deleteConversation(code: String) {
+        conversations.remove(code)
+        pending.remove(code)
+        convMeta.remove(code)
+        save(); saveMeta()
+    }
+
+    /** 删除单条消息（按索引） */
+    fun deleteMessageAt(code: String, index: Int) {
+        val list = conversations[code] ?: return
+        if (index in list.indices) { list.removeAt(index); save() }
+    }
 
     /** 清空某股票对话（自动落盘） */
     fun clear(code: String) {

@@ -88,7 +88,9 @@ internal class StockDetailPage : BasePager() {
             }
         }
         aiLoading = true
-        LLM.client.analyze(stock, StockData.getKLine(stock, "日")) { text ->
+        // 新股/退化数据无可信历史K线，传空列表给模型，避免其基于本地合成走势给出误导结论
+        val klineForAI = if (isUnsafeStock(stock)) emptyList() else StockData.getKLine(stock, "日")
+        LLM.client.analyze(stock, klineForAI) { text ->
             val ts = Utils.currentBridgeModule().currentTimeStamp()
             val tText = if (ts > 0) Utils.currentBridgeModule().dateFormatter(ts, "MM-dd HH:mm") else ""
             aiText = text
@@ -141,6 +143,18 @@ internal class StockDetailPage : BasePager() {
 
     /** 按周期切换 K线图数据 / 分时数据，并同步当前指标与十字光标清理 */
     private fun applyPeriod(stock: Stock, i: Int) {
+        // 新股/退化数据：仅在本地合成数据间切换，绝不触碰原生桥（避免闪退）
+        if (isUnsafeStock(stock)) {
+            chartRef?.view?.let { chart ->
+                chart.clearCrosshair()
+                chart.resetToLatest()
+                chart.bars = emptyList()
+                chart.timeSharing = StockData.getIntraday(stock)
+                chart.refPrice = StockData.intradayRefPrice(stock)
+                chart.indicator = KRKLineChart.IND_NONE
+            }
+            return
+        }
         chartRef?.view?.let { chart ->
             chart.clearCrosshair()
             // 换周期 / 换股 = 重新看这只票：清掉「用户已滑动」标记，允许重新定位到最新一根
@@ -164,6 +178,8 @@ internal class StockDetailPage : BasePager() {
 
     /** 异步拉取真实数据（分时 i=0 / 该周期K线 i>0），到达后更新当前图 */
     private fun loadRealAndRefresh(stock: Stock, i: Int) {
+        // 新股/退化数据：跳过原生桥拉取（其 secid 易触发 native 层闪退），仅用本地合成数据
+        if (isUnsafeStock(stock)) return
         if (i == 0) {
             StockData.loadTrends(stock) {
                 if (selectedPeriod == 0) chartRef?.view?.let { ch ->
@@ -207,33 +223,9 @@ internal class StockDetailPage : BasePager() {
         val ctx = this
         val code = pageData.params.optString("stockCode")
         val stock = StockData.findByCode(code)
-        // 退化数据兜底：新股首日/行情缺失的标的会产生 NaN/Infinity，而 K线图在原生 Canvas 上绘制，
-        // 原生层异常无法被 Kotlin try/catch 捕获，会直接导致闪退。因此对「数据不可靠」的标的
-        // 直接跳过图表详情，改显轻量安全页（仅名称 + 暂不支持提示），彻底避开崩溃路径。
+        // 新股/数据退化标的（如 N金钛）：不进原生桥（viewDidLoad 与下方刷新均已守卫），
+        // 图表用本地合成「模拟走势」，顶部加说明横幅；其余布局与普通股票一致，呈现正常详情页而非空白兜底。
         val unsafe = ctx.isUnsafeStock(stock)
-        if (unsafe) {
-            return {
-                attr { flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
-                // 返回栏
-                View {
-                    attr { padding(12f); paddingTop(pagerData.statusBarHeight); height(44f + pagerData.statusBarHeight); flexDirectionRow(); alignItemsCenter(); backgroundColor(Color.WHITE) }
-                    View {
-                        attr { width(32f); height(32f); justifyContentCenter(); alignItemsCenter() }
-                        event { click { ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).closePage() } }
-                        Text { attr { text("<"); fontSize(22f); color(Color(0xFF222222)); fontWeightSemisolid() } }
-                    }
-                    Text { attr { text(stock.name); fontSize(17f); color(Color(0xFF222222)); fontWeightSemisolid(); marginLeft(8f) } }
-                    Text { attr { text(stock.code); fontSize(12f); color(Color(0xFF999999)); marginLeft(8f) } }
-                }
-                // 提示区（无图表，绝不触发原生绘制崩溃）
-                View {
-                    attr { flex(1f); flexDirectionColumn(); justifyContentCenter(); alignItemsCenter(); padding(24f) }
-                    Text { attr { text("该股票暂不支持查看详情"); fontSize(16f); color(Color(0xFF222222)); fontWeightSemisolid() } }
-                    View { attr { height(10f) } }
-                    Text { attr { text("（新股上市首日或行情数据暂不完整，图表详情暂不可用）"); fontSize(13f); color(Color(0xFF999999)) } }
-                }
-            }
-        }
         // 触发 AI 分析：首次进入自动分析；若已有缓存（同一股票再次进入）则直接展示缓存结果 + 时间
         ctx.runAnalysis(stock, code, false)
         return {
@@ -300,11 +292,21 @@ internal class StockDetailPage : BasePager() {
                     }
                 }
 
+                // 新股说明横幅：明确下方走势为模拟示意，非真实历史数据
+                vif({ unsafe }) {
+                    View {
+                        attr { margin(12f); padding(10f, 12f); backgroundColor(Color(0xFFFDF6E3)); borderRadius(10f) }
+                        Text { attr { text("新股上市首日：以下走势为本地模拟示意，非真实历史数据"); fontSize(12f); color(Color(0xFF8A6D3B)) } }
+                    }
+                }
+
                 // K线卡片
                 View {
                     attr { margin(12f); padding(12f); backgroundColor(Color.WHITE); borderRadius(12f) }
-                    Text { attr { text("K线"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                    Text { attr { text(if (unsafe) "分时走势（模拟）" else "K线"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
                     // 周期切换（分时/日/周/月/年 可点击；高亮随 selectedPeriod 响应式刷新，图表数据同步切换）
+                    // 新股不展示周期/指标切换（仅模拟分时）
+                    vif({ !unsafe }) {
                     View {
                         attr { flexDirectionRow(); marginTop(8f) }
                         ctx.periods.forEachIndexed { i, t ->
@@ -328,7 +330,9 @@ internal class StockDetailPage : BasePager() {
                             }
                         }
                     }
+                    }
                     // 指标切换（仅 K线模式可用：主图 / MACD / RSI / BOLL）
+                    vif({ !unsafe }) {
                     vif({ ctx.selectedPeriod != 0 }) {
                         View {
                             attr { flexDirectionRow(); marginTop(8f) }
@@ -356,6 +360,7 @@ internal class StockDetailPage : BasePager() {
                                 }
                             }
                         }
+                    }
                     }
                     // 图表区（横向滚动；分时 / K线 自适配；触摸拖动十字光标、双指缩放、滚到最左加载更多）
                     KRKLineChart {

@@ -116,6 +116,20 @@ internal class MainTabPager : BasePager(), StockNavigator {
     private var sheetX: Float by observable(0f)
     private var sheetY: Float by observable(0f)
 
+    // ===== AI 对话管理状态（分组 / 置顶 / 重命名 / 多选 / 移动到分组）=====
+    // ⚠️ 必须 internal：文件级扩展函数 renderRecents 要读取/调用，private 不可见
+    internal var sheetConv: String? by observable(null)
+    internal var sheetConvX: Float by observable(0f)
+    internal var sheetConvY: Float by observable(0f)
+    internal var groupSheetId: String? by observable(null)
+    internal var selectMode: Boolean by observable(false)
+    internal var selectedCodes: Set<String> by observable(emptySet())
+    internal var selToggle: Boolean by observable(false)
+    internal var groupFilter: String by observable("")
+    internal var moveTargets: List<String> by observable(emptyList())
+    internal var prompt: TextPrompt? by observable(null)
+    internal var promptInput: String by observable("")
+
     private val prefs: SharedPreferencesModule
         get() = acquireModule(SharedPreferencesModule.MODULE_NAME)
 
@@ -221,7 +235,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     }
                     Scroller {
                         attr { flex(1f); flexDirectionColumn(); padding(12f) }
-                        Text { attr { text("最近对话"); fontSize(ctx.fs(16f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                        // 标题栏只渲染一次，避免 vif 双分支重建导致「最近对话」重复
+                        renderRecentsHeader(ctx, contentW)
                         vif({ ctx.convToggle }) { val c = this; c.renderRecents(ctx, contentW) }
                         vif({ !ctx.convToggle }) { val c = this; c.renderRecents(ctx, contentW) }
                     }
@@ -454,6 +469,100 @@ internal class MainTabPager : BasePager(), StockNavigator {
 
     private fun closeSheet() { sheetStock = null }
 
+    // ===== AI 对话管理：分组 / 置顶 / 重命名 / 多选 / 移动到分组 =====
+
+    /** 文本输入弹窗状态（重命名对话 / 重命名分组 / 新建分组共用） */
+    internal data class TextPrompt(
+        val title: String,
+        val initial: String,
+        val onConfirm: (String) -> Unit,
+    )
+
+    /** 强制重建「最近对话」列表（置顶/删除/改名/移动后即时刷新） */
+    internal fun refreshConvs() {
+        convToggle = !convToggle
+        ChatSync.bump()
+    }
+
+    internal fun openConv(code: String) {
+        val d = JSONObject(); d.put("stockCode", code)
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", d)
+    }
+
+    internal fun openConvSheet(code: String, x: Float, y: Float) {
+        sheetConv = code; sheetConvX = x; sheetConvY = y
+    }
+    internal fun closeConvSheet() { sheetConv = null }
+
+    internal fun openGroupSheet(id: String) { groupSheetId = id }
+    internal fun closeGroupSheet() { groupSheetId = null }
+
+    internal fun enterSelectMode() { selectMode = true }
+    internal fun exitSelectMode() { selectMode = false; selectedCodes = emptySet(); selToggle = !selToggle }
+    internal fun toggleSelect(code: String) {
+        selectedCodes = if (selectedCodes.contains(code)) selectedCodes - code else selectedCodes + code
+        selToggle = !selToggle
+    }
+    internal fun toggleSelectAll() {
+        val visible = ChatStore.orderedCodes().filter { it != "free" && (groupFilter.isEmpty() || ChatStore.groupOf(it) == groupFilter) }
+        val allSel = visible.isNotEmpty() && visible.all { selectedCodes.contains(it) }
+        selectedCodes = if (allSel) emptySet() else visible.toSet()
+        selToggle = !selToggle
+    }
+
+    internal fun promptRenameConv(code: String) {
+        promptInput = ChatStore.displayName(code)
+        prompt = TextPrompt("重命名对话", ChatStore.displayName(code)) { name ->
+            ChatStore.setCustomName(code, name); prompt = null; refreshConvs()
+        }
+    }
+    internal fun promptRenameGroup(id: String) {
+        promptInput = ChatStore.groupName(id)
+        prompt = TextPrompt("重命名分组", ChatStore.groupName(id)) { name ->
+            ChatStore.renameGroup(id, name); prompt = null; refreshConvs()
+        }
+    }
+    internal fun promptNewGroup() {
+        promptInput = ""
+        prompt = TextPrompt("新建分组", "") { name ->
+            ChatStore.createGroup(name); prompt = null; refreshConvs()
+        }
+    }
+
+    /** 把若干对话移动到指定分组（"" = 移回未分组） */
+    internal fun moveTargetsToGroup(groupId: String) {
+        val n = moveTargets.size
+        moveTargets.forEach { ChatStore.setGroup(it, groupId) }
+        moveTargets = emptyList()
+        exitSelectMode()
+        refreshConvs()
+        bridgeModule.toast(if (groupId.isEmpty()) "已移回未分组" else "已移动到「${ChatStore.groupName(groupId)}」（${n}个）")
+    }
+    internal fun promptNewGroupAndMove() {
+        val targets = moveTargets
+        prompt = TextPrompt("新建分组并移入", "") { name ->
+            val g = ChatStore.createGroup(name)
+            targets.forEach { ChatStore.setGroup(it, g.id) }
+            moveTargets = emptyList()
+            exitSelectMode()
+            prompt = null
+            refreshConvs()
+            bridgeModule.toast("已移动到「${g.name}」")
+        }
+    }
+
+    internal fun deleteConvs(codes: List<String>) {
+        codes.forEach { ChatStore.deleteConversation(it) }
+        exitSelectMode()
+        refreshConvs()
+        bridgeModule.toast("已删除 ${codes.size} 个对话")
+    }
+    internal fun pinSelected() {
+        selectedCodes.forEach { ChatStore.setPinned(it, true) }
+        exitSelectMode()
+        refreshConvs()
+    }
+
     private fun askAI(stock: Stock) {
         closeSheet()
         val d = JSONObject(); d.put("stockCode", stock.code)
@@ -656,6 +765,146 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     sheetItem("复制代码") { ctx.copyCode(stock) }
                 }
             }
+
+            // ===== 对话 / 分组 管理 overlays =====
+            // 对话长按菜单
+            vif({ ctx.sheetConv != null }) {
+                View { attr { absolutePositionAllZero(); backgroundColor(Color(0x55000000)) }
+                    event { click { ctx.closeConvSheet() } } }
+                View {
+                    attr {
+                        val vw = ctx.pagerData.pageViewWidth
+                        val vh = ctx.pagerData.pageViewHeight
+                        val menuW = 180f
+                        val menuH = 300f
+                        val left = (ctx.sheetConvX - menuW / 2f).coerceIn(8f, (vw - menuW - 8f).coerceAtLeast(8f))
+                        val top = ctx.sheetConvY.coerceIn(8f, (vh - menuH - 8f).coerceAtLeast(8f))
+                        absolutePosition(top = top, left = left)
+                        width(menuW); backgroundColor(Color.WHITE); borderRadius(10f); flexDirectionColumn()
+                    }
+                    val code = ctx.sheetConv!!
+                    val pinned = ChatStore.isPinned(code)
+                    sheetItem("删除") { ctx.deleteConvs(listOf(code)); ctx.closeConvSheet() }
+                    sheetDivider()
+                    sheetItem(if (pinned) "取消置顶" else "置顶") { ChatStore.togglePin(code); ctx.closeConvSheet(); ctx.refreshConvs() }
+                    sheetItem("重命名") { val c = code; ctx.closeConvSheet(); ctx.promptRenameConv(c) }
+                    sheetItem("移动到分组") { val c = code; ctx.closeConvSheet(); ctx.moveTargets = listOf(c) }
+                    sheetDivider()
+                    sheetItem("多选") { val c = code; ctx.closeConvSheet(); ctx.enterSelectMode(); ctx.toggleSelect(c) }
+                    sheetDivider()
+                    sheetItem("取消") { ctx.closeConvSheet() }
+                }
+            }
+
+            // 分组选择（移动到分组）
+            vif({ ctx.moveTargets.isNotEmpty() }) {
+                View { attr { absolutePositionAllZero(); backgroundColor(Color(0x55000000)) }
+                    event { click { ctx.moveTargets = emptyList() } } }
+                View {
+                    attr {
+                        val vw = ctx.pagerData.pageViewWidth
+                        val menuW = 220f
+                        val left = (vw - menuW) / 2f
+                        absolutePosition(top = 120f, left = left)
+                        width(menuW); backgroundColor(Color.WHITE); borderRadius(10f); flexDirectionColumn()
+                    }
+                    View { attr { padding(14f) }
+                        Text { attr { text("移动到分组"); fontSize(ctx.fs(15f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                    }
+                    sheetDivider()
+                    sheetItem("未分组（移出分组）") { ctx.moveTargetsToGroup("") }
+                    ChatStore.groups().forEach { g -> sheetItem(g.name) { ctx.moveTargetsToGroup(g.id) } }
+                    sheetDivider()
+                    sheetItem("+ 新建分组并移入") { ctx.promptNewGroupAndMove() }
+                    sheetDivider()
+                    sheetItem("取消") { ctx.moveTargets = emptyList() }
+                }
+            }
+
+            // 分组操作菜单（长按分组 chip）
+            vif({ ctx.groupSheetId != null }) {
+                View { attr { absolutePositionAllZero(); backgroundColor(Color(0x55000000)) }
+                    event { click { ctx.closeGroupSheet() } } }
+                View {
+                    attr {
+                        val vw = ctx.pagerData.pageViewWidth
+                        val menuW = 180f
+                        val left = (vw - menuW) / 2f
+                        absolutePosition(top = 160f, left = left)
+                        width(menuW); backgroundColor(Color.WHITE); borderRadius(10f); flexDirectionColumn()
+                    }
+                    val gid = ctx.groupSheetId!!
+                    sheetItem("重命名分组") { val g = gid; ctx.closeGroupSheet(); ctx.promptRenameGroup(g) }
+                    sheetDivider()
+                    sheetItem("删除分组") {
+                        val g = gid; ctx.closeGroupSheet()
+                        if (ctx.groupFilter == g) ctx.groupFilter = ""
+                        ChatStore.deleteGroup(g); ctx.refreshConvs()
+                    }
+                    sheetDivider()
+                    sheetItem("取消") { ctx.closeGroupSheet() }
+                }
+            }
+
+            // 文本输入弹窗（重命名 / 新建分组）
+            vif({ ctx.prompt != null }) {
+                View { attr { absolutePositionAllZero(); backgroundColor(Color(0x55000000)) }
+                    event { click { ctx.prompt = null } } }
+                View {
+                    attr {
+                        val vw = ctx.pagerData.pageViewWidth
+                        val cardW = 280f
+                        val left = (vw - cardW) / 2f
+                        absolutePosition(top = 180f, left = left)
+                        width(cardW); backgroundColor(Color.WHITE); borderRadius(12f); flexDirectionColumn(); padding(16f)
+                    }
+                    val p = ctx.prompt!!
+                    Text { attr { text(p.title); fontSize(ctx.fs(16f)); fontWeightSemisolid(); color(Color(0xFF222222)); marginBottom(12f) } }
+                    View { attr { padding(8f); backgroundColor(Color(0xFFF2F3F5)); borderRadius(8f) }
+                        Input {
+                            attr {
+                                text(ctx.promptInput)
+                                height(40f); fontSize(ctx.fs(15f)); color(Color(0xFF222222))
+                                placeholder("请输入名称"); placeholderColor(Color(0xFF999999))
+                            }
+                            event { textDidChange { ctx.promptInput = it.text } }
+                        }
+                    }
+                    View { attr { flexDirectionRow(); marginTop(16f) }
+                        View { attr { flex(1f); padding(10f); alignItemsCenter(); justifyContentCenter() }
+                            event { click { ctx.prompt = null } }
+                            Text { attr { text("取消"); fontSize(ctx.fs(15f)); color(Color(0xFF666666)) } } }
+                        View { attr { flex(1f); padding(10f); alignItemsCenter(); justifyContentCenter() }
+                            event { click { val name = ctx.promptInput; p.onConfirm(name); ctx.promptInput = "" } }
+                            Text { attr { text("确定"); fontSize(ctx.fs(15f)); color(Color(ctx.themeColor)); fontWeightSemisolid() } } }
+                    }
+                }
+            }
+
+            // 多选底部操作栏
+            vif({ ctx.selectMode }) {
+                View {
+                    attr {
+                        absolutePosition(left = 0f, bottom = 56f)
+                        width(ctx.pagerData.pageViewWidth)
+                        height(56f); flexDirectionRow(); alignItemsCenter(); justifyContentCenter()
+                        backgroundColor(Color.WHITE)
+                        border(Border(1f, BorderStyle.SOLID, Color(0xFFEEEEEE)))
+                        padding(0f, 12f)
+                    }
+                    Text { attr { text("已选 ${ctx.selectedCodes.size}"); fontSize(ctx.fs(14f)); color(Color(0xFF222222)); marginRight(16f) } }
+                    View { attr { padding(10f, 6f); marginRight(8f); borderRadius(8f); backgroundColor(Color(ctx.themeColor)) }
+                        event { click { ctx.pinSelected() } }
+                        Text { attr { text("置顶"); fontSize(ctx.fs(14f)); color(Color.WHITE) } } }
+                    View { attr { padding(10f, 6f); marginRight(8f); borderRadius(8f); backgroundColor(Color(0xFFF2F3F5)) }
+                        event { click { ctx.moveTargets = ctx.selectedCodes.toList() } }
+                        Text { attr { text("移动到分组"); fontSize(ctx.fs(14f)); color(Color(0xFF333333)) } } }
+                    View { attr { padding(10f, 6f); borderRadius(8f); backgroundColor(Color(0xFFFDECEA)) }
+                        event { click { ctx.deleteConvs(ctx.selectedCodes.toList()) } }
+                        Text { attr { text("删除"); fontSize(ctx.fs(14f)); color(Color(0xFFE54D42)) } } }
+                }
+            }
+
         }
     }
 }
@@ -685,38 +934,138 @@ private fun ViewContainer<*, *>.sheetDivider() {
     View { attr { height(0.5f); backgroundColor(Color(0xFFEEEEEE)); marginLeft(16f) } }
 }
 
+/** 分组筛选 chip（全部 / 各分组 / + 新建）；分组 chip 可长按重命名/删除 */
+private fun ViewContainer<*, *>.chatChip(
+    ctx: MainTabPager,
+    label: String,
+    active: Boolean,
+    onLongPress: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    View {
+        attr {
+            padding(6f, 10f); marginRight(8f); borderRadius(14f)
+            backgroundColor(if (active) Color(ctx.themeColor) else Color(0xFFF2F3F5))
+        }
+        event {
+            click { onClick() }
+            if (onLongPress != null) longPress { onLongPress.invoke() }
+        }
+        Text { attr { text(label); fontSize(ctx.fs(12f)); color(if (active) Color.WHITE else Color(0xFF666666)) } }
+    }
+}
+
+
 // ===== 列表渲染（放进 vif 内容闭包，随 convToggle/listToggle 翻转强制重建；本版本 body 不随 observable 重跑）=====
 // 注意：必须是「文件级」扩展函数，不能定义在类内（成员扩展函数在 vif 闭包里会丢失分派接收者）。
 
-/** 最近对话：随 convToggle 翻转重建 */
+/** 最近对话：随 convToggle 翻转重建；支持分隔线 / 自由问答灰卡 / 分组筛选 / 多选 / 长按菜单 */
+/** 最近对话标题栏：独立于 vif 重建，避免双分支都渲染时标题重复 */
+private fun ViewContainer<*, *>.renderRecentsHeader(ctx: MainTabPager, contentW: Float) {
+    // 标题 & 按钮按分组/多选态分别包 vif，保证状态切换时局部重建
+    View {
+        attr {
+            flexDirectionRow(); alignItemsCenter(); justifyContentSpaceBetween()
+            width(contentW + 24f); marginLeft(-12f)
+            paddingLeft(12f); paddingRight(12f)
+            marginBottom(8f); marginTop(2f)
+        }
+        vif({ ctx.groupFilter.isEmpty() }) {
+            Text {
+                attr {
+                    text("最近对话")
+                    fontSize(ctx.fs(16f)); fontWeightSemisolid(); color(Color(0xFF222222))
+                }
+            }
+        }
+        vif({ ctx.groupFilter.isNotEmpty() }) {
+            Text {
+                attr {
+                    text("分组：${ChatStore.groupName(ctx.groupFilter)}")
+                    fontSize(ctx.fs(16f)); fontWeightSemisolid(); color(Color(0xFF222222))
+                }
+            }
+        }
+        vif({ ctx.selectMode }) {
+            View { attr { flexDirectionRow(); alignItemsCenter() }
+                View { attr { padding(6f); marginRight(2f) }
+                    event { click { ctx.toggleSelectAll() } }
+                    Text { attr { text("全选"); fontSize(ctx.fs(13f)); color(Color(ctx.themeColor)) } }
+                }
+                View { attr { padding(6f) }
+                    event { click { ctx.exitSelectMode() } }
+                    Text { attr { text("完成"); fontSize(ctx.fs(13f)); color(Color(0xFF666666)) } }
+                }
+            }
+        }
+        vif({ !ctx.selectMode }) {
+            View { attr { padding(6f) }
+                event { click { ctx.enterSelectMode() } }
+                Text { attr { text("选择"); fontSize(ctx.fs(13f)); color(Color(ctx.themeColor)) } }
+            }
+        }
+    }
+}
+
+/** 最近对话：随 convToggle 翻转重建；支持分隔线 / 自由问答灰卡 / 分组筛选 / 多选 / 长按菜单 */
 private fun ViewContainer<*, *>.renderRecents(ctx: MainTabPager, contentW: Float) {
-    ctx.dataVersion // 依赖保险
-    // ⚠️ "free" 是自由问答（不绑个股）的会话键，不是股票代码 —— 必须排除，
-    //    否则会被 findByCode 兜底成上证指数，点进去变成个股对话。
-    val codes = ChatStore.conversationCodes()
-    val convs = codes.filter { it != "free" }.mapNotNull { StockData.findByCode(it) }
-    // 自由问答入口常驻置顶：没聊过也能直接进
+    ctx.dataVersion; ctx.convToggle; ctx.selToggle; ctx.groupFilter; ctx.selectMode; ctx.selectedCodes
+    // 分组筛选 chips
+    val groups = ChatStore.groups()
+    View {
+        attr { width(contentW); flexDirectionRow(); alignItemsCenter(); justifyContentCenter(); marginBottom(8f) }
+        chatChip(ctx, "全部", ctx.groupFilter.isEmpty()) { ctx.groupFilter = ""; ctx.refreshConvs() }
+        groups.forEach { g ->
+            chatChip(ctx, g.name, ctx.groupFilter == g.id, onLongPress = { ctx.openGroupSheet(g.id) }) { ctx.groupFilter = g.id; ctx.refreshConvs() }
+        }
+        chatChip(ctx, "+ 新建", false) { ctx.promptNewGroup() }
+    }
+    // 自由问答入口（灰卡，常驻置顶）
     renderFreeChatEntry(ctx, contentW, ChatStore.hasConversation("free"))
-    if (convs.isEmpty()) {
+    // 个股对话列表（按置顶序；分组筛选）
+    val codes = ChatStore.orderedCodes().filter {
+        it != "free" && (ctx.groupFilter.isEmpty() || ChatStore.groupOf(it) == ctx.groupFilter)
+    }
+    if (codes.isEmpty()) {
         Text {
             attr {
-                text("还没有个股对话。去行情页长按某只股票，选「问 AI」，就能和它开始一段对话～")
+                text(if (ctx.groupFilter.isEmpty()) "还没有个股对话。去行情页长按某只股票，选「问 AI」，就能和它开始一段对话～" else "该分组还没有对话，去聊一只股票或移动进来吧～")
                 fontSize(ctx.fs(13f)); color(Color(0xFF999999)); marginTop(16f)
             }
         }
     } else {
-        convs.forEach { s ->
-            val last = ChatStore.last(s.code)
+        codes.forEachIndexed { idx, code ->
+            val s = StockData.findByCode(code)
+            val last = ChatStore.last(code)
+            val name = ChatStore.displayName(code)
+            val pinned = ChatStore.isPinned(code)
             View {
                 attr {
-                    flexDirectionRow(); alignItemsCenter(); marginTop(10f)
-                    padding(12f); backgroundColor(Color.WHITE); borderRadius(10f)
+                    flexDirectionRow(); alignItemsCenter(); marginTop(8f)
+                    padding(12f)
                     width(contentW)
+                    val sel = ctx.selectMode && ctx.selectedCodes.contains(code)
+                    backgroundColor(if (sel) Color(0xFFEAF6FF) else Color.WHITE)
+                    borderRadius(10f)
+                    border(Border(1f, BorderStyle.SOLID, if (pinned) Color(0xFFCFD8DE) else Color(0xFFEEEEEE)))
                 }
                 event {
-                    click {
-                        val d = JSONObject(); d.put("stockCode", s.code)
-                        ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", d)
+                    click { if (ctx.selectMode) ctx.toggleSelect(code) else ctx.openConv(code) }
+                    longPress { p -> ctx.openConvSheet(code, p.pageX, p.pageY) }
+                }
+                vif({ ctx.selectMode }) {
+                    View {
+                        attr {
+                            width(20f); height(20f); borderRadius(10f); marginRight(10f)
+                            alignItemsCenter(); justifyContentCenter()
+                            val sel = ctx.selectedCodes.contains(code)
+                            border(Border(1.5f, BorderStyle.SOLID, Color(if (sel) ctx.themeColor else 0xFFCCCCCC)))
+                            backgroundColor(if (sel) Color(ctx.themeColor) else Color.WHITE)
+                        }
+                        Text { attr {
+                            val sel = ctx.selectedCodes.contains(code)
+                            text(if (sel) "✓" else ""); fontSize(ctx.fs(13f)); color(Color.WHITE)
+                        } }
                     }
                 }
                 View {
@@ -725,10 +1074,17 @@ private fun ViewContainer<*, *>.renderRecents(ctx: MainTabPager, contentW: Float
                         backgroundColor(Color(0xFFE6F1FB)); marginRight(10f)
                         alignItemsCenter(); justifyContentCenter()
                     }
-                    Text { attr { text(s.name.take(1)); fontSize(ctx.fs(16f)); color(Color(0xFF23D3FD)); fontWeightSemisolid() } }
+                    Text { attr { text(name.take(1)); fontSize(ctx.fs(16f)); color(Color(ctx.themeColor)); fontWeightSemisolid() } }
                 }
                 View { attr { flex(1f); flexDirectionColumn() }
-                    Text { attr { text(s.name); fontSize(ctx.fs(15f)); color(Color(0xFF222222)) } }
+                    View { attr { flexDirectionRow(); alignItemsCenter() }
+                        Text { attr { text(name); fontSize(ctx.fs(15f)); color(Color(0xFF222222)) } }
+                        vif({ pinned }) {
+                            View { attr { marginLeft(6f); backgroundColor(Color(0xFFF0F1F3)); padding(2f, 4f); borderRadius(4f) }
+                                Text { attr { text("置顶"); fontSize(ctx.fs(10f)); color(Color(0xFF999999)) } }
+                            }
+                        }
+                    }
                     Text {
                         attr {
                             text((last?.text ?: "").let { if (it.length > 22) it.take(22) + "…" else it })
@@ -736,7 +1092,11 @@ private fun ViewContainer<*, *>.renderRecents(ctx: MainTabPager, contentW: Float
                         }
                     }
                 }
-                Text { attr { text(">"); fontSize(ctx.fs(16f)); color(Color(0xFFCCCCCC)) } }
+                vif({ !ctx.selectMode }) { Text { attr { text(">"); fontSize(ctx.fs(16f)); color(Color(0xFFCCCCCC)) } } }
+            }
+            // 分隔线（最后一条不加）
+            vif({ idx < codes.lastIndex }) {
+                View { attr { height(0.5f); backgroundColor(Color(0xFFEEEEEE)); marginLeft(58f); marginRight(12f) } }
             }
         }
     }
@@ -753,7 +1113,7 @@ private fun ViewContainer<*, *>.renderFreeChatEntry(ctx: MainTabPager, contentW:
     View {
         attr {
             flexDirectionRow(); alignItemsCenter(); marginBottom(4f)
-            padding(14f); backgroundColor(Color(ctx.themeColor)); borderRadius(12f)
+            padding(14f); backgroundColor(Color(0xFF8A9099)); borderRadius(12f)
             width(contentW)
         }
         event {
@@ -768,7 +1128,7 @@ private fun ViewContainer<*, *>.renderFreeChatEntry(ctx: MainTabPager, contentW:
                 backgroundColor(Color(0xFFFFFFFF)); marginRight(10f)
                 alignItemsCenter(); justifyContentCenter()
             }
-            Text { attr { text("AI"); fontSize(ctx.fs(14f)); color(Color(ctx.themeColor)); fontWeightSemisolid() } }
+            Text { attr { text("AI"); fontSize(ctx.fs(14f)); color(Color(0xFF8A9099)); fontWeightSemisolid() } }
         }
         View { attr { flex(1f); flexDirectionColumn() }
             Text { attr { text("AI 自由问答"); fontSize(ctx.fs(15f)); color(Color.WHITE); fontWeightSemisolid() } }

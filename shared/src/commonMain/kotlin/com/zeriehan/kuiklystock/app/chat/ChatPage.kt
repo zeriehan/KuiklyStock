@@ -62,6 +62,9 @@ internal class ChatPage : BasePager() {
     private var inputText: String by observable("")
     /** AI 思考中：禁用发送、显示「思考中…」 */
     internal var aiThinking: Boolean by observable(false)
+    /** 消息长按菜单：当前操作的消息索引 / 文本（复制、选取文字用） */
+    internal var msgMenuIndex: Int? by observable(null)
+    internal var msgMenuText: String by observable("")
     /** 消息版本号：每次增删消息 +1，配合 renderToggle 翻转强制重建消息列表 */
     internal var msgVersion: Int by observable(0)
     /** vif 翻转触发器：本版本 body 不随 observable 重跑，消息列表必须靠 vif 翻转才能强制重建 */
@@ -244,6 +247,17 @@ internal class ChatPage : BasePager() {
         bridgeModule.toast("已复制")
     }
 
+    /** 打开消息长按菜单（记录索引 + 文本，供复制 / 删除 / 选取文字） */
+    internal fun openMsgMenu(index: Int, text: String) { msgMenuIndex = index; msgMenuText = text }
+    internal fun closeMsgMenu() { msgMenuIndex = null; msgMenuText = "" }
+    /** 删除某条消息：同步单例、跨页刷新「最近对话」、本页重建气泡 */
+    internal fun deleteMsg(index: Int) {
+        if (!::code.isInitialized) return
+        ChatStore.deleteMessageAt(code, index)
+        ChatSync.bump()
+        refreshMessages()
+    }
+
     /**
      * 消息区刷新：由 [ChatSync] 监听驱动（本页监听 + 主框架监听各一份）。
      * 只在这里翻转 renderToggle，避免「直接翻转 + bump 触发监听再翻转」互相抵消。
@@ -418,6 +432,29 @@ internal class ChatPage : BasePager() {
                     event { click { ctx.send() } }
                 }
             }
+
+            // ===== 消息长按菜单 =====
+            vif({ ctx.msgMenuIndex != null }) {
+                View { attr { absolutePositionAllZero(); backgroundColor(Color(0x55000000)) }
+                    event { click { ctx.closeMsgMenu() } } }
+                View {
+                    attr {
+                        val vw = ctx.pagerData.pageViewWidth
+                        val menuW = 160f
+                        val left = (vw - menuW) / 2f
+                        absolutePosition(top = 200f, left = left)
+                        width(menuW); backgroundColor(Color.WHITE); borderRadius(10f); flexDirectionColumn()
+                    }
+                    val idx = ctx.msgMenuIndex!!
+                    chatMsgItem("复制") { ctx.copyText(ctx.msgMenuText); ctx.closeMsgMenu() }
+                    chatMsgDivider()
+                    chatMsgItem("删除") { ctx.deleteMsg(idx); ctx.closeMsgMenu() }
+                    chatMsgDivider()
+                    chatMsgItem("选取文字") { ctx.bridgeModule.showSelectableText("选取文字", ctx.msgMenuText); ctx.closeMsgMenu() }
+                    chatMsgDivider()
+                    chatMsgItem("取消") { ctx.closeMsgMenu() }
+                }
+            }
         }
     }
 
@@ -431,7 +468,7 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
     if (msgs.isEmpty()) {
         Text { attr { text("（暂无消息）"); fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginTop(20f) } }
     }
-    msgs.forEach { m -> bubble(ctx, m.role, m.text, maxBubbleW) }
+    msgs.forEachIndexed { i, m -> bubble(ctx, i, m.role, m.text, maxBubbleW) }
     // 思考中占位气泡（与 AI 气泡同款灰白底，保持视觉一致）
     vif({ ctx.aiThinking }) {
         View {
@@ -451,7 +488,7 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
  * 用 justifyContent 控制气泡靠右(用户)/靠左(AI)。气泡只给 maxWidth 上限，文本在其中自动换行。
  * 不显式给行宽（避免依赖 pageViewWidth 算成 0 宽）、不给气泡 flex(1f)（否则列宽未定时循环塌缩）。
  */
-private fun ViewContainer<*, *>.bubble(ctx: ChatPage, role: String, text: String, maxBubbleW: Float) {
+private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, text: String, maxBubbleW: Float) {
     val isUser = role == "user"
     View {
         attr {
@@ -470,8 +507,8 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, role: String, text: String
                 backgroundColor(if (isUser) Color(UserSettings.themeColor) else Color(0xFFFFFFFF))
             }
             event {
-                // 长按复制：便于把 AI 结论分享出去或留存
-                longPress { ctx.copyText(text) }
+                // 长按弹出操作菜单（复制 / 删除 / 选取文字）
+                longPress { ctx.openMsgMenu(index, text) }
             }
             Text {
                 attr {
@@ -485,4 +522,15 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, role: String, text: String
             }
         }
     }
-}
+    }
+
+    // ===== 消息长按菜单项辅助 =====
+    private fun ViewContainer<*, *>.chatMsgItem(label: String, onClick: () -> Unit) {
+        View { attr { height(48f); justifyContentCenter(); paddingLeft(16f) }
+            event { click { onClick() } }
+            Text { attr { text(label); fontSize(UserSettings.fs(15f)); color(Color(0xFF222222)) } }
+        }
+    }
+    private fun ViewContainer<*, *>.chatMsgDivider() {
+        View { attr { height(0.5f); backgroundColor(Color(0xFFEEEEEE)); marginLeft(16f) } }
+    }

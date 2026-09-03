@@ -30,6 +30,17 @@ internal class BridgeModule : Module() {
         callNativeMethod("copyToPasteboard", methodArgs, null)
     }
 
+    /**
+     * 弹出原生可选中文本对话框（Android AlertDialog / iOS alert）。
+     * 用于 Kuikly Text 本身不支持文字选中的场景。
+     */
+    fun showSelectableText(title: String?, text: String) {
+        val methodArgs = JSONObject()
+        methodArgs.put("text", text)
+        title?.also { methodArgs.put("title", it) }
+        callNativeMethod("showSelectableText", methodArgs, null)
+    }
+
     fun showAlert(
         title: String?,
         message: String?,
