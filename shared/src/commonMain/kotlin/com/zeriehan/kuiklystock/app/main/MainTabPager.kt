@@ -914,7 +914,7 @@ private fun ViewContainer<*, *>.renderSectorList(ctx: MainTabPager) {
 private fun ViewContainer<*, *>.renderSectorSearch(ctx: MainTabPager, w: Float) {
     View {
         attr {
-            margin(left = 12f, right = 12f, top = 12f)
+            margin(left = 12f, right = 12f, top = 12f, bottom = 12f)
             padding(left = 12f, right = 8f); height(40f)
             backgroundColor(Color.WHITE); borderRadius(10f); width(w)
             flexDirectionRow(); alignItemsCenter()
@@ -960,7 +960,7 @@ private fun ViewContainer<*, *>.renderSectorBody(ctx: MainTabPager, allSectors: 
         Text {
             attr {
                 text("已关注")
-                fontSize(ctx.fs(12f)); color(Color(0xFF999999)); margin(top = 14f, left = 16f, bottom = 6f)
+                fontSize(ctx.fs(12f)); color(Color(0xFF999999)); margin(left = 16f, bottom = 6f)
             }
         }
         View {
