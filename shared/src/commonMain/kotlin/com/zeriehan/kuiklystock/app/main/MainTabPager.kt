@@ -1237,7 +1237,7 @@ private fun ViewContainer<*, *>.renderRankList(ctx: MainTabPager) {
 private fun ViewContainer<*, *>.renderStockSearch(ctx: MainTabPager) {
     View {
         attr {
-            margin(left = 12f, right = 12f, top = 12f)
+            margin(left = 12f, right = 12f, top = 12f, bottom = 12f)
             padding(left = 12f, right = 8f); height(32f)
             backgroundColor(Color.WHITE); borderRadius(10f); width(ctx.pagerData.pageViewWidth - 24f)
             flexDirectionRow(); alignItemsCenter()
@@ -1271,7 +1271,7 @@ private fun ViewContainer<*, *>.renderAIPickCard(ctx: MainTabPager) {
     View {
         attr {
             margin(left = 12f, right = 12f, top = 12f)
-            padding(left = 14f, right = 12f, top = 12f, bottom = 12f)
+            padding(left = 14f, right = 12f, top = 16f, bottom = 16f)
             backgroundColor(Color.WHITE); borderRadius(12f); width(w)
             flexDirectionRow(); alignItemsCenter()
         }
@@ -1292,8 +1292,8 @@ private fun ViewContainer<*, *>.renderAIPickCard(ctx: MainTabPager) {
         }
         View {
             attr {
-                height(34f); paddingLeft(16f); paddingRight(16f)
-                borderRadius(17f); backgroundColor(Color(ctx.themeColor))
+                height(38f); paddingLeft(18f); paddingRight(18f)
+                borderRadius(19f); backgroundColor(Color(ctx.themeColor))
                 alignItemsCenter(); justifyContentCenter()
             }
             // TODO: 接入 LLM 选股能力（当前为占位，暂不接入）
