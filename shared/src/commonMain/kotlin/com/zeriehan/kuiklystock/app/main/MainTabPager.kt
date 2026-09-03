@@ -919,11 +919,13 @@ private fun ViewContainer<*, *>.renderSectorSearch(ctx: MainTabPager, w: Float) 
             backgroundColor(Color.WHITE); borderRadius(10f); width(w)
             flexDirectionRow(); alignItemsCenter()
         }
+        // 搜索图标（左侧灰色，替代纯文字占位，醒目且不依赖占位符颜色）
+        Text { attr { text("🔍"); fontSize(ctx.fs(15f)); color(Color(0xFF999999)); marginRight(6f) } }
         Input {
             attr {
                 flex(1f); height(34f); fontSize(ctx.fs(14f)); color(Color(0xFF222222))
                 text(ctx.sectorQuery)
-                placeholder("搜索板块，如 银行 / 半导体"); placeholderColor(Color(0xFF999999))
+                placeholder("搜索板块"); placeholderColor(Color(0xFFBBBBBB))
             }
             event { textDidChange { ctx.onSectorQueryChange(it.text) } }
         }
@@ -1144,14 +1146,14 @@ internal fun ViewContainer<*, *>.renderSectorRow(ctx: MainTabPager, sector: Sect
     }
 }
 
-/** 个股：子榜切换（涨幅/跌幅/换手率/振幅）+ 搜索框 + 榜单列表。
- *  子 Tab 栏与搜索框放在翻转区之外（rx 高亮 + attr 绑定，不随翻转重建、不丢焦点）；
+/** 个股：搜索框 + 子榜切换（涨幅/跌幅/换手率/振幅）+ 榜单列表。
+ *  搜索框置于 4 个子榜 Tab 之上，子 Tab 栏与搜索框都在翻转区之外（rx 高亮 + attr 绑定，不随翻转重建、不丢焦点）；
  *  列表区随 rankToggle（切子榜）/ stockToggle（搜索）翻转重建，现读 stockRankTab / stockQuery。
  *  ⚠️ 列表需同时随两个开关重建 → 用嵌套 vif（rankToggle 内再分 stockToggle 双分支），
  *     任一开关翻转都重跑 renderRankList 闭包，读最新 stockRankTab / stockQuery。 */
 private fun ViewContainer<*, *>.renderRankArea(ctx: MainTabPager) {
-    renderRankTabs(ctx)
     renderStockSearch(ctx)
+    renderRankTabs(ctx)
     vif({ ctx.rankToggle }) {
         vif({ ctx.stockToggle }) { val c = this; c.renderRankList(ctx) }
         vif({ !ctx.stockToggle }) { val c = this; c.renderRankList(ctx) }
@@ -1239,11 +1241,13 @@ private fun ViewContainer<*, *>.renderStockSearch(ctx: MainTabPager) {
             backgroundColor(Color.WHITE); borderRadius(10f); width(ctx.pagerData.pageViewWidth - 24f)
             flexDirectionRow(); alignItemsCenter()
         }
+        // 搜索图标（左侧灰色，替代纯文字占位，醒目且不依赖占位符颜色）
+        Text { attr { text("🔍"); fontSize(ctx.fs(15f)); color(Color(0xFF999999)); marginRight(6f) } }
         Input {
             attr {
                 flex(1f); height(34f); fontSize(ctx.fs(14f)); color(Color(0xFF222222))
                 text(ctx.stockQuery)
-                placeholder("搜索个股，如 贵州茅台 / 600519"); placeholderColor(Color(0xFF999999))
+                placeholder("搜索个股"); placeholderColor(Color(0xFFBBBBBB))
             }
             event { textDidChange { ctx.onStockQueryChange(it.text) } }
         }
