@@ -485,6 +485,14 @@ internal class MainTabPager : BasePager(), StockNavigator {
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", d)
     }
 
+    /** 个股页「AI 选股」入口：跳 AI 对话（自由模式），可选预填问题 prompt 进入即自动发出（复用现有对话能力） */
+    internal fun openAIPickFree(prompt: String) {
+        val d = JSONObject()
+        d.put("stockCode", "free")
+        if (prompt.isNotEmpty()) d.put("prompt", prompt)
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", d)
+    }
+
     /** 切换行情子 Tab（大盘/板块/个股） */
     internal fun selectMarketSub(i: Int) {
         if (i == marketSubTab) return
@@ -1264,41 +1272,54 @@ private fun ViewContainer<*, *>.renderStockSearch(ctx: MainTabPager) {
     }
 }
 
-/** 个股页「AI 选股」入口卡片（占位组件，暂未接入 LLM 选股能力）
- *  置于搜索框上方，与板块页「问 AI 看大盘」同款主题色按钮风格；点击暂不接入功能。 */
+/** 个股页「AI 选股」入口卡片：标题/副标题 + 主题色按钮（第一行），下方一排可点击的推荐问题
+ *  chips（第二行，补齐与「大盘指数」「板块概览」同等的卡片体量）。点击 chips/按钮复用现有 AI 对话页
+ *  预填并提问（自由模式），不接入新的选股 LLM 能力。 */
 private fun ViewContainer<*, *>.renderAIPickCard(ctx: MainTabPager) {
     val w = ctx.pagerData.pageViewWidth - 24f
+    val questions = listOf("今日强势板块", "低估值蓝筹", "技术面突破股")
     View {
         attr {
             margin(left = 12f, right = 12f, top = 12f)
             padding(left = 14f, right = 12f, top = 16f, bottom = 16f)
             backgroundColor(Color.WHITE); borderRadius(12f); width(w)
-            flexDirectionRow(); alignItemsCenter()
+            flexDirectionColumn()
         }
+        // 第一行：标题 + 副标题（左） + 按钮（右）
         View {
-            attr { flex(1f); flexDirectionColumn() }
-            Text {
-                attr {
-                    text("AI 选股")
-                    fontSize(ctx.fs(15f)); fontWeightSemiBold(); color(Color(ctx.themeColor))
+            attr { flexDirectionRow(); alignItemsCenter() }
+            View {
+                attr { flex(1f); flexDirectionColumn() }
+                Text {
+                    attr { text("AI 选股"); fontSize(ctx.fs(15f)); fontWeightSemiBold(); color(Color(ctx.themeColor)) }
+                }
+                Text {
+                    attr { text("智能挖掘当下潜力个股"); fontSize(ctx.fs(12f)); color(Color(0xFF999999)); marginTop(4f) }
                 }
             }
-            Text {
+            View {
                 attr {
-                    text("智能挖掘当下潜力个股")
-                    fontSize(ctx.fs(12f)); color(Color(0xFF999999)); marginTop(4f)
+                    height(38f); paddingLeft(18f); paddingRight(18f)
+                    borderRadius(19f); backgroundColor(Color(ctx.themeColor))
+                    alignItemsCenter(); justifyContentCenter()
                 }
+                event { click { ctx.openAIPickFree("") } }
+                Text { attr { text("开始选股"); fontSize(ctx.fs(14f)); color(Color.WHITE) } }
             }
         }
+        // 第二行：推荐问题 chips（点击跳 AI 对话并预填提问）
         View {
-            attr {
-                height(38f); paddingLeft(18f); paddingRight(18f)
-                borderRadius(19f); backgroundColor(Color(ctx.themeColor))
-                alignItemsCenter(); justifyContentCenter()
+            attr { flexDirectionRow(); marginTop(14f) }
+            questions.forEach { q ->
+                View {
+                    attr {
+                        padding(left = 10f, right = 10f, top = 6f, bottom = 6f)
+                        marginRight(8f); borderRadius(14f); backgroundColor(Color(0xFFF2F3F5))
+                    }
+                    event { click { ctx.openAIPickFree(q) } }
+                    Text { attr { text(q); fontSize(ctx.fs(12f)); color(Color(ctx.themeColor)) } }
+                }
             }
-            // TODO: 接入 LLM 选股能力（当前为占位，暂不接入）
-            event { click { /* 暂不接入 */ } }
-            Text { attr { text("开始选股"); fontSize(ctx.fs(14f)); color(Color.WHITE) } }
         }
     }
 }

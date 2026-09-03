@@ -144,6 +144,11 @@ internal class ChatPage : BasePager() {
         // 以确保「一定会执行」—— 部分子页生命周期下 pageDidAppear 不可靠，会导致从不滚到底。
         // 主路径由 contentSizeChanged 驱动；这里补一个延迟兜底，防止个别情况该事件不触发。
         com.tencent.kuikly.core.timer.setTimeout(pagerId, 300) { tryScrollToBottom() }
+        // 外部预填问题（如个股页「AI 选股」推荐问题 chips）：进入即自动发出，复用现有对话能力
+        val presetPrompt = pageData.params.optString("prompt").trim()
+        if (presetPrompt.isNotEmpty()) {
+            com.tencent.kuikly.core.timer.setTimeout(pagerId, 350) { ask(presetPrompt) }
+        }
     }
 
     /**
