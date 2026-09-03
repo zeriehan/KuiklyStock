@@ -1152,6 +1152,7 @@ internal fun ViewContainer<*, *>.renderSectorRow(ctx: MainTabPager, sector: Sect
  *  ⚠️ 列表需同时随两个开关重建 → 用嵌套 vif（rankToggle 内再分 stockToggle 双分支），
  *     任一开关翻转都重跑 renderRankList 闭包，读最新 stockRankTab / stockQuery。 */
 private fun ViewContainer<*, *>.renderRankArea(ctx: MainTabPager) {
+    renderAIPickCard(ctx)
     renderStockSearch(ctx)
     renderRankTabs(ctx)
     vif({ ctx.rankToggle }) {
@@ -1236,7 +1237,7 @@ private fun ViewContainer<*, *>.renderRankList(ctx: MainTabPager) {
 private fun ViewContainer<*, *>.renderStockSearch(ctx: MainTabPager) {
     View {
         attr {
-            margin(left = 12f, right = 12f, top = 8f)
+            margin(left = 12f, right = 12f, top = 12f)
             padding(left = 12f, right = 8f); height(32f)
             backgroundColor(Color.WHITE); borderRadius(10f); width(ctx.pagerData.pageViewWidth - 24f)
             flexDirectionRow(); alignItemsCenter()
@@ -1259,6 +1260,45 @@ private fun ViewContainer<*, *>.renderStockSearch(ctx: MainTabPager) {
             }
             event { click { ctx.onStockQueryChange("") } }
             Text { attr { text("✕"); fontSize(ctx.fs(14f)); color(Color(0xFF999999)) } }
+        }
+    }
+}
+
+/** 个股页「AI 选股」入口卡片（占位组件，暂未接入 LLM 选股能力）
+ *  置于搜索框上方，与板块页「问 AI 看大盘」同款主题色按钮风格；点击暂不接入功能。 */
+private fun ViewContainer<*, *>.renderAIPickCard(ctx: MainTabPager) {
+    val w = ctx.pagerData.pageViewWidth - 24f
+    View {
+        attr {
+            margin(left = 12f, right = 12f, top = 12f)
+            padding(left = 14f, right = 12f, top = 12f, bottom = 12f)
+            backgroundColor(Color.WHITE); borderRadius(12f); width(w)
+            flexDirectionRow(); alignItemsCenter()
+        }
+        View {
+            attr { flex(1f); flexDirectionColumn() }
+            Text {
+                attr {
+                    text("AI 选股")
+                    fontSize(ctx.fs(15f)); fontWeightSemiBold(); color(Color(ctx.themeColor))
+                }
+            }
+            Text {
+                attr {
+                    text("智能挖掘当下潜力个股")
+                    fontSize(ctx.fs(12f)); color(Color(0xFF999999)); marginTop(4f)
+                }
+            }
+        }
+        View {
+            attr {
+                height(34f); paddingLeft(16f); paddingRight(16f)
+                borderRadius(17f); backgroundColor(Color(ctx.themeColor))
+                alignItemsCenter(); justifyContentCenter()
+            }
+            // TODO: 接入 LLM 选股能力（当前为占位，暂不接入）
+            event { click { /* 暂不接入 */ } }
+            Text { attr { text("开始选股"); fontSize(ctx.fs(14f)); color(Color.WHITE) } }
         }
     }
 }
