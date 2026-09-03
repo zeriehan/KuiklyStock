@@ -887,7 +887,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     attr {
                         absolutePosition(left = 0f, bottom = 56f)
                         width(ctx.pagerData.pageViewWidth)
-                        height(56f); flexDirectionRow(); alignItemsCenter(); justifyContentCenter()
+                        height(56f); flexDirectionRow(); alignItemsCenter(); justifyContentFlexStart()
                         backgroundColor(Color.WHITE)
                         border(Border(1f, BorderStyle.SOLID, Color(0xFFEEEEEE)))
                         padding(0f, 12f)
@@ -1013,7 +1013,7 @@ private fun ViewContainer<*, *>.renderRecents(ctx: MainTabPager, contentW: Float
     // 分组筛选 chips
     val groups = ChatStore.groups()
     View {
-        attr { width(contentW); flexDirectionRow(); alignItemsCenter(); justifyContentCenter(); marginBottom(8f) }
+        attr { width(contentW); flexDirectionRow(); alignItemsCenter(); justifyContentFlexStart(); marginBottom(8f) }
         chatChip(ctx, "全部", ctx.groupFilter.isEmpty()) { ctx.groupFilter = ""; ctx.refreshConvs() }
         groups.forEach { g ->
             chatChip(ctx, g.name, ctx.groupFilter == g.id, onLongPress = { ctx.openGroupSheet(g.id) }) { ctx.groupFilter = g.id; ctx.refreshConvs() }
