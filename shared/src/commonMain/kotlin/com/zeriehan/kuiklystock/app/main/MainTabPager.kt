@@ -893,13 +893,13 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         padding(0f, 12f)
                     }
                     Text { attr { text("已选 ${ctx.selectedCodes.size}"); fontSize(ctx.fs(14f)); color(Color(0xFF222222)); flex(1f); marginRight(16f) } }
-                    View { attr { padding(10f, 6f); marginRight(8f); borderRadius(8f); backgroundColor(Color(ctx.themeColor)) }
+                    View { attr { padding(6f, 4f, bottom = 6f, right = 4f); marginRight(8f); borderRadius(8f); backgroundColor(Color(ctx.themeColor)) }
                         event { click { ctx.pinSelected() } }
                         Text { attr { text("置顶"); fontSize(ctx.fs(14f)); color(Color.WHITE) } } }
-                    View { attr { padding(10f, 6f); marginRight(8f); borderRadius(8f); backgroundColor(Color(0xFFF2F3F5)) }
+                    View { attr { padding(6f, 4f, bottom = 6f, right = 4f); marginRight(8f); borderRadius(8f); backgroundColor(Color(0xFFF2F3F5)) }
                         event { click { ctx.moveTargets = ctx.selectedCodes.toList() } }
                         Text { attr { text("移动到分组"); fontSize(ctx.fs(14f)); color(Color(0xFF333333)) } } }
-                    View { attr { padding(10f, 6f); borderRadius(8f); backgroundColor(Color(0xFFFDECEA)) }
+                    View { attr { padding(6f, 4f, bottom = 6f, right = 4f); borderRadius(8f); backgroundColor(Color(0xFFFDECEA)) }
                         event { click { ctx.deleteConvs(ctx.selectedCodes.toList()) } }
                         Text { attr { text("删除"); fontSize(ctx.fs(14f)); color(Color(0xFFE54D42)) } } }
                 }
@@ -944,7 +944,7 @@ private fun ViewContainer<*, *>.chatChip(
 ) {
     View {
         attr {
-            padding(6f, 10f); marginRight(8f); borderRadius(14f)
+            padding(6f, 4f, bottom = 6f, right = 4f); marginRight(6f); borderRadius(14f)
             alignItemsCenter(); justifyContentCenter()
             backgroundColor(if (active) Color(ctx.themeColor) else Color(0xFFF2F3F5))
         }
