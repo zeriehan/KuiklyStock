@@ -121,7 +121,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
         // 吸附到最近一根 K线/分时点：交点 X 对齐该点中心（与 drawMain 同用 s=canvasW/n，保证逐像素对齐）。
         val n = if (isTimeSharing()) timeSharing.size else bars.size
         val s = if (n > 0 && lastCanvasW > 0f) lastCanvasW / n
-        else (if (isTimeSharing()) 6f else 9f) * zoom
+        else contentStepPx()
         val idx = if (n > 0) ((x - s / 2f) / s + 0.5f).toInt().coerceIn(0, n - 1) else 0
         crossX = idx * s + s / 2f
         crossY = y
@@ -195,6 +195,23 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     /** 视口宽度估算：页面宽 - 卡片外边距/内边距(48) - 左价格轴(46)；用于 scroll 事件尚未回写时兜底 */
     private fun estimateViewportW(): Float {
         return (pagerData.pageViewWidth - 80f).coerceAtLeast(0f)
+    }
+
+    /**
+     * 单点像素宽（主画布内容坐标，供画布宽度 / 日期轴 / 十字光标换算共用，保证对齐）。
+     * - 分时：默认把全天约 240 点铺满一屏（按可用视口自适应），zoom=1 即整日可见；
+     *   用户放大（zoom>1）才撑宽画布、出现横向滚动。
+     * - K线：固定 9px × zoom（沿用原有横向滚动行为）。
+     */
+    private fun contentStepPx(): Float {
+        val n = if (isTimeSharing()) timeSharing.size else bars.size
+        if (n <= 0) return 6f
+        return if (isTimeSharing()) {
+            val avail = max(estimateViewportW(), 120f)
+            (avail / n) * zoom
+        } else {
+            9f * zoom
+        }
     }
 
     /** 价格上下界（含 8% 留白） */
@@ -357,7 +374,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
                                     // ⚠️ 关键：width 必须在 attr 闭包内读取 zoom/bars，
                                     // 否则 zoom 变化不会重算宽度 → 缩放看起来“不生效”
                                     val n = if (ctx.isTimeSharing()) ctx.timeSharing.size else ctx.bars.size
-                                    val step = (if (ctx.isTimeSharing()) 6f else 9f) * ctx.zoom
+                                    val step = ctx.contentStepPx()
                                     val cw = (n * step + 16f).coerceAtLeast(1f)
                                     width(cw)
                                 }
@@ -496,7 +513,6 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
         val dateTop = h - DATE_BOTTOM
         val n = if (isTimeSharing()) timeSharing.size else bars.size
         if (n == 0) return
-        val baseStep = if (isTimeSharing()) 6f else 9f
         val s = w / n
 
         val priceToY: (Float) -> Float = { p -> r.candleTop + (1f - (p - min) / range) * candleH }
@@ -721,8 +737,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     private fun drawDateAxis(c: CanvasContext, w: Float, h: Float) {
         val n = if (isTimeSharing()) timeSharing.size else bars.size
         if (n == 0) return
-        val baseStep = if (isTimeSharing()) 6f else 9f
-        val s = baseStep * zoom
+        val s = contentStepPx()
         c.font(9f)
         c.fillStyle(Color(0xFF999999))
         val fracs = listOf(0f, 0.5f, 1f)
@@ -757,7 +772,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
      */
     private fun chartStep(n: Int): Float =
         if (n > 0 && lastCanvasW > 0f) lastCanvasW / n
-        else (if (isTimeSharing()) 6f else 9f) * zoom
+        else contentStepPx()
 
     /**
      * 当前信息条应展示的 K线/分时点索引：
