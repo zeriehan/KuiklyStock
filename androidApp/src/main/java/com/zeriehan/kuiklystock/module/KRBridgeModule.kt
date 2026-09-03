@@ -528,7 +528,7 @@ private fun fetchEastMoneySectors(): String {
     // 行业行格式: code,名称,家数,均价,涨跌额,涨跌幅,量,额,领涨sym,领涨涨幅,领涨价,领涨涨跌,领涨名
     val out = JSONArray()
     val sources = listOf(
-        "https://vip.stock.finance.sina.com.cn/q/view/newSinaHy.php" to "hy_",
+        "https://vip.stock.finance.sina.com.cn/q/view/newSinaHy.php" to "new_",
         "https://money.finance.sina.com.cn/q/view/newFLJK.php?param=class" to "gn_"
     )
     for ((urlStr, keepPrefix) in sources) {
