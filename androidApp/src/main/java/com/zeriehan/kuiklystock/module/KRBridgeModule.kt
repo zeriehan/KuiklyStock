@@ -351,63 +351,6 @@ private fun fetchEastMoneyQuotes(secids: String): String {
     return fetchEastMoneyQuotesPerStock(secids)
 }
 
-private fun fetchEastMoneyQuotesBulk(secids: String): String {
-    val url = "https://push2.eastmoney.com/api/qt/ulist.np/get" +
-        "?fltt=2&invt=2" +
-        "&fields=f12,f13,f14,f2,f3,f4,f5,f15,f16,f17,f18" +
-        "&secids=$secids"
-    val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-        requestMethod = "GET"
-        connectTimeout = 8000
-        readTimeout = 8000
-        setRequestProperty("User-Agent", "Mozilla/5.0")
-        setRequestProperty("Referer", "https://quote.eastmoney.com/")
-    }
-    try {
-        if (conn.responseCode != HttpURLConnection.HTTP_OK) {
-            Log.e("KRBridge", "EM HTTP ${conn.responseCode}")
-            return "[]"
-        }
-        val json = JSONObject(conn.inputStream.bufferedReader().readText())
-        val diff = json.optJSONObject("data")?.optJSONArray("diff") ?: return "[]"
-        val out = JSONArray()
-        for (i in 0 until diff.length()) {
-            val it = diff.optJSONObject(i) ?: continue
-            val market = it.optInt("f13", 0)
-            val code = it.optString("f12")
-            val secid = "$market.$code"
-            val price = it.optDouble("f2", 0.0).toFloat()
-            if (price <= 0f) continue // 无数据（停牌/未开盘）跳过，保留 mock
-            val change = it.optDouble("f4", 0.0).toFloat()
-            val changePercent = it.optDouble("f3", 0.0).toFloat()
-            val high = it.optDouble("f15", 0.0).toFloat()
-            val low = it.optDouble("f16", 0.0).toFloat()
-            val open = it.optDouble("f17", 0.0).toFloat()
-            val prevClose = it.optDouble("f18", 0.0).toFloat()
-            val volumeWan = (it.optDouble("f5", 0.0) / 10000.0).toFloat() // 手 → 万手
-            val name = it.optString("f14")
-            out.put(
-                JSONObject().apply {
-                    put("secid", secid)
-                    put("code", code)
-                    put("name", name)
-                    put("price", price.toDouble())
-                    put("change", change.toDouble())
-                    put("changePercent", changePercent.toDouble())
-                    put("high", high.toDouble())
-                    put("low", low.toDouble())
-                    put("open", open.toDouble())
-                    put("prevClose", prevClose.toDouble())
-                    put("volume", volumeWan.toDouble())
-                }
-            )
-        }
-        return out.toString()
-    } finally {
-        conn.disconnect()
-    }
-}
-
 /**
  * 腾讯实时报价(批量,一次请求返回全部)：与K线/分时同源(web.ifzq.gtimg.cn / qt.gtimg.cn)，设备可达则报价与K线分时一起真。
  * 逐行 v_sh601318="1~中国平安~601318~现价~昨收~今开~量(手)~...~时间~涨跌额~涨跌幅~最高~最低~..."
