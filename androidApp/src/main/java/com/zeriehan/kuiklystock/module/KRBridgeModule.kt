@@ -510,50 +510,56 @@ private fun fetchClist(params: String?, callback: KuiklyRenderCallback?) {
 }
 
 private fun fetchEastMoneyClist(fs: String, fid: String, po: Int, pn: Int, pz: Int): String {
-    val fsEnc = URLEncoder.encode(fs, "UTF-8")
-    val url = "https://push2.eastmoney.com/api/qt/clist/get" +
-        "?pn=$pn&pz=$pz&po=$po&np=1&fltt=2&invt=2&fid=$fid&fs=$fsEnc" +
-        "&fields=f12,f13,f14,f2,f3,f4,f5,f7,f8,f15,f16,f17,f18"
+    // 新浪全A股实时榜(设备可达; 东财 clist 在部分网络不可达)。sort 由 fid 映射, asc 由 po 映射(po=1降序→asc=0)。
+    val sort = when (fid) {
+        "f8" -> "turnoverratio" // 换手率
+        "f7" -> "amplitude"     // 振幅
+        else -> "changepercent" // 涨幅/跌幅(f3)
+    }
+    val asc = if (po == 1) 0 else 1
+    val num = pz.coerceIn(1, 100)
+    val url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/" +
+        "Market_Center.getHQNodeData?page=$pn&num=$num&sort=$sort&asc=$asc&node=hs_a"
     val conn = (URL(url).openConnection() as HttpURLConnection).apply {
         requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
         setRequestProperty("User-Agent", "Mozilla/5.0")
-        setRequestProperty("Referer", "https://quote.eastmoney.com/")
+        setRequestProperty("Referer", "https://finance.sina.com.cn/")
     }
     try {
         if (conn.responseCode != HttpURLConnection.HTTP_OK) {
-            Log.e("KRBridge", "EM clist HTTP ${conn.responseCode}")
+            Log.e("KRBridge", "Sina rank HTTP ${conn.responseCode}")
             return "[]"
         }
-        val json = JSONObject(conn.inputStream.bufferedReader().readText())
-        val diff = json.optJSONObject("data")?.optJSONArray("diff") ?: return "[]"
+        val body = conn.inputStream.bufferedReader().readText().trim()
+        // 返回 JSON 数组字符串 (json_v2 不做 JSONP 包裹)
+        val arr = JSONArray(body)
         val out = JSONArray()
-        for (i in 0 until diff.length()) {
-            val it = diff.optJSONObject(i) ?: continue
-            val market = it.optInt("f13", 0)
-            val code = it.optString("f12")
-            val secid = "$market.$code"
-            val price = it.optDouble("f2", 0.0).toFloat()
-            if (price <= 0f) continue
-            val name = it.optString("f14")
+        for (i in 0 until arr.length()) {
+            val it = arr.optJSONObject(i) ?: continue
+            val code = it.optString("code")
+            val price = it.optDouble("trade", 0.0)
+            if (code.isBlank() || price <= 0.0) continue
             out.put(
                 JSONObject().apply {
-                    put("secid", secid)
                     put("code", code)
-                    put("name", name)
-                    put("price", price.toDouble())
-                    put("change", it.optDouble("f4", 0.0))
-                    put("changePercent", it.optDouble("f3", 0.0))
-                    put("high", it.optDouble("f15", 0.0))
-                    put("low", it.optDouble("f16", 0.0))
-                    put("open", it.optDouble("f17", 0.0))
-                    put("prevClose", it.optDouble("f18", 0.0))
-                    put("volume", (it.optDouble("f5", 0.0) / 10000.0)) // 手 → 万手
-                    put("turnover", it.optDouble("f8", 0.0))             // 换手率 %
-                    put("amplitude", it.optDouble("f7", 0.0))            // 振幅 %（若该榜未请求则为 0）
+                    put("name", it.optString("name"))
+                    put("price", price)
+                    put("change", it.optDouble("pricechange", 0.0))
+                    put("changePercent", it.optDouble("changepercent", 0.0))
+                    put("high", it.optDouble("high", 0.0))
+                    put("low", it.optDouble("low", 0.0))
+                    put("open", it.optDouble("open", 0.0))
+                    put("prevClose", it.optDouble("settlement", 0.0))
+                    put("volume", (it.optDouble("volume", 0.0) / 1000000.0)) // 新浪 volume 单位 股 → 百万股(近似万手量级, 归一化用不苛求)
+                    put("turnover", it.optDouble("turnoverratio", 0.0))
+                    put("amplitude", 0.0)
                 }
             )
         }
         return out.toString()
+    } catch (e: Throwable) {
+        Log.e("KRBridge", "Sina rank failed", e)
+        return "[]"
     } finally {
         conn.disconnect()
     }
