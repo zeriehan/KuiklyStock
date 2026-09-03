@@ -9,9 +9,9 @@ import com.zeriehan.kuiklystock.core.llm.DataSync
  * 股票数据门面（全局单例）。
  *
  * - 默认装填一组 mock 行情，保证离线/无网络/首次启动时 App 也能正常渲染；
- * - 调 [refresh] 经宿主桥 `fetchQuotes` 拉取东方财富实时行情（免 token），成功后用真实价
+ * - 调 [refresh] 经宿主桥 `fetchQuotes` 拉取腾讯实时行情（免 token），成功后用真实价
  *   覆盖内存行情表（按 secid 匹配，兼容 mock 里 000001=上证 / 000002=平安银行 的代码碰撞）；
- * - 调 [loadRank] 拉取东方财富「真实个股榜单」并并入行情池，行情页「个股」子榜因此不再是
+ * - 调 [loadRank] 拉取新浪「真实个股榜单」并并入行情池，行情页「个股」子榜因此不再是
  *   mock 那 20 多只，而是市场里真实前 30（涨幅/跌幅/换手率/振幅）；
  * - 调 [loadSectors] / [loadSectorStocks] 拉取「真实行业板块列表」与「板块真实成分股」，同样并入池；
  * - 任何失败（无桥 / 网络异常 / 接口限流）都保留 mock，App 不崩、不留白。
@@ -414,10 +414,10 @@ object StockData {
         return pts
     }
 
-    // ===================== 东方财富实时行情 / 榜单 / 板块 =====================
+    // ===================== 腾讯/新浪实时行情 / 榜单 / 板块 =====================
 
     /**
-     * 计算某股票的东方财富 secid（market.code），用于按真实接口拉取。
+     * 计算某股票的 secid（market.code），用于按真实接口拉取。
      * 兼容 mock 的代码碰撞：000001=上证指数(1.000001)、000002 在 mock 里是平安银行(真实 secid 0.000001)。
      */
     fun secidOf(stock: Stock): String {
@@ -487,7 +487,7 @@ object StockData {
         }
     }
 
-    /** 真实榜单缓存：rankType → 榜内有序股票（按东方财富排序，非重排） */
+    /** 真实榜单缓存：rankType → 榜内有序股票（按新浪排序，非重排） */
     private val rankCache = mutableMapOf<Int, List<Stock>>()
 
     /** 返回某子榜最近一次拉到的有序股票；尚未拉过返回 null（UI 退化为按当前池排序） */

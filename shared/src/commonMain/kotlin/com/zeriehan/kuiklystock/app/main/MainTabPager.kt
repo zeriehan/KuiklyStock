@@ -105,6 +105,12 @@ internal class MainTabPager : BasePager(), StockNavigator {
     /** 搜索词/关注变更的 vif 翻转触发器：重画搜索框 + 关注 chips + 列表 */
     internal var sectorToggle: Boolean by observable(false)
 
+    // ===== 个股榜搜索状态 =====
+    /** 个股搜索关键字（空=不过滤，按名称/代码匹配） */
+    internal var stockQuery: String by observable("")
+    /** 个股搜索变更的 vif 翻转触发器：重建榜单列表以实时过滤（搜索框本身不随翻转重建，保输入流畅） */
+    internal var stockToggle: Boolean by observable(false)
+
     // ===== 长按操作菜单状态 =====
     private var sheetStock: Stock? by observable(null)
     private var sheetX: Float by observable(0f)
@@ -135,7 +141,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
         AIJobCenter.attach(bridgeModule)
         // 注册跨页监听：ChatPage 写入会话时即时刷新「最近对话」（vif 翻转强制重建，无需手动切 Tab）
         ChatSync.addListener { convToggle = !convToggle }
-        // 注入行情数据源桥并注册监听：东方财富真实行情回来后翻转 listToggle/convToggle，
+        // 注入行情数据源桥并注册监听：腾讯/新浪真实行情回来后翻转 listToggle/convToggle，
         // 行情 / 自选 / 板块 / 最近对话列表随 vif 重建，拿到真实价（失败保留 mock，不影响渲染）。
         StockData.attach(bridgeModule)
         DataSync.addListener {
@@ -426,6 +432,13 @@ internal class MainTabPager : BasePager(), StockNavigator {
         if (sectorQuery == q) return
         sectorQuery = q
         sectorToggle = !sectorToggle
+    }
+
+    /** 个股搜索关键字变化（输入清空/键入），翻转榜单列表以实时过滤（搜索框不重建、不丢焦点） */
+    internal fun onStockQueryChange(q: String) {
+        if (stockQuery == q) return
+        stockQuery = q
+        stockToggle = !stockToggle
     }
 
     /** 展开/收起「自动恢复周期」面板；展开时把当前值同步到输入框 */
@@ -772,7 +785,7 @@ private fun ViewContainer<*, *>.renderMarketContent(ctx: MainTabPager) {
         // 数据来源标注：让用户一眼分清「实时行情」还是「离线演示数据」，避免误判
         Text {
             attr {
-                text(if (StockData.isReal()) "数据来源：东方财富实时行情" else "当前为本地演示数据，联网后自动切换为实时行情")
+                text(if (StockData.isReal()) "数据来源：腾讯·新浪实时行情" else "当前为本地演示数据，联网后自动切换为实时行情")
                 fontSize(ctx.fs(11f)); color(Color(0xFFAAAAAA)); margin(10f)
             }
         }
@@ -910,7 +923,7 @@ private fun ViewContainer<*, *>.renderSectorSearch(ctx: MainTabPager, w: Float) 
             attr {
                 flex(1f); height(34f); fontSize(ctx.fs(14f)); color(Color(0xFF222222))
                 text(ctx.sectorQuery)
-                placeholder("搜索板块，如 银行 / 半导体"); placeholderColor(Color(0xFFBBBBBB))
+                placeholder("搜索板块，如 银行 / 半导体"); placeholderColor(Color(0xFF999999))
             }
             event { textDidChange { ctx.onSectorQueryChange(it.text) } }
         }
@@ -1131,17 +1144,22 @@ internal fun ViewContainer<*, *>.renderSectorRow(ctx: MainTabPager, sector: Sect
     }
 }
 
-/** 个股：子榜切换（涨幅/跌幅/换手率/振幅）+ 榜单列表，整体随 rankToggle 翻转重建
- *  ⚠️ 关键：子 Tab 栏与列表必须一起翻转重建，否则点子榜后高亮不标色（之前涨幅/跌幅点了没反馈）。 */
+/** 个股：子榜切换（涨幅/跌幅/换手率/振幅）+ 搜索框 + 榜单列表。
+ *  子 Tab 栏与搜索框放在翻转区之外（rx 高亮 + attr 绑定，不随翻转重建、不丢焦点）；
+ *  列表区随 rankToggle（切子榜）/ stockToggle（搜索）翻转重建，现读 stockRankTab / stockQuery。
+ *  ⚠️ 列表需同时随两个开关重建 → 用嵌套 vif（rankToggle 内再分 stockToggle 双分支），
+ *     任一开关翻转都重跑 renderRankList 闭包，读最新 stockRankTab / stockQuery。 */
 private fun ViewContainer<*, *>.renderRankArea(ctx: MainTabPager) {
-    vif({ ctx.rankToggle }) { val c = this; c.renderRankInner(ctx) }
-    vif({ !ctx.rankToggle }) { val c = this; c.renderRankInner(ctx) }
-}
-
-/** 个股榜单内区（子 Tab 栏 + 列表），闭包内现读 stockRankTab，翻转即整体重建 */
-private fun ViewContainer<*, *>.renderRankInner(ctx: MainTabPager) {
     renderRankTabs(ctx)
-    renderRankList(ctx)
+    renderStockSearch(ctx)
+    vif({ ctx.rankToggle }) {
+        vif({ ctx.stockToggle }) { val c = this; c.renderRankList(ctx) }
+        vif({ !ctx.stockToggle }) { val c = this; c.renderRankList(ctx) }
+    }
+    vif({ !ctx.rankToggle }) {
+        vif({ ctx.stockToggle }) { val c = this; c.renderRankList(ctx) }
+        vif({ !ctx.stockToggle }) { val c = this; c.renderRankList(ctx) }
+    }
     View { attr { height(16f) } }
 }
 
@@ -1180,7 +1198,7 @@ private fun ViewContainer<*, *>.renderRankTabs(ctx: MainTabPager) {
     }
 }
 
-/** 个股榜单：优先显示东方财富拉到的真实有序榜；未拉到（首帧/离线）则按当前池排序兜底 */
+/** 个股榜单：优先显示新浪拉到的真实有序榜；未拉到（首帧/离线）则按当前池排序兜底 */
 private fun ViewContainer<*, *>.renderRankList(ctx: MainTabPager) {
     val real = StockData.rankOf(ctx.stockRankTab)
     val stocks: List<Stock>
@@ -1196,7 +1214,49 @@ private fun ViewContainer<*, *>.renderRankList(ctx: MainTabPager) {
             else -> pool
         }
     }
-    stocks.forEach { s -> renderMarketRow(ctx, s) }
+    // 个股搜索：按名称或代码实时过滤（空=不过滤）
+    val q = ctx.stockQuery.trim()
+    val shown = if (q.isEmpty()) stocks
+        else stocks.filter { it.name.contains(q, ignoreCase = true) || it.code.contains(q, ignoreCase = true) }
+    if (shown.isEmpty()) {
+        Text {
+            attr {
+                text(if (q.isEmpty()) "暂无个股数据" else "没有匹配「$q」的个股")
+                fontSize(ctx.fs(13f)); color(Color(0xFF999999)); marginTop(16f); marginLeft(16f)
+            }
+        }
+    } else {
+        shown.forEach { s -> renderMarketRow(ctx, s) }
+    }
+}
+
+/** 个股搜索输入框 + 清空按钮（不随 rankToggle/stockToggle 重建，attr 响应式回显/清空，保输入流畅） */
+private fun ViewContainer<*, *>.renderStockSearch(ctx: MainTabPager) {
+    View {
+        attr {
+            margin(left = 12f, right = 12f, top = 12f)
+            padding(left = 12f, right = 8f); height(40f)
+            backgroundColor(Color.WHITE); borderRadius(10f); width(ctx.pagerData.pageViewWidth - 24f)
+            flexDirectionRow(); alignItemsCenter()
+        }
+        Input {
+            attr {
+                flex(1f); height(34f); fontSize(ctx.fs(14f)); color(Color(0xFF222222))
+                text(ctx.stockQuery)
+                placeholder("搜索个股，如 贵州茅台 / 600519"); placeholderColor(Color(0xFF999999))
+            }
+            event { textDidChange { ctx.onStockQueryChange(it.text) } }
+        }
+        // 清空按钮：query 非空时可点
+        View {
+            attr {
+                width(30f); height(30f); justifyContentCenter(); alignItemsCenter()
+                opacity(if (ctx.stockQuery.isEmpty()) 0f else 1f)
+            }
+            event { click { ctx.onStockQueryChange("") } }
+            Text { attr { text("✕"); fontSize(ctx.fs(14f)); color(Color(0xFF999999)) } }
+        }
+    }
 }
 
 /** 自选列表：随 listToggle 翻转重建 */
@@ -1309,7 +1369,7 @@ private fun ViewContainer<*, *>.renderMarketHeat(ctx: MainTabPager, w: Float) {
         }
         Text {
             attr {
-                text(if (StockData.isReal()) "东方财富实时行情" else "本地演示数据（联网自动切换）")
+                text(if (StockData.isReal()) "腾讯·新浪实时行情" else "本地演示数据（联网自动切换）")
                 fontSize(ctx.fs(10f)); color(Color(0xFFAAAAAA)); marginTop(6f)
             }
         }

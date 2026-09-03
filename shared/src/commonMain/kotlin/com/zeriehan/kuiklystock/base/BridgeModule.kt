@@ -82,7 +82,7 @@ internal class BridgeModule : Module() {
     }
 
     /**
-     * 拉取实时行情：把待查 secid 列表下发到 Android 宿主，由宿主请求东方财富后回调。
+     * 拉取实时行情：把待查 secid 列表下发到 Android 宿主，由宿主请求腾讯行情接口后回调。
      * 回调参数形如 { "quotes": [ { "secid","code","name","price","change","changePercent","high","low","volume" }, ... ] }；
      * 失败时 quotes 为空数组（上层保留 mock，不崩）。
      */
@@ -93,7 +93,7 @@ internal class BridgeModule : Module() {
     }
 
     /**
-     * 拉取东方财富榜单个股（clist 排序）。回调 { "quotes": "JSON字符串" }；失败为空数组。
+     * 拉取新浪榜单个股（clist 排序）。回调 { "quotes": "JSON字符串" }；失败为空数组。
      * @param fs 市场过滤串（全A股默认由宿主兜底）
      * @param fid 排序字段（f3 涨幅 / f8 换手 / f2 现价），配合 [desc]
      */

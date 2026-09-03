@@ -92,7 +92,7 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
             val who = if (msg.role == "user") "用户" else "AI"
             "$who：${msg.text}"
         }
-        val srcDesc = if (StockData.isReal()) "实时行情·东方财富" else "本地演示数据"
+        val srcDesc = if (StockData.isReal()) "实时行情·腾讯/新浪" else "本地演示数据"
         // 数据上下文：自由模式给大盘参照，个股模式给实时量价 + 近期 K 线
         val dataCtx = if (freeMode) {
             val indices = listOf("000001", "399001", "399006").mapNotNull { c ->
@@ -159,7 +159,7 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
             appendLine("你是一名资深证券分析师。请基于以下股票量价数据，给出简洁、专业、客观的分析。")
             appendLine("严格要求：仅输出纯文本，不要使用任何 Markdown 符号（如 #、** 等），用【】标注段落标题。")
             appendLine("总字数控制在 300 字以内。")
-            appendLine("数据来源：${if (StockData.isReal()) "实时行情（东方财富）" else "本地演示数据"}")
+            appendLine("数据来源：${if (StockData.isReal()) "实时行情（腾讯/新浪）" else "本地演示数据"}")
             appendLine()
             appendLine("股票：${stock.name}（${stock.code}）")
             appendLine("现价：${formatPrice(stock.price)}  涨跌幅：${formatPrice(stock.changePercent)}%")
