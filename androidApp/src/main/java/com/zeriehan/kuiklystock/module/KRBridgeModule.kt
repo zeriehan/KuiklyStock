@@ -194,7 +194,7 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
                 isVerticalScrollBarEnabled = true
                 addView(textView)
             }
-            val dialog = android.app.AlertDialog.Builder(ctx)
+            val dialog = android.app.AlertDialog.Builder(act)
                 .setTitle(title)
                 .setView(scrollView)
                 .setPositiveButton("关闭", null)
