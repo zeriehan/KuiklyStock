@@ -581,49 +581,54 @@ private fun fetchSectors(params: String?, callback: KuiklyRenderCallback?) {
 }
 
 private fun fetchEastMoneySectors(): String {
-    // 同时拉取「行业板块」(t:2) 与「概念板块」(t:3)。
-    // 之前只拉行业板块，导致种植业等概念板块根本没进列表、下跌板块数恒为 0；
-    // 概念板块（如种植业 BK0733）在绿盘日也会下跌，必须一起拉。
-    val boards = listOf("m:90+t:2+f:!50", "m:90+t:3+f:!50")
+    // 新浪行业板块(newSinaHy) + 概念板块(newFLJK) —— 设备可达源；东财板块 clist 部分网络不可达。
+    // 行业行格式: code,名称,家数,均价,涨跌额,涨跌幅,量,额,领涨sym,领涨涨幅,领涨价,领涨涨跌,领涨名
     val out = JSONArray()
-    for (fsRaw in boards) {
+    val sources = listOf(
+        "https://vip.stock.finance.sina.com.cn/q/view/newSinaHy.php" to "hy_",
+        "https://money.finance.sina.com.cn/q/view/newFLJK.php?param=class" to "gn_"
+    )
+    for ((urlStr, keepPrefix) in sources) {
         try {
-            val fsEnc = URLEncoder.encode(fsRaw, "UTF-8")
-            val url = "https://push2.eastmoney.com/api/qt/clist/get" +
-                "?pn=1&pz=60&po=1&np=1&fltt=2&invt=2&fid=f3&fs=$fsEnc" +
-                "&fields=f12,f14,f3,f104,f105,f128,f140"
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
                 setRequestProperty("User-Agent", "Mozilla/5.0")
-                setRequestProperty("Referer", "https://quote.eastmoney.com/")
+                setRequestProperty("Referer", "https://finance.sina.com.cn/")
             }
             try {
-                if (conn.responseCode != HttpURLConnection.HTTP_OK) {
-                    Log.e("KRBridge", "EM sectors HTTP ${conn.responseCode}")
-                    continue
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) continue
+                val bytes = conn.inputStream.readBytes()
+                val body = String(bytes, Charsets.UTF_8).let {
+                    if (it.contains('\uFFFD')) String(bytes, java.nio.charset.Charset.forName("GBK")) else it
                 }
-                val json = JSONObject(conn.inputStream.bufferedReader().readText())
-                val diff = json.optJSONObject("data")?.optJSONArray("diff") ?: continue
-                for (i in 0 until diff.length()) {
-                    val it = diff.optJSONObject(i) ?: continue
-                    val code = it.optString("f12")            // 形如 BK0475
-                    if (code.isBlank()) continue
-                    val market = it.optInt("f13", 90)
-                    val price = it.optDouble("f2", 0.0)       // 板块指数点位，多数非 0
+                // 形如 var ...= {"new_blhy":"new_blhy,玻璃行业,...", ...};
+                val start = body.indexOf('{')
+                val end = body.lastIndexOf('}')
+                if (start < 0 || end < start) continue
+                val jsonStr = body.substring(start, end + 1)
+                val root = JSONObject(jsonStr)
+                val keys = root.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (!key.startsWith(keepPrefix)) continue
+                    val line = root.optString(key)
+                    val f = line.split(",")
+                    if (f.size < 6) continue
+                    val code = f[0]
+                    val name = f[1]
+                    val chgPct = f[5].toDoubleOrNull() ?: continue
+                    if (code.isBlank() || name.isBlank()) continue
                     out.put(
                         JSONObject().apply {
-                            put("secid", "$market.$code")
+                            put("secid", code)
                             put("code", code)
-                            put("name", it.optString("f14"))
-                            put("changePercent", it.optDouble("f3", 0.0))
-                            put("price", price)
-                            put("volume", it.optDouble("f5", 0.0))  // 成交量
-                            // 板块可视化字段（板块页概览卡/行内领涨股用）：
-                            // f104=板块内上涨家数、f105=下跌家数、f128=领涨股名称、f140=领涨股涨跌幅(%)
-                            put("upCount", it.optInt("f104", 0))
-                            put("downCount", it.optInt("f105", 0))
-                            put("leaderName", it.optString("f128"))
-                            put("leaderChangePercent", it.optDouble("f140", 0.0))
+                            put("name", name)
+                            put("changePercent", chgPct)
+                            put("price", f[3].toDoubleOrNull() ?: 0.0)
+                            put("upCount", 0)
+                            put("downCount", 0)
+                            put("leaderName", if (f.size > 12) f[12] else "")
+                            put("leaderChangePercent", if (f.size > 9) f[9].toDoubleOrNull() ?: 0.0 else 0.0)
                         }
                     )
                 }
@@ -631,10 +636,16 @@ private fun fetchEastMoneySectors(): String {
                 conn.disconnect()
             }
         } catch (e: Throwable) {
-            Log.e("KRBridge", "fetchSectors board $fsRaw failed", e)
+            Log.e("KRBridge", "Sina sectors $urlStr failed", e)
         }
     }
-    return out.toString()
+    // 按涨跌幅降序
+    val arr = JSONArray()
+    val list = mutableListOf<JSONObject>()
+    for (i in 0 until out.length()) list.add(out.optJSONObject(i))
+    list.sortByDescending { it.optDouble("changePercent") }
+    for (o in list) arr.put(o)
+    return arr.toString()
 }
 
 /**
@@ -648,23 +659,44 @@ private fun fetchSectorStocks(params: String?, callback: KuiklyRenderCallback?) 
     if (bk.isBlank()) { callback?.invoke(empty); return }
     thread(name = "em-secstk") {
         val result = try {
-            val fsEnc = URLEncoder.encode("b:$bk+f:!50", "UTF-8")
-            val url = "https://push2.eastmoney.com/api/qt/clist/get" +
-                "?pn=1&pz=60&po=1&np=1&fltt=2&invt=2&fid=f3&fs=$fsEnc" +
-                "&fields=f12,f13,f14,f2,f3,f4,f5,f8,f15,f16,f17,f18"
+            // 新浪板块成分：getHQNodeData?node=<新浪板块code>（行业 new_xxx / 概念 gn_xxx），设备可达
+            val url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/" +
+                "Market_Center.getHQNodeData?page=1&num=80&sort=changepercent&asc=0&node=$bk"
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
                 setRequestProperty("User-Agent", "Mozilla/5.0")
-                setRequestProperty("Referer", "https://quote.eastmoney.com/")
+                setRequestProperty("Referer", "https://finance.sina.com.cn/")
             }
             try {
                 if (conn.responseCode != HttpURLConnection.HTTP_OK) {
-                    Log.e("KRBridge", "EM secstk HTTP ${conn.responseCode}")
+                    Log.e("KRBridge", "Sina secstk HTTP ${conn.responseCode}")
                     "[]"
                 } else {
-                    val json = JSONObject(conn.inputStream.bufferedReader().readText())
-                    val diff = json.optJSONObject("data")?.optJSONArray("diff") ?: JSONArray()
-                    buildStocksJson(diff)
+                    val body = conn.inputStream.bufferedReader().readText().trim()
+                    val arr = JSONArray(body)
+                    val out = JSONArray()
+                    for (i in 0 until arr.length()) {
+                        val it = arr.optJSONObject(i) ?: continue
+                        val code = it.optString("code")
+                        val price = it.optDouble("trade", 0.0)
+                        if (code.isBlank() || price <= 0.0) continue
+                        out.put(
+                            JSONObject().apply {
+                                put("code", code)
+                                put("name", it.optString("name"))
+                                put("price", price)
+                                put("change", it.optDouble("pricechange", 0.0))
+                                put("changePercent", it.optDouble("changepercent", 0.0))
+                                put("high", it.optDouble("high", 0.0))
+                                put("low", it.optDouble("low", 0.0))
+                                put("open", it.optDouble("open", 0.0))
+                                put("prevClose", it.optDouble("settlement", 0.0))
+                                put("volume", (it.optDouble("volume", 0.0) / 1000000.0))
+                                put("turnover", it.optDouble("turnoverratio", 0.0))
+                            }
+                        )
+                    }
+                    out.toString()
                 }
             } finally {
                 conn.disconnect()

@@ -157,6 +157,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
         // ⚠️ 只发一次 refresh(基础报价池)，不做多路并发预加载(loadRank×4+sectors+indices 一起打东财会触发限流→全 mock)。
         // 板块/个股列表数据由用户切到对应子页时按需单次加载(loadSectors/loadRank)，避免冷启动并发打崩接口。
         StockData.refresh()
+        // 大盘市场热度/领涨领跌读池内非指数真实股票：冷启动即拉一次涨幅榜(新浪)入池，首进大盘即有真实非指数股。
+        StockData.loadRank(0)
     }
 
     /** 从子页（如 ChatPage / HiddenStocks）返回时强制刷新：已隐藏列表 / 最近对话即时同步 */
@@ -480,11 +482,14 @@ internal class MainTabPager : BasePager(), StockNavigator {
         // 异步到达后由 DataSync.bump 翻转重建，用户看到的是真实内容而非 mock 那几个。
         when (i) {
             0 -> {
-                // 大盘：每次进入都刷新 baseQuotes(指数+种子) —— isReal() 不能当判据(榜单拉到即 true)。
-                // 用 qt/get 刷种子股 + 用 loadIndices(分时链路) 兜底三大指数，双保险确保大盘指数/热度刷成真实。
+                // 大盘：除刷新指数/种子外，还要拉真实榜单(新浪)把非指数真实股票并入池——
+                // 市场热度/领涨领跌 读池内非指数股票，不拉榜单则池里只有 base 种子(mock) → 首次进大盘热度/领涨错。
                 mktLoading = true
                 StockData.refresh()
                 StockData.loadIndices { /* 各自 bump 清 loading */ }
+                StockData.loadRank(0) { /* 涨幅榜真实股入池 → 热度/领涨首进即真 */ }
+                StockData.loadRank(1)
+                StockData.loadRank(2)
             }
             1 -> {
                 if (StockData.hasRealSectors()) return
