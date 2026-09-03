@@ -408,52 +408,80 @@ private fun fetchEastMoneyQuotesBulk(secids: String): String {
     }
 }
 
-/** 逐个用单股接口 qt/get 拉取，合并成一个与批量一致的 JSON 数组 */
+/**
+ * 腾讯实时报价(批量,一次请求返回全部)：与K线/分时同源(web.ifzq.gtimg.cn / qt.gtimg.cn)，设备可达则报价与K线分时一起真。
+ * 逐行 v_sh601318="1~中国平安~601318~现价~昨收~今开~量(手)~...~时间~涨跌额~涨跌幅~最高~最低~..."
+ * 归一化成与东财一致的结构 { secid,code,name,price,change,changePercent,high,low,open,prevClose,volume(万手) }。
+ */
 private fun fetchEastMoneyQuotesPerStock(secids: String): String {
     val ids = secids.split(",").filter { it.isNotBlank() }
     if (ids.isEmpty()) return "[]"
-    val out = JSONArray()
-    for (s in ids) {
+    // secid "1.601318"/"0.000858" → sh601318 / sz000858
+    val codes = ids.map { s ->
+        val dot = s.indexOf('.')
+        val market = if (dot > 0) s.substring(0, dot) else "1"
+        val code = if (dot > 0) s.substring(dot + 1) else s
+        (if (market == "1") "sh" else "sz") + code
+    }.joinToString(",")
+    val url = "https://qt.gtimg.cn/q=$codes"
+    try {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
+            setRequestProperty("User-Agent", "Mozilla/5.0")
+            setRequestProperty("Referer", "https://gu.qq.com/")
+        }
         try {
-            // f43价 f44高 f45低 f46开 f60昨收 f169涨跌额 f170涨跌幅 f47量(手) f58名 f57码
-            val url = "https://push2.eastmoney.com/api/qt/stock/get" +
-                "?secid=$s&fltt=2&invt=2&fields=f43,f44,f45,f46,f47,f57,f58,f60,f169,f170"
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"; connectTimeout = 6000; readTimeout = 6000
-                setRequestProperty("User-Agent", "Mozilla/5.0")
-                setRequestProperty("Referer", "https://quote.eastmoney.com/")
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                Log.e("KRBridge", "TX quote HTTP ${conn.responseCode}")
+                return "[]"
             }
-            try {
-                if (conn.responseCode != HttpURLConnection.HTTP_OK) continue
-                val json = JSONObject(conn.inputStream.bufferedReader().readText())
-                val d = json.optJSONObject("data") ?: continue
-                val price = d.optDouble("f43", 0.0).toFloat()
-                if (price <= 0f) continue
+            // 腾讯报价是 GBK 编码，名称中文需按 GBK 解码
+            val bytes = conn.inputStream.readBytes()
+            val body = String(bytes, Charsets.UTF_8).let {
+                // 若按 UTF-8 解出来是乱码，则按 GBK 重解
+                if (it.contains('\uFFFD')) String(bytes, java.nio.charset.Charset.forName("GBK")) else it
+            }
+            val out = JSONArray()
+            for (s in ids) {
                 val dot = s.indexOf('.')
-                val code = if (dot >= 0) s.substring(dot + 1) else s
+                val market = if (dot > 0) s.substring(0, dot) else "1"
+                val code = if (dot > 0) s.substring(dot + 1) else s
+                val key = (if (market == "1") "sh" else "sz") + code
+                // 找 v_<key>="..."
+                val marker = "v_$key=\""
+                val idx = body.indexOf(marker)
+                if (idx < 0) continue
+                val end = body.indexOf('"', idx + marker.length)
+                if (end < 0) continue
+                val f = body.substring(idx + marker.length, end).split("~")
+                if (f.size < 35) continue
+                val price = f[3].toDoubleOrNull() ?: continue
+                if (price <= 0.0) continue
+                val name = f[1]
                 out.put(
                     JSONObject().apply {
                         put("secid", s)
                         put("code", code)
-                        put("name", d.optString("f58"))
-                        put("price", price.toDouble())
-                        put("change", d.optDouble("f169", 0.0))
-                        put("changePercent", d.optDouble("f170", 0.0))
-                        put("high", d.optDouble("f44", 0.0))
-                        put("low", d.optDouble("f45", 0.0))
-                        put("open", d.optDouble("f46", 0.0))
-                        put("prevClose", d.optDouble("f60", 0.0))
-                        put("volume", (d.optDouble("f47", 0.0) / 10000.0))
+                        put("name", name)
+                        put("price", price)
+                        put("change", f[31].toDoubleOrNull() ?: 0.0)         // 涨跌额
+                        put("changePercent", f[32].toDoubleOrNull() ?: 0.0)  // 涨跌幅
+                        put("high", f[33].toDoubleOrNull() ?: 0.0)           // 最高
+                        put("low", f[34].toDoubleOrNull() ?: 0.0)            // 最低
+                        put("open", f[5].toDoubleOrNull() ?: 0.0)            // 今开
+                        put("prevClose", f[4].toDoubleOrNull() ?: 0.0)       // 昨收
+                        put("volume", (f[6].toDoubleOrNull() ?: 0.0) / 10000.0) // 手 → 万手
                     }
                 )
-            } finally {
-                conn.disconnect()
             }
-        } catch (e: Throwable) {
-            Log.e("KRBridge", "EM qt get $s failed", e)
+            return out.toString()
+        } finally {
+            conn.disconnect()
         }
+    } catch (e: Throwable) {
+        Log.e("KRBridge", "TX quote failed", e)
+        return "[]"
     }
-    return out.toString()
 }
 
 /**
