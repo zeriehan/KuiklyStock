@@ -196,6 +196,8 @@ internal class ChatPage : BasePager() {
     private fun send() {
         val q = inputText.trim()
         if (q.isEmpty() || ChatStore.isPending(code)) return
+        // 多选态下发消息：先退出多选，避免「勾选中的旧索引」与新消息列表语义错位
+        if (msgSelectMode) exitMsgSelect()
         inputText = ""
         inputRef.view?.setText("")
         ChatStore.append(code, ChatStore.ChatMessage("user", q))
@@ -236,6 +238,8 @@ internal class ChatPage : BasePager() {
      * 仅影响本 code 的会话（自由对话与个股对话互相隔离）。
      */
     private fun clearChat() {
+        // 清空会让全部勾选索引失效（操作栏会残留「已选 N」、点删除空转），必须先退出多选态
+        if (msgSelectMode) exitMsgSelect()
         ChatStore.clear(code)
         ChatStore.setPending(code, false)
         aiThinking = false
