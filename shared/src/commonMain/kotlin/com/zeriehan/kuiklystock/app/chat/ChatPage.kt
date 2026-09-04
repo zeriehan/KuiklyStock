@@ -63,8 +63,12 @@ internal class ChatPage : BasePager() {
 
     /** 输入框当前文本（响应式，发送按钮据此启用） */
     private var inputText: String by observable("")
-    /** AI 思考中：禁用发送、显示「思考中…」 */
+    /** AI 思考中：禁用发送、显示「思考中…」动态三点气泡 */
     internal var aiThinking: Boolean by observable(false)
+    /** 思考态动态三点当前高亮索引(0..2)，由思考动画定时器驱动 */
+    internal var thinkingDot: Int by observable(0)
+    /** 思考动画定时器是否在跑（防重） */
+    private var thinkingAnimRunning = false
     /** 消息长按菜单：当前操作的消息索引 / 文本（复制、选取文字用） */
     internal var msgMenuIndex: Int? by observable(null)
     internal var msgMenuText: String by observable("")
@@ -147,7 +151,7 @@ internal class ChatPage : BasePager() {
         }
         bootstrapped = true
         // 若上一条提问还在"后台"生成中，进入页面时继续保持思考态
-        aiThinking = ChatStore.isPending(code)
+        updateThinkingUI(ChatStore.isPending(code))
         // 注册会话变更监听：AI 在页面关闭期间回复完成时，本页（若仍活着）即时刷新出气泡
         ChatSync.addListener(chatListener)
         // 通知主框架：本股票已有对话（用于「最近对话」即时刷新）
@@ -247,7 +251,7 @@ internal class ChatPage : BasePager() {
         if (msgSelectMode) exitMsgSelect()
         ChatStore.clear(code)
         ChatStore.setPending(code, false)
-        aiThinking = false
+        updateThinkingUI(false)
         ChatStore.append(code, ChatStore.ChatMessage("assistant", "对话已清空，有什么想问的？"))
         ChatSync.bump()
         refreshMessages()
@@ -285,6 +289,26 @@ internal class ChatPage : BasePager() {
             renderToggle = !renderToggle
             msgVersion++
         }
+    }
+    /** 统一更新思考态并启停「思考中」动态三点动画（避免散落赋值漏启停） */
+    internal fun updateThinkingUI(thinking: Boolean) {
+        if (aiThinking == thinking) return
+        aiThinking = thinking
+        if (thinking) startThinkingAnim() else stopThinkingAnim()
+    }
+    private fun startThinkingAnim() {
+        if (thinkingAnimRunning || destroyed) return
+        thinkingAnimRunning = true
+        thinkingTick()
+    }
+    private fun thinkingTick() {
+        if (destroyed || !aiThinking) { thinkingAnimRunning = false; return }
+        thinkingDot = (thinkingDot + 1) % 3
+        com.tencent.kuikly.core.timer.setTimeout(pagerId, 350) { thinkingTick() }
+    }
+    private fun stopThinkingAnim() {
+        thinkingAnimRunning = false
+        thinkingDot = 0
     }
     /** 删除某条消息：同步单例、跨页刷新「最近对话」、本页重建气泡 */
     internal fun deleteMsg(index: Int) {
@@ -342,7 +366,7 @@ internal class ChatPage : BasePager() {
     private fun refreshMessages() {
         if (destroyed || !::code.isInitialized) return
         msgVersion++
-        aiThinking = ChatStore.isPending(code)
+        updateThinkingUI(ChatStore.isPending(code))
         renderToggle = !renderToggle
         tryScrollToBottom()
     }
@@ -596,14 +620,30 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
         Text { attr { text("（暂无消息）"); fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginTop(20f) } }
     }
     msgs.forEachIndexed { i, m -> renderMessage(ctx, i, m.role, m.text, maxBubbleW) }
-    // 思考中占位气泡（与 AI 气泡同款灰白底，保持视觉一致）
+    // 思考中占位气泡：动态三点（正在输入观感，thinkingDot 定时器驱动高亮轮转）
     vif({ ctx.aiThinking }) {
         View {
             attr {
                 alignSelfFlexStart(); marginBottom(10f)
-                padding(10f); borderRadius(12f); backgroundColor(Color(0xFFFFFFFF))
+                padding(12f, 10f); borderRadius(12f); backgroundColor(Color(0xFFFFFFFF))
+                flexDirectionRow(); alignItemsCenter()
             }
-            Text { attr { text("AI 思考中…"); fontSize(UserSettings.fs(14f)); color(Color(0xFF999999)) } }
+            // 三点：当前 thinkingDot 指向的点为主题色，其余浅灰（在 attr 闭包内现读 thinkingDot 以即时刷新）
+            for (i in 0 until 3) {
+                View {
+                    attr {
+                        val dot = ctx.thinkingDot == i
+                        width(7f); height(7f); borderRadius(3.5f)
+                        marginRight(4f)
+                        backgroundColor(if (dot) Color(UserSettings.themeColor) else Color(0xFFD0D3D8))
+                    }
+                }
+            }
+            Text {
+                attr {
+                    text("思考中"); fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginLeft(4f)
+                }
+            }
         }
     }
 }
