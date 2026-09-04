@@ -19,6 +19,7 @@ import com.zeriehan.kuiklystock.base.Utils
 import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.Stock
+import com.zeriehan.kuiklystock.core.StockBrief
 import com.zeriehan.kuiklystock.core.StockColor
 import com.zeriehan.kuiklystock.core.UserStockStore
 import com.zeriehan.kuiklystock.core.UserSettings
@@ -43,7 +44,8 @@ internal class StockDetailPage : BasePager() {
     private val moduleLabels = mapOf(
         DModule.AI to "AI分析",
         DModule.PROFILE to "简况",
-        DModule.FINANCE to "财务",
+        // 原「财务」（营收/净利/ROE 无真实数据源），改为展示真实盘口指标，故标签同步改名为「盘口」
+        DModule.FINANCE to "盘口",
         DModule.FUND to "资金",
         DModule.NEWS to "新闻",
     )
@@ -460,27 +462,47 @@ internal class StockDetailPage : BasePager() {
                         Text { attr { text("简况"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
                         View { attr { flexDirectionRow(); marginTop(8f) }
                             Text { attr { text("所属行业"); fontSize(12f); color(Color(0xFF999999)); flex(1f) } }
-                            Text { attr { text("白酒 / 饮料制造"); fontSize(14f); color(Color(0xFF222222)) } }
+                            Text { attr { text(StockBrief.industry(stock.name)); fontSize(14f); color(Color(0xFF222222)) } }
                         }
                         View { attr { flexDirectionRow(); marginTop(8f) }
                             Text { attr { text("总市值"); fontSize(12f); color(Color(0xFF999999)); flex(1f) } }
-                            Text { attr { text(formatPrice(stock.price * 12.56f) + " 亿"); fontSize(14f); color(Color(0xFF222222)) } }
+                            // ⚠️ 一律走 StockBrief：此前这里写死 price*12.56，与列表展开行的
+                            //    codeSum 口径不一致，同一只股票两处显示两个不同市值。
+                            Text { attr { text(StockBrief.marketCap(code) + " 亿"); fontSize(14f); color(Color(0xFF222222)) } }
+                        }
+                        View { attr { flexDirectionRow(); marginTop(8f) }
+                            Text { attr { text("市盈率TTM"); fontSize(12f); color(Color(0xFF999999)); flex(1f) } }
+                            Text { attr { text(StockBrief.pe(code)); fontSize(14f); color(Color(0xFF222222)) } }
+                        }
+                        View { attr { flexDirectionRow(); marginTop(8f) }
+                            Text { attr { text("换手率"); fontSize(12f); color(Color(0xFF999999)); flex(1f) } }
+                            Text { attr { text(StockBrief.turnover(code)); fontSize(14f); color(Color(0xFF222222)) } }
                         }
                     }
                 }
 
-                // 财务卡片
+                // 盘口卡片（真实行情指标；原「财务」为无数据源的写死常量，已替换）
                 vif({ ctx.modules.contains(DModule.FINANCE) }) {
                     View {
                         attr { margin(12f); padding(12f); backgroundColor(Color.WHITE); borderRadius(12f) }
-                        Text { attr { text("财务"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                        // ⚠️ 原「财务」卡的营收/净利(1478亿/747亿)、ROE(34.6%) 是写死常量——
+                        // 每只股票都显示同一组茅台的数字；而项目根本没有基本面数据源，
+                        // 再编一套派生值仍是假数据。改为展示行情里**真实存在**的盘口指标。
+                        Text { attr { text("盘口"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                        // 振幅 = (最高 - 最低) / 昨收，昨收由「现价 - 涨跌额」还原，除零兜底
+                        val preClose = stock.price - stock.change
+                        val amplitude = if (preClose > 0f) (stock.high - stock.low) / preClose * 100f else 0f
                         View { attr { flexDirectionRow(); marginTop(8f) }
-                            Text { attr { text("营收 / 净利"); fontSize(12f); color(Color(0xFF999999)); flex(1f) } }
-                            Text { attr { text("1478亿 / 747亿"); fontSize(14f); color(Color(0xFF222222)) } }
+                            Text { attr { text("最高 / 最低"); fontSize(12f); color(Color(0xFF999999)); flex(1f) } }
+                            Text { attr { text(formatPrice(stock.high) + " / " + formatPrice(stock.low)); fontSize(14f); color(Color(0xFF222222)) } }
                         }
                         View { attr { flexDirectionRow(); marginTop(8f) }
-                            Text { attr { text("ROE"); fontSize(12f); color(Color(0xFF999999)); flex(1f) } }
-                            Text { attr { text("34.6%"); fontSize(14f); color(Color(0xFF222222)) } }
+                            Text { attr { text("振幅"); fontSize(12f); color(Color(0xFF999999)); flex(1f) } }
+                            Text { attr { text(formatPrice(amplitude) + "%"); fontSize(14f); color(Color(0xFF222222)) } }
+                        }
+                        View { attr { flexDirectionRow(); marginTop(8f) }
+                            Text { attr { text("成交量"); fontSize(12f); color(Color(0xFF999999)); flex(1f) } }
+                            Text { attr { text(formatPrice(stock.volume) + " 万手"); fontSize(14f); color(Color(0xFF222222)) } }
                         }
                     }
                 }

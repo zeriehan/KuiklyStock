@@ -15,6 +15,7 @@ import com.tencent.kuikly.core.views.*
 import com.zeriehan.kuiklystock.components.KRStockBadge.KRStockBadge
 import com.zeriehan.kuiklystock.components.KRMiniTimeSharing.KRMiniTimeSharing
 import com.zeriehan.kuiklystock.core.Stock
+import com.zeriehan.kuiklystock.core.StockBrief
 import com.zeriehan.kuiklystock.core.StockColor
 import com.zeriehan.kuiklystock.core.UserSettings
 import com.zeriehan.kuiklystock.core.StockData
@@ -81,27 +82,8 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
         }
     }
 
-    // ===== 简况（自定义模块占位）派生：演示数据，后续「我的-设置」可配置模块列表与顺序 =====
-    private fun codeSum(code: String): Int = code.filter { it.isDigit() }.sumOf { it.code }
-    private fun deriveIndustry(name: String): String = when {
-        name.contains("茅台") || name.contains("五粮液") -> "白酒"
-        name.contains("银行") -> "银行"
-        name.contains("平安") -> "保险"
-        name.contains("宁德") -> "电池"
-        name.contains("指数") -> "大盘指数"
-        else -> "制造业"
-    }
-    private fun deriveMarketCap(code: String): String = (codeSum(code) % 9000 + 500).toString()
-    private fun derivePE(code: String): String = (codeSum(code) % 40 + 8).toString()
-    private fun deriveTurnover(code: String): String = formatPrice((codeSum(code) % 30 + 5) / 10f) + "%"
-    private fun deriveIntro(name: String): String = when {
-        name.contains("茅台") || name.contains("五粮液") -> "白酒行业龙头，品牌护城河深厚。"
-        name.contains("银行") -> "零售银行标杆，资产质量稳健。"
-        name.contains("平安") -> "综合金融集团，寿险财险双轮驱动。"
-        name.contains("宁德") -> "动力电池全球龙头，市占率领先。"
-        name.contains("指数") -> "A股核心宽基指数，代表市场整体表现。"
-        else -> "细分领域优质企业，业绩稳健增长。"
-    }
+    // ===== 简况派生：统一走 core.StockBrief（与个股详情页共用同一套口径），
+    //      避免两处算法不一致导致同一只股票显示两个不同的市值/行业。 =====
 
     override fun createAttr() = KRStockListAttr()
     override fun createEvent() = ComposeEvent()
@@ -225,19 +207,19 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                                 Text { attr { text("简况"); fontSize(UserSettings.fs(14f)); fontWeightSemiBold(); color(Color(0xFF222222)) } }
                                                 View {
                                                     attr { flexDirectionRow(); marginTop(10f) }
-                                                    briefCell("行业", ctx.deriveIndustry(stock.name))
-                                                    briefCell("总市值", ctx.deriveMarketCap(stock.code) + "亿")
-                                                    briefCell("市盈率TTM", ctx.derivePE(stock.code))
+                                                    briefCell("行业", StockBrief.industry(stock.name))
+                                                    briefCell("总市值", StockBrief.marketCap(stock.code) + "亿")
+                                                    briefCell("市盈率TTM", StockBrief.pe(stock.code))
                                                 }
                                                 View {
                                                     attr { flexDirectionRow(); marginTop(8f) }
-                                                    briefCell("换手率", ctx.deriveTurnover(stock.code))
+                                                    briefCell("换手率", StockBrief.turnover(stock.code))
                                                     briefCell("最高", formatPrice(stock.high))
                                                     briefCell("最低", formatPrice(stock.low))
                                                 }
                                                 Text {
                                                     attr {
-                                                        text("简介：" + ctx.deriveIntro(stock.name))
+                                                        text("简介：" + StockBrief.intro(stock.name))
                                                         fontSize(UserSettings.fs(12f)); color(Color(0xFF777777)); marginTop(10f)
                                                     }
                                                 }
