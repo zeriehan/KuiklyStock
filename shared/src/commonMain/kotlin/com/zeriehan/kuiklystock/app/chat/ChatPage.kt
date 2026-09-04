@@ -723,7 +723,8 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
                 attr {
                     maxWidth(maxBubbleW)
                     flexDirectionRow(); alignItemsCenter()
-                    padding(12f, 10f); borderRadius(12f)
+                    // padding 需 top/left/bottom/right 显式对称，否则内容被顶向角落不在正中间
+                    padding(top = 8f, left = 12f, bottom = 8f, right = 12f); borderRadius(12f)
                     backgroundColor(Color(0xFFFFFFFF))
                 }
                 Text {
@@ -747,7 +748,10 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
         View {
             attr {
                 alignSelfFlexStart(); marginBottom(10f)
-                padding(12f, 10f); borderRadius(12f); backgroundColor(Color(0xFFFFFFFF))
+                // padding(top,left,bottom,right) 需显式对称：只传 (top,left) 会让 right/bottom 无内边距，
+                // 内容被顶向角落显得"不在正中间"。故补足 bottom=right 与 top=left 对称。
+                padding(top = 8f, left = 12f, bottom = 8f, right = 12f)
+                borderRadius(12f); backgroundColor(Color(0xFFFFFFFF))
                 flexDirectionRow(); alignItemsCenter()
             }
             // 三点：当前 thinkingDot 指向的点为主题色，其余浅灰（在 attr 闭包内现读 thinkingDot 以即时刷新）
