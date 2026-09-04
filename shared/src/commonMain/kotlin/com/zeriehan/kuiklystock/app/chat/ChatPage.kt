@@ -468,8 +468,11 @@ internal class ChatPage : BasePager() {
                 flexDirectionColumn()
                 // 页面底色比气泡略深一档（微信同款），让 AI 的白色气泡轮廓清晰可辨
                 backgroundColor(Color(0xFFEDEFF2))
-                // 键盘弹出时手动把内容区底部抬起，使输入栏贴着键盘上沿（标题栏固定不动）
-                paddingBottom(ctx.keyboardH)
+                // ⚠️ 原来这里用 paddingBottom(ctx.keyboardH) 想让键盘弹起时整页内容上移，
+                // 真机实测整页没动(根 attr 的 paddingBottom 可能不随 observable 重跑)，
+                // 改成在输入栏前放一个高度=keyboardH 的占位 Spacer(普通子视图必有 reactive)，
+                // 键盘弹起时其高度变化即把输入栏和它上方所有内容顶起。所以这里**不再加 paddingBottom**，
+                // 避免与 Spacer 重复造成输入栏被推得太高。
             }
             // 消息列表的实际渲染放在 renderMessages() 中，由消息流 Scroller 内的 vif(renderToggle) 翻转重建。
 
@@ -592,6 +595,18 @@ internal class ChatPage : BasePager() {
                 }
             }
             } // vif(quickTipsVisible) 结束
+
+            // ===== 键盘抬起占位：明确把输入栏顶上去，绕开根 paddingBottom 是否响应式的不确定 =====
+            // 真机验证：根 attr { paddingBottom(ctx.keyboardH) } 在 keyboardHeightChange 后整页没上移
+            // (chips 区被键盘盖住)——根容器 paddingBottom 可能不被 reactive 追踪、或 push 后整页未触发
+            // 重测。改用一个独立的"键盘高 Spacer" View，在输入栏之前,height 现读 ctx.keyboardH
+            // (普通子视图 reactive 一定有),键盘弹起时其高度变化即把输入栏和它上方所有内容顶起。
+            View {
+                attr {
+                    height(ctx.keyboardH)
+                    backgroundColor(Color(0xFFEDEFF2))   // 与页底色一致，键盘弹起时这块"占位"看起来无缝
+                }
+            }
 
             // ===== 输入栏 =====
             // ⚠️ padding 必须 4 边对称(top/left/bottom/right 全给)，否则只有 top/left，输入栏内文字
