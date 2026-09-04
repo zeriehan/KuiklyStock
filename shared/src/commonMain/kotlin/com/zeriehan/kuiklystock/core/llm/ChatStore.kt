@@ -259,6 +259,20 @@ object ChatStore {
         if (index in list.indices) { list.removeAt(index); save() }
     }
 
+    /**
+     * 批量删除多条消息（按索引集合）。
+     * ⚠️ 必须一次性 filter 掉所有目标索引再写回：若逐个 removeAt，
+     * 每删一条后面的索引都会前移，导致删错消息（多选删除的经典坑）。
+     */
+    fun deleteMessagesAt(code: String, indices: Set<Int>) {
+        if (indices.isEmpty()) return
+        val list = conversations[code] ?: return
+        val kept = list.filterIndexed { i, _ -> i !in indices }
+        if (kept.size == list.size) return
+        conversations[code] = kept.toMutableList()
+        save()
+    }
+
     /** 清空某股票对话（自动落盘） */
     fun clear(code: String) {
         conversations.remove(code)

@@ -65,6 +65,10 @@ internal class ChatPage : BasePager() {
     /** 消息长按菜单：当前操作的消息索引 / 文本（复制、选取文字用） */
     internal var msgMenuIndex: Int? by observable(null)
     internal var msgMenuText: String by observable("")
+    /** 消息多选模式：长按菜单点「多选」进入，勾选后可批量删除 */
+    internal var msgSelectMode: Boolean by observable(false)
+    /** 多选态已勾选的消息索引集合（重新赋值触发响应式刷新，勿原地 mutate） */
+    internal var selectedMsgIdx: Set<Int> by observable(emptySet())
     /** 消息版本号：每次增删消息 +1，配合 renderToggle 翻转强制重建消息列表 */
     internal var msgVersion: Int by observable(0)
     /** vif 翻转触发器：本版本 body 不随 observable 重跑，消息列表必须靠 vif 翻转才能强制重建 */
@@ -256,6 +260,47 @@ internal class ChatPage : BasePager() {
         ChatStore.deleteMessageAt(code, index)
         ChatSync.bump()
         refreshMessages()
+    }
+
+    // ===== 消息多选（长按菜单「多选」进入，可批量删除）=====
+
+    /** 进入多选：关掉长按菜单，并预勾选触发长按的那条消息（符合直觉） */
+    internal fun enterMsgSelect(index: Int) {
+        closeMsgMenu()
+        msgSelectMode = true
+        selectedMsgIdx = setOf(index)
+    }
+
+    /** 退出多选：清空勾选 */
+    internal fun exitMsgSelect() {
+        msgSelectMode = false
+        selectedMsgIdx = emptySet()
+    }
+
+    /** 勾选/取消勾选某条消息（重新赋值整个集合，触发响应式刷新） */
+    internal fun toggleMsgSelect(index: Int) {
+        selectedMsgIdx =
+            if (selectedMsgIdx.contains(index)) selectedMsgIdx - index else selectedMsgIdx + index
+    }
+
+    /** 全选 / 取消全选 */
+    internal fun toggleMsgSelectAll() {
+        if (!::code.isInitialized) return
+        val total = ChatStore.messages(code).size
+        selectedMsgIdx =
+            if (total > 0 && selectedMsgIdx.size >= total) emptySet() else (0 until total).toSet()
+    }
+
+    /** 删除已勾选的全部消息（一次性批量删，避免索引错位） */
+    internal fun deleteSelectedMsgs() {
+        if (!::code.isInitialized || selectedMsgIdx.isEmpty()) return
+        val n = selectedMsgIdx.size
+        val targets = selectedMsgIdx
+        exitMsgSelect()
+        ChatStore.deleteMessagesAt(code, targets)
+        ChatSync.bump()
+        refreshMessages()
+        bridgeModule.toast("已删除 $n 条消息")
     }
 
     /**
@@ -452,7 +497,57 @@ internal class ChatPage : BasePager() {
                     chatMsgDivider()
                     chatMsgItem("选取文字") { ctx.bridgeModule.showSelectableText("选取文字", ctx.msgMenuText); ctx.closeMsgMenu() }
                     chatMsgDivider()
+                    chatMsgItem("多选") { ctx.enterMsgSelect(idx) }
+                    chatMsgDivider()
                     chatMsgItem("取消") { ctx.closeMsgMenu() }
+                }
+            }
+
+            // ===== 消息多选操作栏（多选态出现，浮在输入栏上方）=====
+            vif({ ctx.msgSelectMode }) {
+                View {
+                    attr {
+                        absolutePosition(left = 0f, bottom = 60f)
+                        width(ctx.pagerData.pageViewWidth)
+                        height(52f); flexDirectionRow(); alignItemsCenter()
+                        backgroundColor(Color.WHITE)
+                        border(Border(1f, BorderStyle.SOLID, Color(0xFFEEEEEE)))
+                        padding(0f, 12f)
+                    }
+                    // 全选 / 取消全选
+                    View {
+                        attr {
+                            padding(6f, 4f, bottom = 6f, right = 4f); marginRight(8f)
+                            borderRadius(8f); backgroundColor(Color(0xFFF2F3F5))
+                        }
+                        event { click { ctx.toggleMsgSelectAll() } }
+                        Text { attr {
+                            val total = ChatStore.messages(ctx.code).size
+                            val all = total > 0 && ctx.selectedMsgIdx.size >= total
+                            text(if (all) "取消全选" else "全选")
+                            fontSize(UserSettings.fs(14f)); color(Color(0xFF333333))
+                        } }
+                    }
+                    // 已选计数：flex(1f) 吃掉左侧空白，把右侧按钮顶到最右
+                    Text { attr { text("已选 ${ctx.selectedMsgIdx.size}"); fontSize(UserSettings.fs(14f)); color(Color(0xFF222222)); flex(1f); marginRight(16f) } }
+                    // 删除（红）
+                    View {
+                        attr {
+                            padding(6f, 4f, bottom = 6f, right = 4f); marginRight(8f)
+                            borderRadius(8f); backgroundColor(Color(0xFFFDECEA))
+                        }
+                        event { click { ctx.deleteSelectedMsgs() } }
+                        Text { attr { text("删除"); fontSize(UserSettings.fs(14f)); color(Color(0xFFE54D42)) } }
+                    }
+                    // 取消多选
+                    View {
+                        attr {
+                            padding(6f, 4f, bottom = 6f, right = 4f)
+                            borderRadius(8f); backgroundColor(Color(0xFFF2F3F5))
+                        }
+                        event { click { ctx.exitMsgSelect() } }
+                        Text { attr { text("取消"); fontSize(UserSettings.fs(14f)); color(Color(0xFF333333)) } }
+                    }
                 }
             }
         }
@@ -493,8 +588,27 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
     View {
         attr {
             flexDirectionRow()
+            alignItemsCenter()
             justifyContent(if (isUser) FlexJustifyContent.FLEX_END else FlexJustifyContent.FLEX_START)
             marginBottom(10f)
+        }
+        // 多选态：气泡左侧的勾选圆点（选中填充主题色 + 打勾）
+        vif({ ctx.msgSelectMode }) {
+            View {
+                attr {
+                    width(20f); height(20f); borderRadius(10f); marginRight(8f)
+                    alignItemsCenter(); justifyContentCenter()
+                    // 关键：在 attr 闭包内**现读** observable（不能提成函数体的局部 val，否则不随勾选刷新）
+                    val sel = ctx.selectedMsgIdx.contains(index)
+                    border(Border(1.5f, BorderStyle.SOLID, Color(if (sel) UserSettings.themeColor else 0xFFCCCCCC)))
+                    backgroundColor(if (sel) Color(UserSettings.themeColor) else Color.WHITE)
+                }
+                event { click { ctx.toggleMsgSelect(index) } }
+                Text { attr {
+                    val sel = ctx.selectedMsgIdx.contains(index)
+                    text(if (sel) "✓" else ""); fontSize(UserSettings.fs(13f)); color(Color.WHITE)
+                } }
+            }
         }
         View {
             attr {
@@ -507,8 +621,9 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
                 backgroundColor(if (isUser) Color(UserSettings.themeColor) else Color(0xFFFFFFFF))
             }
             event {
-                // 长按弹出操作菜单（复制 / 删除 / 选取文字）
-                longPress { ctx.openMsgMenu(index, text) }
+                // 长按弹出操作菜单（复制 / 删除 / 选取文字 / 多选）；多选态下改由点按勾选，故屏蔽长按菜单
+                longPress { if (!ctx.msgSelectMode) ctx.openMsgMenu(index, text) }
+                click { if (ctx.msgSelectMode) ctx.toggleMsgSelect(index) }
             }
             Text {
                 attr {
