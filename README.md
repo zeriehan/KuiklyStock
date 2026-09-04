@@ -194,11 +194,13 @@ class QuotesPage : Pager() {   // 或继承 base/BasePager
 
 ## 七、技术方案细节
 
-### 7.1 LLM 接入（GLM-4-Flash）
-- 封装 `core/LLMClient.kt` 接口：`suspend fun analyze(prompt, systemPrompt, history): String`（或流式）。
-- 实现类 `GLMClient` 调智谱 OpenAI 兼容接口 `https://open.bigmodel.cn/api/paas/v4/chat/completions`，模型 `glm-4-flash`。
-- API Key 从 `local.properties` 读取（`LLM_API_KEY=...`），**绝不入库**。
-- 评分 25% 要求：System Prompt 有设计感（角色+输出格式约束+领域知识）、结构化输出、多轮上下文保持。
+### 7.1 LLM 接入（智谱 GLM Flash 免费池）
+- 抽象 `core/llm/LLMClient.kt`：`analyze(stock,kline,cb)` 供详情页卡片，`chat(stock,question,history,cb,freeMode,onDelta)` 供聊天页；离线兜底 `MockLLMClient`。
+- 真实接入 `core/llm/GLMFlashClient.kt` → 常驻根页桥 `AIJobCenter` → 宿主 `KRBridgeModule.llmAnalyze` 调智谱 `https://open.bigmodel.cn/api/paas/v4/chat/completions`。
+- 模型候选链 `glm-4.7-flash → glm-4.5-flash → glm-4-flash`（免费池限流 1305 时自动降级）。
+- **聊天支持真流式(SSE 逐字蹦出)**：宿主读流写按 sid 的缓存，shared 用常驻前台页定时器轮询取增量；含模型候选降级 + 15s 整体超时兜底(超时回 Mock，不无限等)。
+- API Key 从 `local.properties` 读取（**`GLM_API_KEY=...`**，非 LLM_API_KEY），构建时经 `BuildConfig.GLM_API_KEY` 注入，**绝不入库**；无 Key 时自动回退 Mock。
+- 评分要求：System Prompt 有设计感（角色+输出格式约束+附实时行情上下文+多轮历史）、Markdown 结构化输出、提及股→末尾卡片可点跳详情。
 
 ### 7.2 数据源（StockRepository 抽象）
 - `StockRepository` 接口：`fun getQuotes(): List<Stock>`、`fun getDetail(code): Stock`、`fun getWatchlist(): List<Stock>`。
@@ -306,3 +308,8 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
 - **提及股卡片**：AI 文本现扫 `StockMention.extract` 命中池内股→回答下方横滚窄卡(真实分时小走势)。详情页 AI 分析仍走纯文本(刻意不混富文本)。
 - **思考态**：动态三点(thinkingDot+setTimeout 自递归)。
 - **数据**：StockData 门面 = mock 种子 + 东财真实并入；K线走腾讯、分时走东财。
+
+### 已知限制 / 说明（诚实备注，交付时知情）
+- **聊天键盘弹出不自动顶起内容**：宿主为沉浸式全屏(`windowSoftInputMode=adjustNothing` + 内容铺到状态栏后)。实测 `adjustResize` 在此沉浸式下不生效(系统不 resize 窗口)、shared 手动改 padding/占位也不触发引擎整页重排。故**键盘弹出会盖住页面下部输入区上方一部分**，属已知取舍；历史消息仍可手动滚动查看。根治需宿主侧用 IME insets 给渲染容器加 bottom padding(真实 View 尺寸变化才触发重排)，暂未做。
+- **AI 回复延迟取决于 GLM 免费池**：free Flash 池高峰可能慢/限流(HTTP 1305 访问量过大)，代码会自动降级候选模型；整体 15s 超时兜底(超时回本地 Mock，不无限等)。演示/录制建议在 GLM 通畅时进行，避免频繁落到 Mock 造成结论与实时行情脱节。
+- **AI 回答为流式(SSE)逐字蹦出**，仅真实 GLM 走流式；Mock 为本地即时生成(无中间态)。
