@@ -155,7 +155,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
         lastColorMode = UserSettings.colorMode
         // 把「常驻根页面」的桥注册给 AI 任务中心：此后所有 LLM 请求都走这个桥，
         // 子页面（ChatPage / StockDetailPage）关闭后请求与回调依然有效 —— 即 AI 在"后台"继续跑。
-        AIJobCenter.attach(bridgeModule)
+        // 显式传 pagerId：流式轮询泵需要绑一个"常驻不销毁"的定时器（即本根页的 pagerId）。
+        AIJobCenter.attach(bridgeModule, pagerId)
         // 注册跨页监听：ChatPage 写入会话时即时刷新「最近对话」（vif 翻转强制重建，无需手动切 Tab）
         ChatSync.addListener { convToggle = !convToggle }
         // 注入行情数据源桥并注册监听：腾讯/新浪真实行情回来后翻转 listToggle/convToggle，

@@ -31,10 +31,12 @@ internal object AIJobCenter {
     /** 常驻根页的 pagerId：流式轮询泵需要绑一个"常驻不销毁"的定时器 */
     private var rootPagerId: String = ""
 
-    /** 由常驻根页面（MainTabPager）调用，注册一个不会随子页面关闭而失效的桥 */
-    fun attach(bridge: BridgeModule) {
+    /** 由常驻根页面（MainTabPager）调用，注册一个不会随子页面关闭而失效的桥。
+     *  @param pagerId 常驻根页的 pagerId（流式轮询泵绑它）；不传则回退 bridge.pagerId */
+    fun attach(bridge: BridgeModule, pagerId: String? = null) {
         rootBridge = bridge
-        rootPagerId = bridge.pagerId
+        if (!pagerId.isNullOrBlank()) rootPagerId = pagerId
+        else if (bridge.pagerId.isNotBlank()) rootPagerId = bridge.pagerId
     }
 
     fun detach(bridge: BridgeModule) {
@@ -47,27 +49,42 @@ internal object AIJobCenter {
     /**
      * 流式轮询泵：每隔 [intervalMs] 轮询宿主流式会话 [sid]，把累计文本回调给 [onUpdate]。
      * 宿主返回 finished（生成结束）时自动停止。返回取消句柄。
-     * 定时器绑常驻根页（MainTabPager，常驻不销毁），子页面关闭后仍能继续拉后台生成结果。
+     *
+     * 定时器优先绑**当前前台页**（调用 chat 时即在聊天页，其 pager 定时器可证会跑——思考中三点动画
+     * 就靠它），确保子页面在前台时轮询持续、文字真能蹦出来；前台页不在时退回常驻根页。
+     *
+     * 首个 tick 也走 setTimeout（不立即同步轮询）：给宿主一个"创建 sid 缓存"的时序窗口，
+     * 避免首次 poll 早于缓存创建而误判结束。另加最大 tick 数兜底，防 sid 真正不存在时无限轮询
+     * （正常结束靠 done 回调兜底，此处只是防泄漏）。
      */
     fun pumpStream(sid: String, intervalMs: Int, onUpdate: (text: String, finished: Boolean) -> Unit): () -> Unit {
-        val pagerId = rootPagerId
+        // 调用发生在 ChatPage.send（当前页=聊天页）时前台页定时器最可靠；否则用常驻根页兜底
+        val cur = com.tencent.kuikly.core.manager.BridgeManager.currentPageId
+        val pagerId = if (!cur.isNullOrBlank()) cur else rootPagerId
         if (pagerId.isBlank() || sid.isBlank()) return {}
         var cancelled = false
+        var ticks = 0
         fun tick() {
             if (cancelled) return
+            ticks++
             pollStream(sid) { resp ->
                 if (cancelled || resp == null) return@pollStream
                 val text = resp.optString("text")
                 val finished = resp.optBoolean("finished")
                 onUpdate(text, finished)
-                if (!finished && !cancelled) {
+                val keepGoing = !finished && !cancelled && ticks < MAX_POLL_TICKS
+                if (keepGoing) {
                     com.tencent.kuikly.core.timer.setTimeout(pagerId, intervalMs) { tick() }
                 }
             }
         }
-        tick()
+        // 首个 tick 延迟一个周期再跑，避开缓存创建竞态
+        com.tencent.kuikly.core.timer.setTimeout(pagerId, intervalMs) { tick() }
         return { cancelled = true }
     }
+
+    /** 轮询泵最大 tick 数兜底：160ms×200≈32s，远大于单次生成耗时；防止 sid 不存在时无限轮询 */
+    private const val MAX_POLL_TICKS = 200
 
     /** 轮询宿主流式会话 [sid] 的当前累计文本。回调 JSONObject 形如 {text, finished}；异常以 null 回调。 */
     fun pollStream(sid: String, callback: (JSONObject?) -> Unit) {

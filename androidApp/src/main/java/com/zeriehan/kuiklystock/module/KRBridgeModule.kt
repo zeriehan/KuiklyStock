@@ -355,8 +355,9 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         }
         val buf = llmStreamBufs[sid]
         if (buf == null) {
-            // 会话不存在（可能已被消费/超时清理）→ 视为结束，shared 停止轮询
-            callback?.invoke(mapOf("text" to "", "finished" to true))
+            // 会话尚未创建（首个 poll 可能略早于 llmAnalyzeStreaming 建缓存）→ 不算结束，shared 继续轮询；
+            // 若请求真没起来，shared 端有 tick 上限与 done 回调兜底，不会无限轮询。
+            callback?.invoke(mapOf("text" to "", "finished" to false))
             return
         }
         callback?.invoke(mapOf("text" to buf.text, "finished" to buf.finished))
