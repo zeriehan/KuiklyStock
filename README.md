@@ -13,7 +13,7 @@
 - **截止日期**：2026-09-14（约 18 天）
 - **框架**：KuiklyUI（腾讯开源 Kotlin Multiplatform UI 框架）
 - **形态**：一个 App，底部四 Tab（聊天管理 / 行情 / 自选股 / 我的）
-- **当前进度（2026-08-27）**：P0 地基完成、目录骨架建好、已写 3 个基础组件文件（**未编译验证**）
+- **当前进度（2026-09-04）**：Task01（行情）已收官、Task02（AI 问答）核心功能已齐并本地提交（富文本/提及股卡片/思考态/选字等），尚未真机验证与推送。源码已从 P0 的 3 个文件发展到 40 个文件。**本接手指南的"目录结构/排期状态/文件清单"等节见文末的进度更新，前面战略规划文字基本仍有效。**
 
 ### 1.2 仓库与路径
 ```
@@ -254,3 +254,55 @@ class QuotesPage : Pager() {   // 或继承 base/BasePager
 ---
 
 *本 README 同时承担「项目战略书 + AI 接手指南」角色，由前序 AI 于 2026-08-27 整理写入，供后续 AI 或本人无缝续做。*
+
+---
+
+## 附：截至 2026-09-04 的实际进度快照（接手 AI 先看这里）
+
+> 上文战略/排期/目录为 8/27 初版，以下为 9/4 实测状态，两者冲突以下文为准。
+
+### 当前进度
+- Task01（AI 行情原型）**已收官**：行情页(大盘/板块/个股)/自选/详情/板块详情/我的 全链路可演示，假数据与"待接入"空壳已清。
+- Task02（AI 股票问答）**核心已齐**（均在本地提交、未 push、待真机验证）：AI 回答 Markdown 富文本渲染、提及股横滚窄卡+真实分时、思考态三点动画、选取文字全屏原生选字、富文本字号跟随设置。
+- 源码 40 个 .kt（shared/commonMain 下），另有宿主 androidApp 层 KRBridgeModule（选字/行情桥）。
+- **运行验证**：用户只在 Android Studio Build→Rebuild→Run 真机验证；不要主动打 debug APK。
+
+### 目录结构（9/4 实际）
+```
+shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
+├── base/             BasePager/BridgeModule/Utils/IPagerIdKtx
+├── core/             Stock(数据+配色)、StockData(行情门面:mock+东财真实)、StockBrief(派生口径)、
+│                     StockMention(AI文本股票识别)、KRMarkdown(Markdown解析器)、UserSettings(个性化)、
+│                     UserStockStore(自选/隐藏)、llm/ (ChatStore/GLMFlashClient/LLM/Mock/AIJobCenter 等)
+├── components/       KRStockBadge/KRStockList(KRTable行内展开)/KRTrendChart(可配高,吃真实分时)/
+│                     KRKLineChart/KRMiniTimeSharing/KRStockCard(AI提及股横滚窄卡)/KRMarkdown(渲染器)/KRRefreshButton
+├── app/
+│   ├── main/         MainTabPager(四Tab 主框架,含行情/自选/我的Tab)
+│   ├── chat/         ChatPage(AI对话:富文本+提及股卡+思考态+多选+长按)
+│   ├── detail/       StockDetailPage/SectorDetailPage(承接页,含AI分析/K线/分时)
+│   ├── mine/         AppearancePage/ExpandSettingsPage/HiddenStocksPage
+│   └── quotes/       HeatPoolPage(行情池)/QuotesPage(旧验证页,无入口,勿用)
+```
+- 路由页 @Page: Chat/StockDetail/SectorDetail/MainTab/Appearance/ExpandSettings/HiddenStocks/HeatPool（含模板自带 HelloWorld/Router）。
+
+### 编译
+- `./gradlew --stop` 后 `./gradlew :shared:compileDebugKotlinAndroid`（判 UP-TO-DATE 加 `--rerun-tasks`）。
+- 宿主选字改动：`./gradlew :androidApp:compileDebugKotlin`（不打包 APK）。
+- git push 走 SSH（`GIT_SSH_COMMAND=...` + `git push git@github.com:zeriehan/KuiklyStock.git main`）；当前本地领先若干提交未推。
+
+### 组件状态（9/4，对照 7.3 表）
+| 组件 | 状态 |
+|------|------|
+| KRTable(KRStockList) | ✅ 行内展开 3 页轮播(分时/AI分析/简况) |
+| KRStockBadge | ✅ |
+| KRTrendChart | ✅ 可 chartHeight 配高；realPoints 喂真实分时；紧凑迷你走势首选 |
+| KRKLineChart / KRMiniTimeSharing | ✅ 详情页 K线 / 行内分时 |
+| KRStockCard | ✅ AI 提及股**横滚窄卡** |
+| KRMarkdown | ✅ 解析器(core)+渲染器(components)，基于 Kuikly 原生 RichText |
+| KRChatBubble | ⬜ 空目录占位，气泡已在 ChatPage 内联实现，未独立成组件 |
+
+### Task02 关键实现速览（供演示/续做）
+- **富文本**：KRMarkdown 解析 Markdown→块+行内 token；渲染用 Kuikly `RichText+Span`(跨行/自动换行/行内 click)，块=标题/段落/列表/引用/代码；股票名→主题色可点跳详情。字号走 `UserSettings.fs`。
+- **提及股卡片**：AI 文本现扫 `StockMention.extract` 命中池内股→回答下方横滚窄卡(真实分时小走势)。详情页 AI 分析仍走纯文本(刻意不混富文本)。
+- **思考态**：动态三点(thinkingDot+setTimeout 自递归)。
+- **数据**：StockData 门面 = mock 种子 + 东财真实并入；K线走腾讯、分时走东财。
