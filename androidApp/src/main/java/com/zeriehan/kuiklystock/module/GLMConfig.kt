@@ -41,8 +41,15 @@ object GLMConfig {
     /** 采样温度：分析类任务取中等，兼顾稳定与多样 */
     const val TEMPERATURE = 0.7
 
-    const val CONNECT_TIMEOUT_MS = 15_000
+    /**
+     * 连接超时：免费 Flash 池高峰常挂起/限流，设太久会导致降级链逐个干等(曾 30s+ 无响应)。
+     * 收紧到 6s：多数正常请求远快于此；超时就尽早降级/兜底，保证演示几秒内有反馈。
+     */
+    const val CONNECT_TIMEOUT_MS = 6_000
 
-    /** Flash 系列可能带思考过程，读超时给足 */
-    const val READ_TIMEOUT_MS = 60_000
+    /**
+     * 读取(首字响应)超时：非流式整段返回，正常几秒内；收紧到 20s 避免最坏降级拖 60s+。
+     * Flash 系列可能带思考但已 thinking:disabled 关闭，故无需过长。
+     */
+    const val READ_TIMEOUT_MS = 20_000
 }

@@ -322,6 +322,14 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             callback?.invoke(mapOf("text" to ""))
             return
         }
+        val mainHandler = Handler(Looper.getMainLooper())
+        // 防重复回调：正常完成与超时兜底谁先到只触发一次
+        val fired = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun fire(text: String) {
+            if (fired.compareAndSet(false, true)) {
+                mainHandler.post { callback?.invoke(mapOf("text" to text)) }
+            }
+        }
         thread(name = "glm-llm") {
             val text = try {
                 glmChatWithFallback(prompt, key)
@@ -329,10 +337,11 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
                 Log.e("KRBridge", "llmAnalyze failed", e)
                 ""
             }
-            Handler(Looper.getMainLooper()).post {
-                callback?.invoke(mapOf("text" to text))
-            }
+            fire(text)
         }
+        // 整体超时兜底：免费 Flash 池高峰可能很慢/降级链拖时，超时即回空 → shared 端走 Mock，
+        // 避免用户无限干等(曾 30s+ 无响应)。阈值与宿主 readTimeout(20s) 协调：略低于它。
+        mainHandler.postDelayed({ fire("") }, LLM_OVERALL_TIMEOUT_MS)
     }
 
     /**
@@ -414,6 +423,8 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
     companion object {
         const val MODULE_NAME = "HRBridgeModule"
         private const val TAG_SELECT_LAYER = "kr_select_text_layer"
+        /** LLM 整体超时兜底(ms)：免费 Flash 池高峰很慢/降级链拖时，超时回空让 shared 走 Mock，避免无限干等 */
+        private const val LLM_OVERALL_TIMEOUT_MS = 15_000L
     }
 }
 
