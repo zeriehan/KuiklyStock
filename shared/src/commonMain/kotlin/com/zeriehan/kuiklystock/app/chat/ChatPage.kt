@@ -730,7 +730,7 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
                     attr {
                         // attr 内现读 streamText：observable 变化只重跑本 attr，文字就地增长
                         text(
-                            if (ctx.streamText.isNotEmpty()) ctx.streamText + "▍"
+                            if (ctx.streamText.isNotEmpty()) ctx.streamText + "-"
                             else "正在思考…"
                         )
                         fontSize(UserSettings.fs(14f))
