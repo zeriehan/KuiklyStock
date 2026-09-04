@@ -51,8 +51,10 @@ import com.zeriehan.kuiklystock.components.KRMarkdown.renderMarkdown
  * 3.1 「后台继续跑」：请求经 AIJobCenter 发到常驻根页面(MainTabPager)的桥上，
  *    因此退出本页后 AI 仍会继续生成；结果写进单例 ChatStore（并已落盘 SharedPreferences），
  *    重新进入时 pageDidAppear 会同步出来。等待状态由 ChatStore.isPending 跨页面保留。
- * 4. 键盘：宿主 AndroidManifest 设 windowSoftInputMode="adjustResize"，弹键盘时系统自动收缩页面
- *    框架到键盘上方——标题栏固定、消息区 flex1 变矮、输入栏贴键盘上沿、整页不遮内容。无需手动推内容。
+ * 4. 键盘：宿主 AndroidManifest 用 windowSoftInputMode="adjustNothing"（配合沉浸式 LAYOUT_FULLSCREEN，
+ *    内容顶到状态栏后）。已实测 adjustResize 在此沉浸式下不生效(系统不 resize 窗口)；shared 手动改
+ *    padding/占位也不触发引擎整页重排。故键盘弹出会覆盖页面上部(已知取舍，暂不处理)。这里仅用
+ *    keyboardHeightChange 拿到 keyboardH 用于视口估算/滚到底，不让输入框上移。
  */
 @Page("Chat", supportInLocal = true)
 internal class ChatPage : BasePager() {
@@ -99,7 +101,7 @@ internal class ChatPage : BasePager() {
     internal var renderToggle: Boolean by observable(false)
     /** 本会话已触发过真实分时拉取的股票 code 集合（渲染卡片时去重，避免每次重建重复请求） */
     private val trendsRequested = mutableSetOf<String>()
-    /** 键盘高度：弹出时把内容区底部抬起，使输入栏贴着键盘上沿（标题固定不动） */
+    /** 键盘高度：仅用于视口估算与"键盘弹起时保持最新可见"(adjustNothing 下不用于抬内容,见类注释) */
     private var keyboardH: Float by observable(0f)
     /** 输入框 ref，用于发送后清空 */
     private lateinit var inputRef: ViewRef<InputView>
@@ -468,10 +470,8 @@ internal class ChatPage : BasePager() {
                 flexDirectionColumn()
                 // 页面底色比气泡略深一档（微信同款），让 AI 的白色气泡轮廓清晰可辨
                 backgroundColor(Color(0xFFEDEFF2))
-                // 键盘处理靠宿主 AndroidManifest 的 windowSoftInputMode="adjustResize"：
-                // 弹键盘时系统自动把页面框架收缩到键盘上方(标题栏仍顶格、消息区 flex1 自动变矮、
-                // 输入栏贴键盘上沿)。故这里不需要手动 paddingBottom/占位去推内容——那是导致
-                // "键盘弹起整页不动/内容被盖"的错误根源(曾有 adjustNothing+手动方案,根 attr 不可靠)。
+                // 键盘：宿主用 adjustNothing(沉浸式下 adjustResize 不生效)；shared 手动改 padding/占位
+                // 不触发引擎整页重排。故根这里不放任何 keyboardH 依赖的布局，键盘会盖住页面上部(已知取舍)。
             }
             // 消息列表的实际渲染放在 renderMessages() 中，由消息流 Scroller 内的 vif(renderToggle) 翻转重建。
 
@@ -618,7 +618,7 @@ internal class ChatPage : BasePager() {
                     }
                     event {
                         textDidChange { ctx.inputText = it.text }
-                        // 键盘高度变化：抬起内容区并把最新消息滚到底部
+                        // 键盘高度变化：记录高度供视口估算，并尝试保持最新消息可见(不抬内容,见类注释)
                         keyboardHeightChange { params ->
                             ctx.keyboardH = params.height
                             ctx.tryScrollToBottom()
