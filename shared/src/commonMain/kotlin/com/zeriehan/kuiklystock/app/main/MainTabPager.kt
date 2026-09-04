@@ -616,17 +616,25 @@ internal class MainTabPager : BasePager(), StockNavigator {
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", d)
     }
 
-    /** 行情内容区切换时的轻淡入(0.5→1，两段共约80ms)。高频切换故极短，attr 现读 mktReveal 生效 */
+    /**
+     * 行情内容区切换时的淡入(0.35→1，约 3 步 210ms)。
+     * ⚠️ attr 现读跨 ctx 的 observable 可能不触发重绘，故每步翻转 marketSubToggle 强制重建，
+     * 重建时内容 Scroller 按最新 mktReveal 渲染，确保淡入可见。
+     */
     private fun startMktReveal() {
         if (mktRevealRunning) return
         mktRevealRunning = true
-        mktReveal = 0.5f
-        com.tencent.kuikly.core.timer.setTimeout(pagerId, 40) {
-            mktReveal = 0.75f
-            com.tencent.kuikly.core.timer.setTimeout(pagerId, 40) {
-                mktReveal = 1f
-                mktRevealRunning = false
-            }
+        mktReveal = 0.35f   // 首帧由 selectMarketSub 的 marketSubToggle 翻转渲染
+        com.tencent.kuikly.core.timer.setTimeout(pagerId, 70) { mktStep(0.65f) }
+    }
+    private fun mktStep(alpha: Float) {
+        mktReveal = alpha
+        marketSubToggle = !marketSubToggle
+        if (alpha < 1f) {
+            com.tencent.kuikly.core.timer.setTimeout(pagerId, 70) { mktStep((alpha + 0.35f).coerceAtMost(1f)) }
+        } else {
+            mktReveal = 1f
+            mktRevealRunning = false
         }
     }
     /** 切换行情子 Tab（大盘/板块/个股） */

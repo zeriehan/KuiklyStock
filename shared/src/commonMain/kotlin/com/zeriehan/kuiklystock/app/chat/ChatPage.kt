@@ -328,19 +328,24 @@ internal class ChatPage : BasePager() {
     }
     private fun startAiReveal(index: Int) {
         revealingIndex = index
-        aiReveal = 0.25f   // 起步半透明即见，避免从 0 全透明
+        aiReveal = 0.15f   // 起步低透明；refreshMessages 后续翻转 renderToggle，首帧以 0.15 渲染
         revealRunning = true
-        com.tencent.kuikly.core.timer.setTimeout(pagerId, 45) { revealStep(0.5f) }
+        com.tencent.kuikly.core.timer.setTimeout(pagerId, 100) { revealStep(0.3f) }
     }
     private fun revealStep(alpha: Float) {
         if (destroyed) { revealRunning = false; aiReveal = 1f; revealingIndex = -1; return }
         aiReveal = alpha
+        // ⚠️ 关键：attr 现读跨 ctx 的 observable 可能不触发重绘，故每步翻转 renderToggle
+        // 强制重建消息列表，重建时气泡按最新 aiReveal 渲染，确保淡入可见。
+        renderToggle = !renderToggle
+        tryScrollToBottom()
         if (alpha < 1f) {
-            com.tencent.kuikly.core.timer.setTimeout(pagerId, 45) { revealStep((alpha + 0.25f).coerceAtMost(1f)) }
+            com.tencent.kuikly.core.timer.setTimeout(pagerId, 100) { revealStep((alpha + 0.17f).coerceAtMost(1f)) }
         } else {
             revealingIndex = -1
             aiReveal = 1f
             revealRunning = false
+            renderToggle = !renderToggle
         }
     }
     /** 统一更新思考态并启停「思考中」动态三点动画（避免散落赋值漏启停） */
