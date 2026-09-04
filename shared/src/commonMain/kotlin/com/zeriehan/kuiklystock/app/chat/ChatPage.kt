@@ -514,29 +514,34 @@ internal class ChatPage : BasePager() {
                 }
             }
 
-            // ===== 消息流 =====
-            Scroller {
-                ref { ctx.scrollerRef = it }
-                attr { flex(1f); flexDirectionColumn(); padding(12f) }
-                event {
-                    // 真实内容尺寸就绪后（布局完成才触发），用「contentH - 真实视口」精确滚到底（最新）。
-                    // 这是官方 setContentOffset 的正确用法；offset 必须在范围内才生效，故绝不再传极大值。
-                    contentSizeChanged { _, h ->
-                        ctx.lastContentH = h
-                        ctx.tryScrollToBottom()
+            // ===== 消息流（放在 flex(1f) 的滚动区容器内，让消息只在"头部~输入栏"之间滚动）=====
+            // 关键：把 Scroller 包在一个 flex(1f) 容器里，作为头部与输入栏之间唯一的弹性区，
+            // 避免对话变长时消息内容溢出到输入栏下方被其盖住（对话短时无溢出正常，长了必须收缩在此区内滚动）。
+            View {
+                attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFEDEFF2)) }
+                Scroller {
+                    ref { ctx.scrollerRef = it }
+                    attr { flex(1f); flexDirectionColumn(); padding(12f) }
+                    event {
+                        // 真实内容尺寸就绪后（布局完成才触发），用「contentH - 真实视口」精确滚到底（最新）。
+                        // 这是官方 setContentOffset 的正确用法；offset 必须在范围内才生效，故绝不再传极大值。
+                        contentSizeChanged { _, h ->
+                            ctx.lastContentH = h
+                            ctx.tryScrollToBottom()
+                        }
+                        // 仅回写视口高度 + 是否贴底；**绝不在 scroll 事件里调 tryScrollToBottom**，
+                        // 否则在底部附近会反复把位置拽回底部（滑不动/卡死），且与 contentSizeChanged
+                        // 形成 setContentOffset→scroll→setContentOffset 死循环。
+                        scroll { params ->
+                            ctx.viewportH = params.viewHeight
+                            ctx.stickToBottom = (params.contentHeight - params.offsetY - params.viewHeight) < 80f
+                        }
                     }
-                    // 仅回写视口高度 + 是否贴底；**绝不在 scroll 事件里调 tryScrollToBottom**，
-                    // 否则在底部附近会反复把位置拽回底部（滑不动/卡死），且与 contentSizeChanged
-                    // 形成 setContentOffset→scroll→setContentOffset 死循环。
-                    scroll { params ->
-                        ctx.viewportH = params.viewHeight
-                        ctx.stickToBottom = (params.contentHeight - params.offsetY - params.viewHeight) < 80f
-                    }
+                    // 关键：本版本 body 不会因 observable 变化而重跑，必须用 vif 翻转（renderToggle）
+                    // 强制重建消息列表内容，否则发消息后气泡永远不刷新。
+                    vif({ ctx.renderToggle }) { val c = this; c.renderMessages(ctx) }
+                    vif({ !ctx.renderToggle }) { val c = this; c.renderMessages(ctx) }
                 }
-                // 关键：本版本 body 不会因 observable 变化而重跑，必须用 vif 翻转（renderToggle）
-                // 强制重建消息列表内容，否则发消息后气泡永远不刷新。
-                vif({ ctx.renderToggle }) { val c = this; c.renderMessages(ctx) }
-                vif({ !ctx.renderToggle }) { val c = this; c.renderMessages(ctx) }
             }
 
             // ===== 快捷问句（点按即问，降低冷启动成本）=====
