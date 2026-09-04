@@ -89,6 +89,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal var marketSubTab: Int by observable(0)
     /** vif 翻转触发器：切换大盘/板块/个股时翻转，强制重建内容区 */
     internal var marketSubToggle: Boolean by observable(false)
+    /** 行情内容区切换时的轻淡入进度(0.5→1，约80ms)；高频切换故极轻极短，attr 现读使步进生效 */
+    internal var mktReveal: Float by observable(1f)
+    /** 行情内容淡入定时器是否在跑(防重) */
+    private var mktRevealRunning = false
     /** 个股子榜：0=涨幅榜 1=跌幅榜 2=换手率 3=振幅 */
     internal var stockRankTab: Int by observable(0)
     /** vif 翻转触发器：切换个股子榜时翻转，强制重建榜单 */
@@ -612,10 +616,25 @@ internal class MainTabPager : BasePager(), StockNavigator {
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", d)
     }
 
+    /** 行情内容区切换时的轻淡入(0.5→1，两段共约80ms)。高频切换故极短，attr 现读 mktReveal 生效 */
+    private fun startMktReveal() {
+        if (mktRevealRunning) return
+        mktRevealRunning = true
+        mktReveal = 0.5f
+        com.tencent.kuikly.core.timer.setTimeout(pagerId, 40) {
+            mktReveal = 0.75f
+            com.tencent.kuikly.core.timer.setTimeout(pagerId, 40) {
+                mktReveal = 1f
+                mktRevealRunning = false
+            }
+        }
+    }
     /** 切换行情子 Tab（大盘/板块/个股） */
     internal fun selectMarketSub(i: Int) {
         if (i == marketSubTab) return
         marketSubTab = i
+        // 切换前先把内容淡入进度归低，翻转重建时新内容 Scroller 读 0.5 起步轻淡入
+        startMktReveal()
         marketSubToggle = !marketSubToggle
         rankToggle = !rankToggle // 复位个股子榜视图（避免跨 Tab 残留旧榜单）
         // 真实数据懒加载：切到「板块」拉真实行业板块、切到「个股」拉真实榜单。
@@ -1160,7 +1179,11 @@ private fun ViewContainer<*, *>.renderMarket(ctx: MainTabPager) {
 private fun ViewContainer<*, *>.renderMarketContent(ctx: MainTabPager) {
     renderMarketSubTabs(ctx)
     Scroller {
-        attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
+        attr {
+            flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5))
+            // 切换子 Tab 时新内容轻淡入(现读 mktReveal，仅切换瞬间<1，其余恒1)
+            opacity(ctx.mktReveal)
+        }
         // 数据来源标注：让用户一眼分清「实时行情」还是「离线演示数据」，避免误判
         Text {
             attr {
