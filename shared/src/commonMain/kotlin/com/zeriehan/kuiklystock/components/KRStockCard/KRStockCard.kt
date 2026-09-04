@@ -35,11 +35,12 @@ internal fun ViewContainer<*, *>.renderAiStockCards(
     onOpen: (Stock) -> Unit,
 ) {
     if (stocks.isEmpty()) return
-    // 横向滚动卡片行（一行，超宽拖动查看）。固定高度容纳 名称行+现价行+小走势。
+    // 横向滚动卡片行（一行，超宽拖动查看）。固定高度留足余量容纳 名称行+现价行+小走势，
+    // 避免内容(约83)超过 Scroller 高被裁切。
     Scroller {
         attr {
             flexDirectionRow()
-            height(76f)
+            height(92f)
             showScrollerIndicator(false)
         }
         stocks.forEach { s ->
