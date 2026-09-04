@@ -19,6 +19,7 @@ import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.Stock
+import com.zeriehan.kuiklystock.core.StockMention
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.UserSettings
@@ -26,6 +27,7 @@ import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 import com.zeriehan.kuiklystock.core.llm.ChatStore
 import com.zeriehan.kuiklystock.core.llm.ChatSync
 import com.zeriehan.kuiklystock.core.llm.LLM
+import com.zeriehan.kuiklystock.components.KRStockCard.renderAiStockCards
 
 /**
  * AI 聊天页（按股票代码隔离的同一段对话）。
@@ -258,6 +260,11 @@ internal class ChatPage : BasePager() {
     /** 打开消息长按菜单（记录索引 + 文本，供复制 / 删除 / 选取文字） */
     internal fun openMsgMenu(index: Int, text: String) { msgMenuIndex = index; msgMenuText = text }
     internal fun closeMsgMenu() { msgMenuIndex = null; msgMenuText = "" }
+    /** AI 消息里的股票卡片点击 → 跳转个股详情页承接（Task02：聊天结果可跳转承接页） */
+    internal fun openStockDetail(stock: Stock) {
+        val d = JSONObject(); d.put("stockCode", stock.code)
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
+    }
     /** 删除某条消息：同步单例、跨页刷新「最近对话」、本页重建气泡 */
     internal fun deleteMsg(index: Int) {
         if (!::code.isInitialized) return
@@ -567,7 +574,7 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
     if (msgs.isEmpty()) {
         Text { attr { text("（暂无消息）"); fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginTop(20f) } }
     }
-    msgs.forEachIndexed { i, m -> bubble(ctx, i, m.role, m.text, maxBubbleW) }
+    msgs.forEachIndexed { i, m -> renderMessage(ctx, i, m.role, m.text, maxBubbleW) }
     // 思考中占位气泡（与 AI 气泡同款灰白底，保持视觉一致）
     vif({ ctx.aiThinking }) {
         View {
@@ -576,6 +583,24 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
                 padding(10f); borderRadius(12f); backgroundColor(Color(0xFFFFFFFF))
             }
             Text { attr { text("AI 思考中…"); fontSize(UserSettings.fs(14f)); color(Color(0xFF999999)) } }
+        }
+    }
+}
+
+/**
+ * 渲染单条消息：原气泡（[bubble]）+ AI 回复末尾的提及股票卡片组（Task02 发散性渲染）。
+ *
+ * 消息列(Scroller)是纵排容器，气泡行与卡片组作为相邻子节点天然上下排列：
+ * 先渲染原气泡行，若该条是 AI 回复且文本中识别到行情池内的股票，再在其下方
+ * 追加一组迷你行情卡片（点卡片跳转个股详情页）。列表每次重建(AI 回复到达触发
+ * msgVersion/renderToggle 翻转)都会重扫文本，故新回答会自动带出卡片。
+ */
+private fun ViewContainer<*, *>.renderMessage(ctx: ChatPage, index: Int, role: String, text: String, maxBubbleW: Float) {
+    bubble(ctx, index, role, text, maxBubbleW)
+    if (role != "user") {
+        val hits = StockMention.extract(text)
+        if (hits.isNotEmpty()) {
+            renderAiStockCards(hits, width = maxBubbleW, onOpen = { ctx.openStockDetail(it) })
         }
     }
 }

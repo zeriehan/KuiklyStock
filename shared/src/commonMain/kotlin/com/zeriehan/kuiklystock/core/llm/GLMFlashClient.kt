@@ -129,6 +129,15 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
             } else {
                 appendLine("你是一名资深证券分析师，正在和用户聊一只股票。请基于股票信息与对话历史，专业、客观地回答用户的问题。")
             }
+            if (freeMode) {
+                // 引导模型优先提及界面能实时展示行情卡片的池内股票（Task02：提及股→末尾附迷你走势卡片可点跳详情）
+                val pool = StockData.getQuotes().filter { !it.isIndex }.take(18)
+                if (pool.isNotEmpty()) {
+                    appendLine("如需谈及个股，请优先从下方这些可实时查看行情详情的股票中选择，并写全称（方便用户点卡片看走势）：")
+                    appendLine(pool.joinToString("、") { it.name })
+                    appendLine()
+                }
+            }
             appendLine("严格要求：仅输出纯文本，不要使用任何 Markdown 符号（如 #、** 等），用【】标注段落标题，字数控制在 300 字以内。")
             appendLine()
             append(dataCtx)
