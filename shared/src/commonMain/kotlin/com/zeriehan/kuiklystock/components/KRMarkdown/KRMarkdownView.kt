@@ -7,6 +7,7 @@ import com.zeriehan.kuiklystock.core.KRMarkdown
 import com.zeriehan.kuiklystock.core.MdBlock
 import com.zeriehan.kuiklystock.core.MdBlockType
 import com.zeriehan.kuiklystock.core.MdToken
+import com.zeriehan.kuiklystock.core.UserSettings
 
 /**
  * KRMarkdown 富文本渲染器（Task02 发散性渲染：AI 回答渲染成结构化 Markdown）。
@@ -44,9 +45,9 @@ private fun ViewContainer<*, *>.renderOneBlock(
     onOpenStock: (code: String) -> Unit,
 ) {
     when (b.type) {
-        MdBlockType.H1 -> para(w, b.tokens, 18f, textColor, accent, onOpenStock, bold = true, top = 8f, bottom = 2f)
-        MdBlockType.H2 -> para(w, b.tokens, 16f, textColor, accent, onOpenStock, bold = true, top = 6f, bottom = 2f)
-        MdBlockType.PARAGRAPH -> para(w, b.tokens, 14f, textColor, accent, onOpenStock, bold = false, top = 2f, bottom = 2f)
+        MdBlockType.H1 -> para(w, b.tokens, UserSettings.fs(18f), textColor, accent, onOpenStock, bold = true, top = 8f, bottom = 2f)
+        MdBlockType.H2 -> para(w, b.tokens, UserSettings.fs(16f), textColor, accent, onOpenStock, bold = true, top = 6f, bottom = 2f)
+        MdBlockType.PARAGRAPH -> para(w, b.tokens, UserSettings.fs(14f), textColor, accent, onOpenStock, bold = false, top = 2f, bottom = 2f)
         MdBlockType.UL_ITEM -> listItem(w, b.tokens, "•", textColor, accent, onOpenStock)
         MdBlockType.OL_ITEM -> listItem(w, b.tokens, b.raw.ifBlank { "•" }, textColor, accent, onOpenStock)
         MdBlockType.QUOTE -> quoteBlock(w, b.tokens, textColor, accent, onOpenStock)
@@ -86,12 +87,12 @@ private fun ViewContainer<*, *>.listItem(
 ) {
     View {
         attr { width(w); flexDirectionRow(); marginTop(1f); marginBottom(1f) }
-        Text { attr { text(prefix + " "); fontSize(14f); lineHeight(21f); color(textColor) } }
+        Text { attr { text(prefix + " "); fontSize(UserSettings.fs(14f)); lineHeight(UserSettings.fs(21f)); color(textColor) } }
         View {
             attr { flex(1f); flexDirectionColumn() }
             RichText {
                 attr { maxWidth(w - 24f) }
-                for (t in toks) emitSpan(t, 14f, textColor, accent, false, onOpenStock)
+                for (t in toks) emitSpan(t, UserSettings.fs(14f), textColor, accent, false, onOpenStock)
             }
         }
     }
@@ -112,7 +113,7 @@ private fun ViewContainer<*, *>.quoteBlock(
             attr { flex(1f); flexDirectionColumn() }
             RichText {
                 attr { maxWidth(w - 34f) }
-                for (t in toks) emitSpan(t, 13f, textColor, accent, false, onOpenStock)
+                for (t in toks) emitSpan(t, UserSettings.fs(13f), textColor, accent, false, onOpenStock)
             }
         }
     }
@@ -123,7 +124,7 @@ private fun ViewContainer<*, *>.codeBlock(w: Float, raw: String) {
     View {
         attr { width(w); marginTop(4f); marginBottom(4f); padding(10f); borderRadius(8f); backgroundColor(Color(0xFFF4F5F7)) }
         Text {
-            attr { text(raw); fontSize(13f); lineHeight(20f); color(Color(0xFF444444)); maxWidth(w - 20f) }
+            attr { text(raw); fontSize(UserSettings.fs(13f)); lineHeight(UserSettings.fs(20f)); color(Color(0xFF444444)); maxWidth(w - 20f) }
         }
     }
 }

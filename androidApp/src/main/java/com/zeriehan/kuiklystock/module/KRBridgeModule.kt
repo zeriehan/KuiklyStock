@@ -157,54 +157,104 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
     }
 
     private fun showSelectableText(params: String?) {
-        if (params == null) {
-            return
-        }
+        if (params == null) return
         val paramJSON = JSONObject(params)
-        val text = paramJSON.optString("text")
-        if (text.isEmpty()) {
-            return
-        }
+        val content = paramJSON.optString("text")
+        if (content.isEmpty()) return
         val title = paramJSON.optString("title", "选取文字")
         val ctx = context ?: return
         val act = activity ?: return
         act.runOnUiThread {
-            val dm = ctx.resources.displayMetrics
-            val density = dm.density
-            val pad = (18 * density + 0.5f).toInt()
-            // 文本：宽度撑满、左对齐、自动换行，确保文字落在框内
-            val textView = android.widget.TextView(ctx).apply {
-                layoutParams = android.view.ViewGroup.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            // 防重复叠加
+            val decor = act.window?.decorView as? android.view.ViewGroup ?: return@runOnUiThread
+            if (decor.findViewWithTag<android.view.View>(TAG_SELECT_LAYER) != null) return@runOnUiThread
+            val density = ctx.resources.displayMetrics.density
+            val dp = fun(v: Int) = (v * density + 0.5f).toInt()
+            // 是否深色主题由宿主皮肤状态决定：尽力从 Kuikly 当前背景推断，默认白底深字
+            val isDark = false
+
+            // 覆盖层根（全屏、状态栏之下）
+            val overlay = android.widget.FrameLayout(ctx).apply {
+                tag = TAG_SELECT_LAYER
+                setBackgroundColor(
+                    android.graphics.Color.parseColor(if (isDark) "#FF1A1B1E" else "#FFFFFFFF")
                 )
-                setTextIsSelectable(true)
-                setText(text)
+            }
+
+            // —— 顶部栏 ——
+            val topColor = if (isDark) "#FF222326" else "#FFFFFFFF"
+            val top = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setBackgroundColor(android.graphics.Color.parseColor(topColor))
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(48)
+                )
+            }
+            // 返回
+            val back = android.widget.TextView(ctx).apply {
+                setText("‹ 返回")
+                textSize = 17f
+                setTextColor(android.graphics.Color.parseColor("#FF576B95"))
+                setPadding(dp(16), 0, dp(8), 0)
+                gravity = android.view.Gravity.CENTER_VERTICAL
+            }
+            back.setOnClickListener { act.runOnUiThread { dismissSelectLayer(act) } }
+            top.addView(back)
+            val titleView = android.widget.TextView(ctx).apply {
+                setText(title)
                 textSize = 16f
-                gravity = android.view.Gravity.START or android.view.Gravity.TOP
-                setTextColor(android.graphics.Color.parseColor("#FF222222"))
-                setPadding(pad, pad / 2, pad, pad / 2)
-                setLineSpacing(2 * density, 1.0f)
+                setTextColor(android.graphics.Color.parseColor(if (isDark) "#FFE0E0E0" else "#FF222222"))
+            }
+            top.addView(titleView)
+            overlay.addView(top)
+
+            // —— 可选中文本区（长按出系统标准选区 + 复制）——
+            val bodyBg = android.graphics.Color.parseColor(if (isDark) "#FF1A1B1E" else "#FFFFFFFF")
+            val textColor = android.graphics.Color.parseColor(if (isDark) "#FFE6E6E6" else "#FF222222")
+            val pad = dp(16)
+            val textView = android.widget.TextView(ctx).apply {
+                setTextIsSelectable(true)
+                setText(content)
+                textSize = 16f
+                setTextColor(textColor)
+                setLineSpacing((3 * density).toFloat(), 1.0f)
+                setPadding(pad, dp(12), pad, dp(12))
             }
             val scrollView = android.widget.ScrollView(ctx).apply {
-                layoutParams = android.view.ViewGroup.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                )
+                setBackgroundColor(bodyBg)
                 isVerticalScrollBarEnabled = true
-                addView(textView)
+                addView(
+                    textView,
+                    android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                )
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                ).apply { topMargin = dp(48) }
             }
-            val dialog = android.app.AlertDialog.Builder(act)
-                .setTitle(title)
-                .setView(scrollView)
-                .setPositiveButton("关闭", null)
-                .create()
-            dialog.show()
-            // 贴底、加宽，避免居中悬浮小框
-            dialog.window?.apply {
-                setGravity(android.view.Gravity.BOTTOM)
-                setLayout((dm.widthPixels * 0.94f).toInt(), android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+            overlay.addView(scrollView)
+
+            // 加入 decorView（覆盖在 Kuikly 渲染之上）
+            decor.post {
+                decor.addView(
+                    overlay,
+                    android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                )
             }
+        }
+    }
+
+    private fun dismissSelectLayer(act: android.app.Activity) {
+        (act.window?.decorView as? android.view.ViewGroup)?.let { decor ->
+            decor.findViewWithTag<android.view.View>(TAG_SELECT_LAYER)?.let { decor.removeView(it) }
         }
     }
 
@@ -364,6 +414,7 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
     companion object {
         const val MODULE_NAME = "HRBridgeModule"
+        private const val TAG_SELECT_LAYER = "kr_select_text_layer"
     }
 }
 
