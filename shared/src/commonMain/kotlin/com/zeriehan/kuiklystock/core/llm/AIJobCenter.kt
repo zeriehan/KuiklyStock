@@ -18,51 +18,105 @@ import com.zeriehan.kuiklystock.base.Utils
  * 注册进来；此后所有 LLM 请求一律用这个"常驻桥"发送。子页面关掉后请求照常飞行、
  * 结果照样回调，回调里只写 [ChatStore] / [AIAnalysisStore] 这类**单例**，
  * 因此结果不会丢；子页面自己的 observable 若已销毁则写空操作，无害。
+ *
+ * ## 流式（真·逐字蹦出）
+ * 调研确认：Kuikly 桥的单次 callback **不透传多次 invoke**（request/response RPC），
+ * 无法靠"宿主多次回调"推流。改为：宿主流式把累计文本写进按 sid 索引的缓存，
+ * 这里用绑在常驻根页（[rootPagerId]，不随子页面销毁）的定时器 [pumpStream] 周期性轮询
+ * 取增量 → 驱动聊天气泡逐字增长；生成结束仍经单次 done 回调兜底/后台落库。
  */
 internal object AIJobCenter {
 
     private var rootBridge: BridgeModule? = null
+    /** 常驻根页的 pagerId：流式轮询泵需要绑一个"常驻不销毁"的定时器 */
+    private var rootPagerId: String = ""
 
     /** 由常驻根页面（MainTabPager）调用，注册一个不会随子页面关闭而失效的桥 */
     fun attach(bridge: BridgeModule) {
         rootBridge = bridge
+        rootPagerId = bridge.pagerId
     }
 
     fun detach(bridge: BridgeModule) {
-        if (rootBridge === bridge) rootBridge = null
+        if (rootBridge === bridge) {
+            rootBridge = null
+            rootPagerId = ""
+        }
     }
 
     /**
-     * 用常驻桥弹一个 toast：供"后台任务完成"提示使用
-     * （发起任务的页面可能已经销毁，用本页桥会失效）。
+     * 流式轮询泵：每隔 [intervalMs] 轮询宿主流式会话 [sid]，把累计文本回调给 [onUpdate]。
+     * 宿主返回 finished（生成结束）时自动停止。返回取消句柄。
+     * 定时器绑常驻根页（MainTabPager，常驻不销毁），子页面关闭后仍能继续拉后台生成结果。
      */
-    fun toast(message: String) {
+    fun pumpStream(sid: String, intervalMs: Int, onUpdate: (text: String, finished: Boolean) -> Unit): () -> Unit {
+        val pagerId = rootPagerId
+        if (pagerId.isBlank() || sid.isBlank()) return {}
+        var cancelled = false
+        fun tick() {
+            if (cancelled) return
+            pollStream(sid) { resp ->
+                if (cancelled || resp == null) return@pollStream
+                val text = resp.optString("text")
+                val finished = resp.optBoolean("finished")
+                onUpdate(text, finished)
+                if (!finished && !cancelled) {
+                    com.tencent.kuikly.core.timer.setTimeout(pagerId, intervalMs) { tick() }
+                }
+            }
+        }
+        tick()
+        return { cancelled = true }
+    }
+
+    /** 轮询宿主流式会话 [sid] 的当前累计文本。回调 JSONObject 形如 {text, finished}；异常以 null 回调。 */
+    fun pollStream(sid: String, callback: (JSONObject?) -> Unit) {
+        val bridge = rootBridge
+        if (bridge != null) {
+            try {
+                bridge.llmStreamPoll(sid) { resp -> callback(resp) }
+                return
+            } catch (e: Throwable) {
+                // 根页桥异常 → 尝试当前页桥
+            }
+        }
         try {
-            (rootBridge ?: Utils.currentBridgeModule()).toast(message)
+            Utils.currentBridgeModule().llmStreamPoll(sid) { resp -> callback(resp) }
         } catch (e: Throwable) {
-            // 提示失败无所谓，不影响主流程
+            callback(null)
         }
     }
 
     /**
      * 下发 prompt。优先用根页桥（后台安全）；未注册时退回当前页桥（兜底）。
-     * @param stream true 走宿主流式回调（多次 delta + 一次 done）；false 一次性 done。
+     * @param stream true 走宿主流式（SSE 写缓存，shared 用 [pumpStream]/[pollStream] 拉增量），
+     *               结束时回调一次 {type:done} 兜底/后台落库；false 一次性 {type:done,text}。
+     * @param sid 流式会话 id（stream=true 时用于轮询定位宿主缓存）。
      * 任何异常都以 null 回调，上层（GLMFlashClient）会回退 Mock，不会卡在「分析中」。
      */
-    fun sendPrompt(prompt: String, stream: Boolean = false, callback: (JSONObject?) -> Unit) {
+    fun sendPrompt(prompt: String, stream: Boolean = false, sid: String = "", callback: (JSONObject?) -> Unit) {
         val bridge = rootBridge
         if (bridge != null) {
             try {
-                bridge.llmAnalyze(prompt, stream) { resp -> callback(resp) }
+                bridge.llmAnalyze(prompt, stream, sid) { resp -> callback(resp) }
                 return
             } catch (e: Throwable) {
                 // 根页桥异常（极端情况）→ 继续尝试当前页桥
             }
         }
         try {
-            Utils.currentBridgeModule().llmAnalyze(prompt, stream) { resp -> callback(resp) }
+            Utils.currentBridgeModule().llmAnalyze(prompt, stream, sid) { resp -> callback(resp) }
         } catch (e: Throwable) {
             callback(null)
+        }
+    }
+
+    /** 用常驻桥弹一个 toast：供"后台任务完成"提示使用（发起任务的页面可能已经销毁，用本页桥会失效）。 */
+    fun toast(message: String) {
+        try {
+            (rootBridge ?: Utils.currentBridgeModule()).toast(message)
+        } catch (e: Throwable) {
+            // 提示失败无所谓，不影响主流程
         }
     }
 }

@@ -59,6 +59,8 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
         onDelta: ((String) -> Unit)?,
     ) {
         val prompt = buildChatPrompt(stock, question, history, freeMode)
+        // 流式会话 id：shared 轮询宿主缓存用它定位；带时间戳避免并发/重进冲突
+        val sid = "llm_${System.currentTimeMillis()}"
         var finalized = false
         fun finish(text: String) {
             if (finalized) return
@@ -71,25 +73,35 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
             }
         }
         try {
-            // 走 AIJobCenter（常驻根页面桥）：退出聊天页后 AI 仍在"后台"边生成边回调
-            AIJobCenter.sendPrompt(prompt, stream = true) { resp ->
+            // 走 AIJobCenter（常驻根页面桥）：退出聊天页后 AI 仍在"后台"生成
+            AIJobCenter.sendPrompt(prompt, stream = true, sid = sid) { resp ->
                 if (resp == null) {
                     finish("")
                     return@sendPrompt
                 }
-                val type = resp.optString("type")
-                val text = resp.optString("text")
-                when (type) {
-                    // 增量：透传累计全文，驱动聊天气泡"逐字蹦出"
-                    "delta" -> onDelta?.invoke(text)
-                    // 收尾（宿主任何路径最终都会发一次 done；兼容旧宿主只有 text 无 type 时也当完成）
-                    else -> finish(text)
+                // 收尾：宿主流式结束会回调一次 {type:"done", text}；兼容旧宿主无 type 也当完成。
+                // 真实逐字增量由下方 pumpStream 轮询宿主缓存驱动（桥单次回调不透传多次）。
+                finish(resp.optString("text"))
+            }
+            // 轮询泵：绑常驻根页定时器，周期性拉宿主累计文本喂给 onDelta → 聊天气泡"逐字蹦出"。
+            // finished=true（生成结束）自动停；每段 onDelta 幂等，配合 done 回调收敛不重复落库。
+            if (onDelta != null) {
+                AIJobCenter.pumpStream(sid, POLL_INTERVAL_MS) { text, finished ->
+                    onDelta(text)
+                    if (finished) {
+                        // 轮询已看到结束；done 回调可能还没到，这里不主动 finish，等 done 兜底（保重 finalized 单次）
+                    }
                 }
             }
         } catch (e: Throwable) {
             // 桥不可用（极端情况如页面已销毁）→ 回退 Mock，保证不卡死在"分析中"
             finish("")
         }
+    }
+
+    companion object {
+        /** 流式轮询间隔：160ms，约 6~7 次/秒，观感为逐字蹦出且不刷爆 UI */
+        private const val POLL_INTERVAL_MS = 160
     }
 
     /**

@@ -85,14 +85,26 @@ internal class BridgeModule : Module() {
     /**
      * AI 分析：把自然语言 prompt 下发到 Android 宿主，由宿主用 GLM 生成文本后回调。
      * 异步返回，回调参数形如 { "text": "..." }；生成失败/未配置 Key 时 text 为空串（上层回退 Mock）。
-     * @param stream true 时宿主用 SSE 边生成边多次回调：{ "type":"delta", "text":累计全文 } → 收尾 { "type":"done", "text":全文 }；
+     * @param stream true 时宿主用 SSE 边生成：把累计文本写入按 [sid] 索引的宿主缓存（shared 用 [llmStreamPoll] 轮询取增量），
+     *               结束时回调一次 { "type":"done", "text":全文 } 兜底/后台落库；
      *                false（默认）一次性回调一次 { "type":"done", "text":全文 }（兼容旧 analyze 调用）。
      */
-    fun llmAnalyze(prompt: String, stream: Boolean = false, callbackFn: CallbackFn) {
+    fun llmAnalyze(prompt: String, stream: Boolean = false, sid: String = "", callbackFn: CallbackFn) {
         val methodArgs = JSONObject()
         methodArgs.put("prompt", prompt)
         methodArgs.put("stream", stream)
+        methodArgs.put("sid", sid)
         callNativeMethod(LLM_ANALYZE, methodArgs, callbackFn)
+    }
+
+    /**
+     * 轮询某流式会话（[sid]）的当前累计文本。回调参数形如 { "text": "累计", "finished": 0/1 }；
+     * finished 为 true 表示生成已结束，shared 应停止轮询。用于驱动"逐字蹦出"（桥单次回调不透传多次，只能拉）。
+     */
+    fun llmStreamPoll(sid: String, callbackFn: CallbackFn) {
+        val methodArgs = JSONObject()
+        methodArgs.put("sid", sid)
+        callNativeMethod("llmStreamPoll", methodArgs, callbackFn)
     }
 
     /**

@@ -19,12 +19,18 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
 
 class KRBridgeModule : KuiklyRenderBaseModule() {
 
     /** 全屏"选取文字"弹窗引用（防重复叠加；Dialog 独立 Window，稳定不闪烁） */
     private var selectDialog: android.app.Dialog? = null
+
+    /** 流式生成缓存：shared 因桥单次回调不透传多次，改为轮询本缓存取累计文本（sid → 文本/是否结束） */
+    private data class LlmStreamBuf(@Volatile var text: String = "", @Volatile var finished: Boolean = false)
+
+    private val llmStreamBufs = ConcurrentHashMap<String, LlmStreamBuf>()
 
     override fun call(method: String, params: String?, callback: KuiklyRenderCallback?): Any? {
         return when (method) {
@@ -86,6 +92,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
             "llmAnalyze" -> {
                 llmAnalyze(params, callback)
+            }
+
+            "llmStreamPoll" -> {
+                llmStreamPoll(params, callback)
             }
 
             "fetchQuotes" -> {
@@ -318,6 +328,7 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         val obj = JSONObject(params)
         val prompt = obj.optString("prompt")
         val stream = obj.optBoolean("stream", false)
+        val sid = obj.optString("sid", "")
         val key = GLMConfig.API_KEY
         if (key.isBlank()) {
             Log.w("KRBridge", "GLM_API_KEY 未配置，回退空文本（shared 端将回退 Mock）")
@@ -325,9 +336,33 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             return
         }
         if (stream) {
-            llmAnalyzeStreaming(prompt, key, callback)
+            llmAnalyzeStreaming(prompt, key, sid, callback)
         } else {
             llmAnalyzeOnce(prompt, key, callback)
+        }
+    }
+
+    /** 轮询某流式会话的当前累计文本。shared 用它驱动"逐字蹦出"（单次回调不透传多次，只能拉）。 */
+    private fun llmStreamPoll(params: String?, callback: KuiklyRenderCallback?) {
+        if (params == null) {
+            callback?.invoke(mapOf("text" to "", "finished" to true))
+            return
+        }
+        val sid = JSONObject(params).optString("sid", "")
+        if (sid.isBlank()) {
+            callback?.invoke(mapOf("text" to "", "finished" to true))
+            return
+        }
+        val buf = llmStreamBufs[sid]
+        if (buf == null) {
+            // 会话不存在（可能已被消费/超时清理）→ 视为结束，shared 停止轮询
+            callback?.invoke(mapOf("text" to "", "finished" to true))
+            return
+        }
+        callback?.invoke(mapOf("text" to buf.text, "finished" to buf.finished))
+        // 已结束：poll 完即可清理缓存，避免内存泄漏
+        if (buf.finished) {
+            llmStreamBufs.remove(sid)
         }
     }
 
@@ -357,43 +392,50 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
     }
 
     /**
-     * 流式：GLM SSE 边生成边把「累计文本」逐段回调（`{type:"delta", text}`），
-     * 结束后回调 `{type:"done", text}` 收尾。
+     * 流式：GLM SSE 边生成边把「累计文本」写入按 [sid] 索引的缓存（shared 轮询该缓存取增量）。
+     * 结束后回调一次 `{type:"done", text}` 收尾（final 文本仍经单次回调可靠送达，作为兜底/后台落库）。
      *
-     * 安全降级：若桥层只透传最后一次回调，shared 端会收到 done（含完整文本），
-     * 自动退化成"整段一次返回"——不会比非流式更差。整体超时兜底仍保留：若一直没产出任何
-     * 内容就超时，回调 done 空文本 → shared 走 Mock；一旦有首段产出则取消兜底，让生成自然走完。
+     * 说明：Kuikly 桥的单次 callback 不透传多次 invoke，故不能靠"多次回调"推流；改为写缓存 + 轮询拉取。
+     * 整体超时兜底仍保留：一直没产出则回调 done 空文本 → shared 走 Mock；首段产出后取消兜底让长生成走完。
      */
-    private fun llmAnalyzeStreaming(prompt: String, key: String, callback: KuiklyRenderCallback?) {
+    private fun llmAnalyzeStreaming(prompt: String, key: String, sid: String, callback: KuiklyRenderCallback?) {
         val mainHandler = Handler(Looper.getMainLooper())
+        val buf = LlmStreamBuf()
+        if (sid.isNotBlank()) {
+            llmStreamBufs[sid] = buf
+        }
         val finished = java.util.concurrent.atomic.AtomicBoolean(false)
-        fun post(map: Map<String, Any>) {
-            mainHandler.post { callback?.invoke(map) }
-        }
         fun finish(map: Map<String, Any>) {
-            if (finished.compareAndSet(false, true)) post(map)
+            if (finished.compareAndSet(false, true)) {
+                buf.finished = true
+                // 结束即安排延迟清理缓存（若 shared 已因 done 回调停止轮询而不再 poll，也能释放）
+                if (sid.isNotBlank()) {
+                    mainHandler.postDelayed({ llmStreamBufs.remove(sid) }, 3_000L)
+                }
+                mainHandler.post { callback?.invoke(map) }
+            }
         }
-        // 整体超时兜底：若一直没产出内容就超时，回调 done 空文本 → shared 走 Mock。
-        // 一旦首段产出则移除该兜底，让长生成自然走完不被 15s 卡掉。
+        // 整体超时兜底：一直没产出则标记结束并回 done 空文本（shared 走 Mock）。首段产出后移除。
         val watchdog = object : Runnable {
             override fun run() {
-                finish(mapOf("type" to "done", "text" to ""))
+                finish(mapOf("type" to "done", "text" to buf.text))
             }
         }
         mainHandler.postDelayed(watchdog, LLM_OVERALL_TIMEOUT_MS)
         thread(name = "glm-llm-stream") {
             try {
                 val result = glmChatStream(prompt, key) { text ->
-                    // 首段一到就取消超时兜底；之后每段都透传累计文本
+                    // 每段累计文本写进缓存（shared 轮询取到即驱动气泡增长）；首段后取消超时兜底
                     if (text.isNotBlank()) {
                         mainHandler.removeCallbacks(watchdog)
+                        buf.text = text
                     }
-                    post(mapOf("type" to "delta", "text" to text))
                 }
+                buf.text = result.orEmpty()
                 finish(mapOf("type" to "done", "text" to result.orEmpty()))
             } catch (e: Throwable) {
                 Log.e("KRBridge", "llmAnalyzeStreaming failed", e)
-                finish(mapOf("type" to "done", "text" to ""))
+                finish(mapOf("type" to "done", "text" to buf.text))
             }
         }
     }
