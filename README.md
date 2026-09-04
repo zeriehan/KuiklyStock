@@ -7,6 +7,9 @@
 
 ## 一、AI 接手指南（START HERE）
 
+> ⚠️ **本节是 2026-08-27 最早的 AI 接手指南（历史存档）**，其中"待编译的 3 个文件 / 模板 RouterPage/HelloWorld / 下一步清单"等**均已被后续进度取代，且引用到的脚手架示例文件已删除**。
+> **当前权威状态请直接看：文末「附：实际进度快照」**、交付文档 **`架构说明.md`** 与 **`亮点与创新.md`**；工程已可编译，无需再处理"修脚手架报错"。
+
 ### 1.1 项目是什么
 - **参赛项目**：2026 腾讯犀牛鸟对外开源人才计划 · KuiklyUI 实战
 - **两个任务**：Task 01 AI 股票行情原型 Demo + Task 02 AI 股票问答应用 Demo
@@ -87,12 +90,11 @@
 
 ## 四、目录结构（当前实际）
 
+> ⚠️ 本节为早期规划快照，含"待写"占位与已删除的脚手架文件，**非当前实际**。当前真实目录/文件清单见文末「附：实际进度快照」的目录结构，以及 `架构说明.md` 的分层图。
+
 ```
 com/zeriehan/kuiklystock/
 ├── base/                      [模板自带，保留] BasePager / BridgeModule / Utils
-├── Page/                      [模板自带] HelloWorldPage.kt
-├── RouterPage.kt              [模板自带] 路由入口示例
-├── ImageAdapterBenchmarks.kt  [模板自带] 忽略
 ├── core/
 │   ├── Stock.kt              ✅ 已写：Stock 模型 + 配色 + 格式化
 │   ├── LLMClient.kt          ⬜ 待写：LLM 接口抽象（GLM-4-Flash 实现）
@@ -151,7 +153,7 @@ internal fun ViewContainer<*, *>.KRStockBadge(init: KRStockBadge.() -> Unit) {
 }
 ```
 
-**页面写法**（模板 `Page/HelloWorldPage.kt`、`RouterPage.kt`）：
+**页面写法**（可参考已验证页面 `app/quotes/QuotesPage.kt`、`app/detail/StockDetailPage.kt`）：
 ```kotlin
 @Page("QuotesPage")            // 路由名
 class QuotesPage : Pager() {   // 或继承 base/BasePager
@@ -224,38 +226,39 @@ class QuotesPage : Pager() {   // 或继承 base/BasePager
 四大维度：功能 40% / 代码 25% / AI 25% / 加分 10%。
 交付三件套（缺一不可）：① 可编译运行代码 ② 说明文档（README+架构+亮点）③ 演示视频 3-5 分钟。
 
-自查清单：
-- [ ] Task01 三模块齐全可运行（列表/详情/AI 分析）
-- [ ] Task02 三模块齐全可运行（聊天/渲染/承接页）
-- [ ] 自研表格/卡片组件可脱离业务复用
-- [ ] LLM 真实可用（非写死）
-- [ ] Prompt 有设计感 + 结构化输出 + 多轮上下文
-- [ ] 真实数据源（加分）
-- [ ] README+架构+亮点文档
-- [ ] 演示视频
+自查清单（截至 2026-09-04 实际状态）：
+- [x] Task01 三模块齐全可运行（列表/详情/AI 分析）
+- [x] Task02 三模块齐全可运行（聊天/富文本渲染/承接页）
+- [x] 自研表格/卡片组件可脱离业务复用（components/ 见架构说明）
+- [x] LLM 真实可用（智谱 GLM Flash + 候选链降级 + 真流式）
+- [x] Prompt 有设计感 + 结构化(Markdown)输出 + 多轮上下文
+- [x] 真实数据源（东方财富/腾讯行情，mock 仅兜底）
+- [x] README + 架构 + 亮点文档（README.md / 架构说明.md / 亮点与创新.md）
+- [ ] 演示视频 3-5 分钟（需录制，见 亮点与创新.md 第六节建议覆盖项）
 
 ---
 
 ## 九、运行与构建
 
 - 用 **Android Studio**（≥ 2024.2.1）+ Kuikly 插件（≥ 1.1.0），Gradle JDK 切到 **17**。
-- 打开 `KuiklyStock` 根目录，Run `androidApp`。
-- Windows 不做 iOS：在 `shared/build.gradle.kts` 注释掉 iOS 相关配置避免编译报错。
-- 首次同步后先把 `core/Stock.kt`、`components/KRStockBadge`、`components/KRTable` 的编译报错修掉，再继续写新组件。
+- 打开 `KuiklyStock` 根目录，Run `androidApp`；启动入口为四 Tab 主框架 `MainTab`。
+- 需要真实 GLM 时：在 `local.properties` 写入 `GLM_API_KEY=你的key`（已 .gitignore）；不写则自动用离线 Mock，功能演示不受阻。
+- Windows 不做 iOS：`shared/build.gradle.kts` 的 iOS 相关配置保持注释即可。
+- 命令行编译：`./gradlew --stop` 后 `./gradlew :shared:compileDebugKotlinAndroid`（判 UP-TO-DATE 加 `--rerun-tasks`）；宿主改动用 `:androidApp:compileDebugKotlin`。源码已可通过编译，无需再修脚手架报错。
 
 ---
 
 ## 十、给接手 AI 的最后提醒
 
-1. 先编译、先编译、先编译——已写的 3 个文件没验证过。
-2. 所有 UI 字符串、颜色、间距参照中国股市惯例（红涨绿跌）。
-3. 每次给用户的改动尽量小步提交，便于他 `git push`。
-4. 遇到 Kuikly API 不确定，优先 `Read` 仓库内 `RouterPage.kt` / `Page/HelloWorldPage.kt` / `base/BasePager.kt` 这三个模板文件，不要凭空猜。
-5. 完整规划原文见本文档各章；如需更细的历史讨论，用户本地 `RhinoBrid/.workbuddy/document/项目规划书.md` 有 v1.2 规划书（不在本仓库，仅供参考）。
+1. 所有 UI 字符串、颜色、间距参照中国股市惯例（红涨绿跌；涨红 `0xFFE54D42`、跌绿 `0xFF1ABE5B`）。
+2. 每次给用户的改动尽量小步提交，便于他 `git push`（push 走 SSH：`GIT_SSH_COMMAND=...` + `git push git@github.com:zeriehan/KuiklyStock.git main`）。
+3. 遇到 Kuikly API 不确定，优先 Read 已验证文件：`base/BasePager.kt`、`app/main/MainTabPager.kt`、`app/chat/ChatPage.kt`（脚手架示例 RouterPage/HelloWorld 已删除，勿再参考）。
+4. 高频 Kuikly 坑：响应式只重跑读了 observable 的 vif/attr；padding 需 4 边显式对称；桥单次回调不透传多次；页面定时器要绑"当前前台页"。
+5. 完整规划与产品背景见本文档前八章；技术架构见 `架构说明.md`，可讲亮点见 `亮点与创新.md`。
 
 ---
 
-*本 README 同时承担「项目战略书 + AI 接手指南」角色，由前序 AI 于 2026-08-27 整理写入，供后续 AI 或本人无缝续做。*
+*README 同时承载「产品/进度/AI 接手指南」。交付文档另含 `架构说明.md`（技术架构）与 `亮点与创新.md`（可讲亮点与诚实备注）。*
 
 ---
 
@@ -285,7 +288,7 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
 │   ├── mine/         AppearancePage/ExpandSettingsPage/HiddenStocksPage
 │   └── quotes/       HeatPoolPage(行情池)/QuotesPage(旧验证页,无入口,勿用)
 ```
-- 路由页 @Page: Chat/StockDetail/SectorDetail/MainTab/Appearance/ExpandSettings/HiddenStocks/HeatPool（含模板自带 HelloWorld/Router）。
+- 路由页 @Page: MainTab / QuotesPage / StockDetail / SectorDetail / Chat / HeatPool / Appearance / ExpandSettings / HiddenStocks。
 
 ### 编译
 - `./gradlew --stop` 后 `./gradlew :shared:compileDebugKotlinAndroid`（判 UP-TO-DATE 加 `--rerun-tasks`）。
