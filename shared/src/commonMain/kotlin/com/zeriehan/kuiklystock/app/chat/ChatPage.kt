@@ -51,8 +51,8 @@ import com.zeriehan.kuiklystock.components.KRMarkdown.renderMarkdown
  * 3.1 「后台继续跑」：请求经 AIJobCenter 发到常驻根页面(MainTabPager)的桥上，
  *    因此退出本页后 AI 仍会继续生成；结果写进单例 ChatStore（并已落盘 SharedPreferences），
  *    重新进入时 pageDidAppear 会同步出来。等待状态由 ChatStore.isPending 跨页面保留。
- * 4. 键盘：宿主设 adjustNothing，这里监听 keyboardHeightChange 手动把内容区底部抬起(paddingBottom)，
- *    标题栏固定不动、仅输入栏贴着键盘上沿。
+ * 4. 键盘：宿主 AndroidManifest 设 windowSoftInputMode="adjustResize"，弹键盘时系统自动收缩页面
+ *    框架到键盘上方——标题栏固定、消息区 flex1 变矮、输入栏贴键盘上沿、整页不遮内容。无需手动推内容。
  */
 @Page("Chat", supportInLocal = true)
 internal class ChatPage : BasePager() {
@@ -468,11 +468,10 @@ internal class ChatPage : BasePager() {
                 flexDirectionColumn()
                 // 页面底色比气泡略深一档（微信同款），让 AI 的白色气泡轮廓清晰可辨
                 backgroundColor(Color(0xFFEDEFF2))
-                // ⚠️ 原来这里用 paddingBottom(ctx.keyboardH) 想让键盘弹起时整页内容上移，
-                // 真机实测整页没动(根 attr 的 paddingBottom 可能不随 observable 重跑)，
-                // 改成在输入栏前放一个高度=keyboardH 的占位 Spacer(普通子视图必有 reactive)，
-                // 键盘弹起时其高度变化即把输入栏和它上方所有内容顶起。所以这里**不再加 paddingBottom**，
-                // 避免与 Spacer 重复造成输入栏被推得太高。
+                // 键盘处理靠宿主 AndroidManifest 的 windowSoftInputMode="adjustResize"：
+                // 弹键盘时系统自动把页面框架收缩到键盘上方(标题栏仍顶格、消息区 flex1 自动变矮、
+                // 输入栏贴键盘上沿)。故这里不需要手动 paddingBottom/占位去推内容——那是导致
+                // "键盘弹起整页不动/内容被盖"的错误根源(曾有 adjustNothing+手动方案,根 attr 不可靠)。
             }
             // 消息列表的实际渲染放在 renderMessages() 中，由消息流 Scroller 内的 vif(renderToggle) 翻转重建。
 
@@ -595,18 +594,6 @@ internal class ChatPage : BasePager() {
                 }
             }
             } // vif(quickTipsVisible) 结束
-
-            // ===== 键盘抬起占位：明确把输入栏顶上去，绕开根 paddingBottom 是否响应式的不确定 =====
-            // 真机验证：根 attr { paddingBottom(ctx.keyboardH) } 在 keyboardHeightChange 后整页没上移
-            // (chips 区被键盘盖住)——根容器 paddingBottom 可能不被 reactive 追踪、或 push 后整页未触发
-            // 重测。改用一个独立的"键盘高 Spacer" View，在输入栏之前,height 现读 ctx.keyboardH
-            // (普通子视图 reactive 一定有),键盘弹起时其高度变化即把输入栏和它上方所有内容顶起。
-            View {
-                attr {
-                    height(ctx.keyboardH)
-                    backgroundColor(Color(0xFFEDEFF2))   // 与页底色一致，键盘弹起时这块"占位"看起来无缝
-                }
-            }
 
             // ===== 输入栏 =====
             // ⚠️ padding 必须 4 边对称(top/left/bottom/right 全给)，否则只有 top/left，输入栏内文字
