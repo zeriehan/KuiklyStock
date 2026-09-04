@@ -39,15 +39,18 @@ import com.zeriehan.kuiklystock.components.KRKLineChart.KRKLineChart
 @Page("StockDetail", supportInLocal = true)
 internal class StockDetailPage : BasePager() {
 
-    /** 可选模块（默认勾选前三个） */
-    private enum class DModule { AI, PROFILE, FINANCE, FUND, NEWS }
+    /**
+     * 可选模块（默认勾选全部）。
+     * ⚠️ 原还有 FUND(资金流向)/NEWS(相关新闻) 两项，但它们只有「（待接入）」空卡、且项目
+     *    无对应数据源；芯片却照常提供，用户点开只能看到空卡——属于"宣传了不存在的功能"。
+     *    已移除：与其展示空壳，不如只保留真正有内容的模块（必要时实现数据源后再加回）。
+     */
+    private enum class DModule { AI, PROFILE, FINANCE }
     private val moduleLabels = mapOf(
         DModule.AI to "AI分析",
         DModule.PROFILE to "简况",
         // 原「财务」（营收/净利/ROE 无真实数据源），改为展示真实盘口指标，故标签同步改名为「盘口」
         DModule.FINANCE to "盘口",
-        DModule.FUND to "资金",
-        DModule.NEWS to "新闻",
     )
     private var modules: List<DModule> by observable(
         listOf(DModule.AI, DModule.PROFILE, DModule.FINANCE)
@@ -504,22 +507,6 @@ internal class StockDetailPage : BasePager() {
                             Text { attr { text("成交量"); fontSize(12f); color(Color(0xFF999999)); flex(1f) } }
                             Text { attr { text(formatPrice(stock.volume) + " 万手"); fontSize(14f); color(Color(0xFF222222)) } }
                         }
-                    }
-                }
-
-                // 资金 / 新闻（占位）
-                vif({ ctx.modules.contains(DModule.FUND) }) {
-                    View {
-                        attr { margin(12f); padding(12f); backgroundColor(Color.WHITE); borderRadius(12f) }
-                        Text { attr { text("资金流向"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
-                        Text { attr { text("（待接入）"); fontSize(13f); color(Color(0xFF999999)); marginTop(8f) } }
-                    }
-                }
-                vif({ ctx.modules.contains(DModule.NEWS) }) {
-                    View {
-                        attr { margin(12f); padding(12f); backgroundColor(Color.WHITE); borderRadius(12f) }
-                        Text { attr { text("相关新闻"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
-                        Text { attr { text("（待接入）"); fontSize(13f); color(Color(0xFF999999)); marginTop(8f) } }
                     }
                 }
 
