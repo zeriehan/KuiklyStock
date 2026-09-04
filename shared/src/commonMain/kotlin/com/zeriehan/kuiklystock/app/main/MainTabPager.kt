@@ -588,9 +588,16 @@ internal class MainTabPager : BasePager(), StockNavigator {
     }
 
     /** 「大盘」Tab 的 AI 入口：就今日大盘问 AI（复用聊天页，按上证指数代码隔离会话） */
+    /** 行情页「问 AI 看大盘 →」：带大盘总结问题进入对话并自动发出，兑现卡片承诺。
+     *  复用 ChatPage 的 prompt 预填自动发送能力（同「AI 选股」chips）。 */
     internal fun askMarketAI() {
         closeSheet()
-        val d = JSONObject(); d.put("stockCode", "000001")
+        val d = JSONObject()
+        d.put("stockCode", "000001")
+        d.put(
+            "prompt",
+            "结合今日三大指数表现和市场涨跌家数，帮我总结当前市场的机会与风险，并给出接下来值得关注的方向。"
+        )
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", d)
     }
 
@@ -1231,8 +1238,6 @@ private fun ViewContainer<*, *>.renderMarketIndex(ctx: MainTabPager) {
             attr { flexDirectionRow(); alignItemsCenter() }
             View { attr { width(18f); height(18f); borderRadius(9f); backgroundColor(Color(0xFFE6F1FB)); marginRight(6f) } }
             Text { attr { text("AI 大盘解读"); fontSize(ctx.fs(15f)); fontWeightSemiBold(); color(Color(0xFF222222)) } }
-            View { attr { flex(1f) } }
-            Text { attr { text("即将接入"); fontSize(ctx.fs(12f)); color(Color(0xFF999999)) } }
         }
         Text {
             attr {
