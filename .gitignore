@@ -50,3 +50,5 @@ Kotlin-js-store
 secrets.properties
 *.env
 gradle.properties.local
+# 编译日志(临时)
+compile_*.log
