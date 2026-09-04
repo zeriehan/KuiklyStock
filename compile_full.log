@@ -1,0 +1,109 @@
+Starting a Gradle Daemon, 10 stopped Daemons could not be reused, use --status for details
+> Task :buildSrc:checkKotlinGradlePluginConfigurationErrors
+> Task :buildSrc:pluginDescriptors
+> Task :buildSrc:processResources NO-SOURCE
+> Task :buildSrc:compileKotlin
+> Task :buildSrc:compileJava NO-SOURCE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:classes UP-TO-DATE
+
+> Task :buildSrc:jar
+:jar: No valid plugin descriptors were found in META-INF/gradle-plugins
+
+> Configure project :shared
+[KuiklyGradle][KuiklyPlugin] apply
+[KuiklyGradle][KuiklyPlugin] Using KSP dependency: com.tencent.kuikly-open:core-ksp:2.7.0-2.1.21
+The 'ksp' configuration is deprecated in Kotlin Multiplatform projects. Please use target-specific configurations like 'kspJvm' instead.
+WARNING:Software Components will not be created automatically for Maven publishing from Android Gradle Plugin 8.0. To opt-in to the future behavior, set the Gradle property android.disableAutomaticComponentCreation=true in the `gradle.properties` file or use the new publishing DSL.
+[KuiklyGradle][JSProcessor] > createPackAssetsTask packJsLocalAssetsDebug with assetsPath: null
+[KuiklyGradle][JSProcessor] > createPackAssetsTask packJsSplitAssetsDebug with assetsPath: null
+[KuiklyGradle][JSProcessor] > createPackAssetsTask packJsLocalAssetsRelease with assetsPath: null
+[KuiklyGradle][JSProcessor] > createPackAssetsTask packJsSplitAssetsRelease with assetsPath: null
+w: Kotlin CocoaPods Plugin is fully supported on MacOS machines only. Gradle tasks that can not run on non-mac hosts will be skipped.
+Run the build on a MacOS machine
+
+
+w: The following Kotlin/Native targets cannot be built on this machine and are disabled:
+iosArm64, iosSimulatorArm64, iosX64
+To hide this message, add 'kotlin.native.ignoreDisabledTargets=true' to the Gradle properties.
+
+
+w: The Default Kotlin Hierarchy Template was not applied to 'project ':shared'':
+Explicit .dependsOn() edges were configured for the following source sets:
+[iosArm64Main, iosArm64Test, iosMain, iosSimulatorArm64Main, iosSimulatorArm64Test, iosTest, iosX64Main, iosX64Test]
+
+Consider removing dependsOn-calls or disabling the default template by adding
+    'kotlin.mpp.applyDefaultHierarchyTemplate=false'
+to your gradle.properties
+Please remove the dependsOn-calls or disable the default template.
+Learn more about hierarchy templates: https://kotl.in/hierarchy-template
+
+
+WARNING:We recommend using a newer Android Gradle plugin to use compileSdk = 34
+
+This Android Gradle plugin (7.4.2) was tested up to compileSdk = 33
+
+This warning can be suppressed by adding
+    android.suppressUnsupportedCompileSdk=34
+to this project's gradle.properties
+
+The build will continue, but you are strongly encouraged to update your project to
+use a newer Android Gradle Plugin that has been tested with compileSdk = 34
+
+> Task :shared:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:preBuild UP-TO-DATE
+> Task :shared:preDebugBuild UP-TO-DATE
+> Task :shared:compileDebugAidl NO-SOURCE
+> Task :shared:compileDebugRenderscript NO-SOURCE
+> Task :shared:generateDebugBuildConfig
+> Task :shared:generateDebugResValues
+> Task :shared:generateDebugResources
+> Task :shared:packageDebugResources
+> Task :shared:parseDebugLocalResources
+> Task :shared:processDebugManifest
+> Task :shared:generateDebugRFile
+> Task :shared:kspDebugKotlinAndroid
+
+> Task :shared:compileDebugKotlinAndroid
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/RouterPage.kt:261:29 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/chat/ChatPage.kt:301:104 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/chat/ChatPage.kt:306:83 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/chat/ChatPage.kt:317:87 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/detail/StockDetailPage.kt:252:87 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/detail/StockDetailPage.kt:258:82 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/detail/StockDetailPage.kt:280:29 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/detail/StockDetailPage.kt:306:90 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/detail/StockDetailPage.kt:422:75 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/detail/StockDetailPage.kt:460:66 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/detail/StockDetailPage.kt:476:66 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/detail/StockDetailPage.kt:492:68 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/detail/StockDetailPage.kt:499:68 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/main/MainTabPager.kt:812:77 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/main/MainTabPager.kt:862:73 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/main/MainTabPager.kt:879:108 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/main/MainTabPager.kt:976:44 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/main/MainTabPager.kt:984:44 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/main/MainTabPager.kt:1071:108 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/main/MainTabPager.kt:1125:88 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/main/MainTabPager.kt:1128:87 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/mine/HiddenStocksPage.kt:90:87 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/mine/HiddenStocksPage.kt:95:66 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/quotes/HeatPoolPage.kt:48:87 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/app/quotes/HeatPoolPage.kt:50:102 'fun fontWeightSemisolid(): TextAttr' is deprecated. use fontWeightSemiBold() instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/base/IPagerIdKtx.kt:3:8 'interface IPagerId : PagerScope' is deprecated. Use PagerScope instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/base/IPagerIdKtx.kt:17:14 'interface IPagerId : PagerScope' is deprecated. Use PagerScope instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/base/IPagerIdKtx.kt:17:53 'fun <reified T> pagerId(noinline initializer: (String) -> T): ReadOnlyProperty<PagerScope, T>' is deprecated. Use PagerScope instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/base/IPagerIdKtx.kt:21:14 'interface IPagerId : PagerScope' is deprecated. Use PagerScope instead.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/base/Utils.kt:19:52 'var currentPageId: String' is deprecated. 使用Pager上下文的pagerId代替.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/base/Utils.kt:25:36 'var currentPageId: String' is deprecated. 使用Pager上下文的pagerId代替.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/components/KRKLineChart/KRKLineChart.kt:274:37 'var currentPageId: String' is deprecated. 使用Pager上下文的pagerId代替.
+w: file:///D:/AAAAstudy/cEngineering/Appproject/AndroidProject/KuiklyStock/shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/core/StockData.kt:318:33 'fun CharSequence.sumBy(selector: (Char) -> Int): Int' is deprecated. Use sumOf instead.
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.5/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 44s
+12 actionable tasks: 12 executed
