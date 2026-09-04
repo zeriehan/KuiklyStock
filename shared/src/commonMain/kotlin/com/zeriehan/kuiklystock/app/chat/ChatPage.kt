@@ -76,6 +76,8 @@ internal class ChatPage : BasePager() {
     internal var msgVersion: Int by observable(0)
     /** vif 翻转触发器：本版本 body 不随 observable 重跑，消息列表必须靠 vif 翻转才能强制重建 */
     internal var renderToggle: Boolean by observable(false)
+    /** 本会话已触发过真实分时拉取的股票 code 集合（渲染卡片时去重，避免每次重建重复请求） */
+    private val trendsRequested = mutableSetOf<String>()
     /** 键盘高度：弹出时把内容区底部抬起，使输入栏贴着键盘上沿（标题固定不动） */
     private var keyboardH: Float by observable(0f)
     /** 输入框 ref，用于发送后清空 */
@@ -270,6 +272,19 @@ internal class ChatPage : BasePager() {
     internal fun openStockDetailByCode(code: String) {
         val d = JSONObject(); d.put("stockCode", code)
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
+    }
+    /**
+     * 确保某只 AI 提及股已拉取真实分时（供卡片迷你走势显示，而非 mock）。去重：本会话只拉一次。
+     * 拉取完成（无论成败）都翻转 renderToggle 重建消息列表，让卡片 getIntraday 读到真实分时。
+     */
+    internal fun ensureTrend(stock: Stock) {
+        if (destroyed || stock.code in trendsRequested) return
+        trendsRequested.add(stock.code)
+        StockData.loadTrends(stock) {
+            if (destroyed) return@loadTrends
+            renderToggle = !renderToggle
+            msgVersion++
+        }
     }
     /** 删除某条消息：同步单例、跨页刷新「最近对话」、本页重建气泡 */
     internal fun deleteMsg(index: Int) {
@@ -606,7 +621,9 @@ private fun ViewContainer<*, *>.renderMessage(ctx: ChatPage, index: Int, role: S
     if (role != "user") {
         val hits = StockMention.extract(text)
         if (hits.isNotEmpty()) {
-            renderAiStockCards(hits, width = maxBubbleW, onOpen = { ctx.openStockDetail(it) })
+            // 触发真实分时拉取（去重），完成后翻转重建，卡片走势从 mock 变真实
+            hits.forEach { ctx.ensureTrend(it) }
+            renderAiStockCards(hits, onOpen = { ctx.openStockDetail(it) })
         }
     }
 }
