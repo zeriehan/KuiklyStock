@@ -80,7 +80,7 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
      * - 个股模式：附上实时价/涨跌幅/量 + 近 10 日收盘价序列，让 AI 能谈"趋势"而非只谈单点价格；
      * - 自由模式（[freeMode]）：不绑个股，改为附三大指数作为大盘参照；
      * - 明确告知数据来源，避免 AI 把演示数据当成真实行情来断言。
-     * 仍要求纯文本、用【】分段，避免 Markdown。
+     * 要求模型用 Markdown（# 标题 / **加粗** / - 列表 / 提及股票带代码），供 KRMarkdown 富文本渲染。
      */
     private fun buildChatPrompt(
         stock: Stock,
@@ -138,7 +138,11 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
                     appendLine()
                 }
             }
-            appendLine("严格要求：仅输出纯文本，不要使用任何 Markdown 符号（如 #、** 等），用【】标注段落标题，字数控制在 300 字以内。")
+            appendLine("输出格式要求：请用标准 Markdown 组织回答，让内容层次清晰（App 会将其渲染成富文本）：")
+            appendLine("- 用 # 或 ## 作为段落/要点标题（每个要点一个标题），正文作为标题下方普通段落；")
+            appendLine("- 关键结论可用 **加粗**；并列项可用 - 无序列表；引用强调用 > 引用；")
+            appendLine("- 提及具体股票时，请同时写出股票名与 6 位代码，如“贵州茅台(600519)”，不要只用简称；")
+            appendLine("- 全文用空行分隔不同段落，避免一大段；总字数控制在 300 字以内，避免过长。")
             appendLine()
             append(dataCtx)
             appendLine()

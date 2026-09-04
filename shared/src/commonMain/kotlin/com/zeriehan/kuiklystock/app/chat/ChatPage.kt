@@ -28,6 +28,7 @@ import com.zeriehan.kuiklystock.core.llm.ChatStore
 import com.zeriehan.kuiklystock.core.llm.ChatSync
 import com.zeriehan.kuiklystock.core.llm.LLM
 import com.zeriehan.kuiklystock.components.KRStockCard.renderAiStockCards
+import com.zeriehan.kuiklystock.components.KRMarkdown.renderMarkdown
 
 /**
  * AI 聊天页（按股票代码隔离的同一段对话）。
@@ -263,6 +264,11 @@ internal class ChatPage : BasePager() {
     /** AI 消息里的股票卡片点击 → 跳转个股详情页承接（Task02：聊天结果可跳转承接页） */
     internal fun openStockDetail(stock: Stock) {
         val d = JSONObject(); d.put("stockCode", stock.code)
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
+    }
+    /** 富文本行内可点股票 → 按代码跳详情（找不到则忽略） */
+    internal fun openStockDetailByCode(code: String) {
+        val d = JSONObject(); d.put("stockCode", code)
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
     }
     /** 删除某条消息：同步单例、跨页刷新「最近对话」、本页重建气泡 */
@@ -642,6 +648,7 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
         View {
             attr {
                 maxWidth(maxBubbleW)
+                flexDirectionColumn()   // AI 富文本需纵向容纳多个内容块；对用户单 Text 也等效
                 padding(10f)
                 borderRadius(12f)
                 // AI 气泡用「灰白」底：页面背景是 0xFFF2F3F5（浅灰），气泡用近白 0xFFFAFBFC 会几乎融进背景，
@@ -654,15 +661,27 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
                 longPress { if (!ctx.msgSelectMode) ctx.openMsgMenu(index, text) }
                 click { if (ctx.msgSelectMode) ctx.toggleMsgSelect(index) }
             }
-            Text {
-                attr {
-                    text(text)
-                    fontSize(UserSettings.fs(14f))
-                    color(if (isUser) Color.WHITE else Color(0xFF333333))
-                    // 关键：文本必须显式限宽，否则在「气泡只给 maxWidth、自身宽自适应」的情况下不换行，
-                    // 长内容只显示一行并溢出气泡（右侧被裁掉）。20f 为左右内边距。
-                    maxWidth(maxBubbleW - 20f)
+            if (isUser) {
+                Text {
+                    attr {
+                        text(text)
+                        fontSize(UserSettings.fs(14f))
+                        color(Color.WHITE)
+                        // 关键：文本必须显式限宽，否则在「气泡只给 maxWidth、自身宽自适应」的情况下不换行，
+                        // 长内容只显示一行并溢出气泡（右侧被裁掉）。20f 为左右内边距。
+                        maxWidth(maxBubbleW - 20f)
+                    }
                 }
+            } else {
+                // AI 气泡：KRMarkdown 富文本渲染（标题/列表/引用/代码 + 行内加粗/可点股票），
+                // 兼容历史纯文本/AI 开场白（按单段渲染）。点行内股票跳详情。
+                renderMarkdown(
+                    text = text,
+                    contentW = maxBubbleW - 20f,
+                    textColor = Color(0xFF333333),
+                    accent = Color(UserSettings.themeColor),
+                    onOpenStock = { code -> ctx.openStockDetailByCode(code) },
+                )
             }
         }
     }
