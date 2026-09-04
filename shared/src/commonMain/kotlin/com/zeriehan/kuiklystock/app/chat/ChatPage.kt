@@ -72,6 +72,14 @@ internal class ChatPage : BasePager() {
     private var thinkingAnimRunning = false
     /** 快捷建议区是否可见：由 QuickTipsGate 决定(每次打开 App 首次进对话提示一次)，发话后本页收起 */
     internal var quickTipsVisible: Boolean by observable(true)
+    /** AI 回答渐显浮现：0→1 进度(纯 attr 响应式，定时器步进；不依赖命令式动画 API，安全可回退) */
+    internal var aiReveal: Float by observable(1f)
+    /** 当前正在做浮现动画的消息索引(-1=无)。旧消息恒 1(不受影响)，仅新 AI 回答所在那条随 aiReveal 渐显 */
+    internal var revealingIndex: Int by observable(-1)
+    /** AI 回答渐显定时器是否在跑(防重) */
+    private var revealRunning = false
+    /** 上次已做过浮现动画的 AI 文本(用于检测"新出现的 AI 回答"，避免旧消息/删除后误判重复播) */
+    private var lastRevealedAiText: String? = null
     /** 消息长按菜单：当前操作的消息索引 / 文本（复制、选取文字用） */
     internal var msgMenuIndex: Int? by observable(null)
     internal var msgMenuText: String by observable("")
@@ -155,6 +163,9 @@ internal class ChatPage : BasePager() {
         // 快捷建议区：每次打开 App(进程启动/重进主界面)后，本次第一个进入的对话提示一次(QuickTipsGate)。
         // 注意绑个股会话常驻(不清空)，故不能按"有没有 user 消息"决定，否则首次提问后永不出现。
         quickTipsVisible = QuickTipsGate.claim()
+        // 进入时的历史消息不做浮现动画：记录末尾 AI 文本，仅对之后新增的 AI 回答 reveal
+        val hist = ChatStore.messages(code)
+        lastRevealedAiText = if (hist.isNotEmpty() && hist.last().role == "assistant") hist.last().text else null
         bootstrapped = true
         // 若上一条提问还在"后台"生成中，进入页面时继续保持思考态
         updateThinkingUI(ChatStore.isPending(code))
@@ -298,6 +309,40 @@ internal class ChatPage : BasePager() {
             msgVersion++
         }
     }
+    /**
+     * 检测是否新增了一条 AI 回答，若是则对其做"渐进浮现"动画。
+     * 由 refreshMessages(AI 回复经 ChatSync 到达)驱动；用户自己发的消息末尾是 user，不会触发。
+     * 用定时器 + observable 步进 aiReveal(0.25→1)，纯 attr 响应式让目标行随渐显，
+     * 不依赖命令式动画 API，安全可回退(失败停在不透明,不会看不见)。
+     */
+    private fun maybePlayAiReveal() {
+        if (destroyed || !::code.isInitialized) return
+        val msgs = ChatStore.messages(code)
+        if (msgs.isEmpty() || revealRunning) return
+        // 只对"末尾新增的一条 AI 回答"做浮现：末尾是 assistant 且文本与上次 reveal 的不同(即新回复)。
+        // 用户自己发的消息末尾是 user，不会触发；旧消息重建不触发；删除后再有新 AI 也能识别。
+        val tail = msgs.last()
+        if (tail.role != "assistant" || tail.text == lastRevealedAiText) return
+        lastRevealedAiText = tail.text
+        startAiReveal(msgs.size - 1)
+    }
+    private fun startAiReveal(index: Int) {
+        revealingIndex = index
+        aiReveal = 0.25f   // 起步半透明即见，避免从 0 全透明
+        revealRunning = true
+        com.tencent.kuikly.core.timer.setTimeout(pagerId, 45) { revealStep(0.5f) }
+    }
+    private fun revealStep(alpha: Float) {
+        if (destroyed) { revealRunning = false; aiReveal = 1f; revealingIndex = -1; return }
+        aiReveal = alpha
+        if (alpha < 1f) {
+            com.tencent.kuikly.core.timer.setTimeout(pagerId, 45) { revealStep((alpha + 0.25f).coerceAtMost(1f)) }
+        } else {
+            revealingIndex = -1
+            aiReveal = 1f
+            revealRunning = false
+        }
+    }
     /** 统一更新思考态并启停「思考中」动态三点动画（避免散落赋值漏启停） */
     internal fun updateThinkingUI(thinking: Boolean) {
         if (aiThinking == thinking) return
@@ -375,6 +420,8 @@ internal class ChatPage : BasePager() {
         if (destroyed || !::code.isInitialized) return
         msgVersion++
         updateThinkingUI(ChatStore.isPending(code))
+        // 检测新增 AI 回答并触发其渐进浮现(renderMessages 重建时读到 revealingIndex/aiReveal)
+        maybePlayAiReveal()
         renderToggle = !renderToggle
         tryScrollToBottom()
     }
@@ -694,6 +741,10 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
             alignItemsCenter()
             justifyContent(if (isUser) FlexJustifyContent.FLEX_END else FlexJustifyContent.FLEX_START)
             marginBottom(10f)
+            // AI 回答渐显浮现：仅当该条正是正在 reveal 的 AI 消息时，opacity 现读 aiReveal 随步进变化；
+            // 其余(旧消息/用户消息/非 reveal 目标)恒为 1。attr 闭包现读使步进即时生效。
+            val revealThis = !isUser && ctx.revealingIndex == index
+            opacity(if (revealThis) ctx.aiReveal else 1f)
         }
         // 多选态：气泡左侧的勾选圆点（选中填充主题色 + 打勾）
         vif({ ctx.msgSelectMode }) {
