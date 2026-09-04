@@ -468,8 +468,8 @@ internal class ChatPage : BasePager() {
             attr {
                 flex(1f)
                 flexDirectionColumn()
-                // 页面底色比气泡略深一档（微信同款），让 AI 的白色气泡轮廓清晰可辨
-                backgroundColor(Color(0xFFEDEFF2))
+                // 页面底色与全 App 统一用 0xFFF2F3F5(其它列表/聊天Tab 同款浅灰)，白色气泡仍清晰可辨
+                backgroundColor(Color(0xFFF2F3F5))
                 // 键盘：宿主用 adjustNothing(沉浸式下 adjustResize 不生效)；shared 手动改 padding/占位
                 // 不触发引擎整页重排。故根这里不放任何 keyboardH 依赖的布局，键盘会盖住页面上部(已知取舍)。
             }
@@ -520,7 +520,7 @@ internal class ChatPage : BasePager() {
             // 关键：把 Scroller 包在一个 flex(1f) 容器里，作为头部与输入栏之间唯一的弹性区，
             // 避免对话变长时消息内容溢出到输入栏下方被其盖住（对话短时无溢出正常，长了必须收缩在此区内滚动）。
             View {
-                attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFEDEFF2)) }
+                attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
                 Scroller {
                     ref { ctx.scrollerRef = it }
                     attr {
