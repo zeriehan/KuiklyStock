@@ -521,7 +521,12 @@ internal class ChatPage : BasePager() {
                 attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFEDEFF2)) }
                 Scroller {
                     ref { ctx.scrollerRef = it }
-                    attr { flex(1f); flexDirectionColumn(); padding(12f) }
+                    attr {
+                        flex(1f); flexDirectionColumn()
+                        // padding 必须 4 边对称(否则 right/bottom=undef),且给一个 ≥ 输入栏高 + 留白的 paddingBottom,
+                        // 让滚到底时最后一条气泡底部与消息区可视底有缓冲,避免被紧贴的输入栏"压"住.
+                        padding(top = 12f, left = 12f, bottom = 12f, right = 12f)
+                    }
                     event {
                         // 真实内容尺寸就绪后（布局完成才触发），用「contentH - 真实视口」精确滚到底（最新）。
                         // 这是官方 setContentOffset 的正确用法；offset 必须在范围内才生效，故绝不再传极大值。
@@ -589,10 +594,15 @@ internal class ChatPage : BasePager() {
             } // vif(quickTipsVisible) 结束
 
             // ===== 输入栏 =====
+            // ⚠️ padding 必须 4 边对称(top/left/bottom/right 全给)，否则只有 top/left，输入栏内文字
+            // 偏贴底部；此处更要紧的是：消息区与输入栏紧贴无间距(原代码)，最后一条气泡底部直接挨着
+            // 输入栏顶部、视觉上"压在气泡上"。加 marginTop(8) 显式拉开呼吸距离。
             View {
                 attr {
                     flexDirectionRow(); alignItemsCenter()
-                    padding(10f); backgroundColor(Color.WHITE)
+                    padding(top = 10f, left = 10f, bottom = 10f, right = 10f)
+                    marginTop(8f)
+                    backgroundColor(Color.WHITE)
                     border(Border(1f, BorderStyle.SOLID, Color(0xFFEEEEEE)))
                 }
                 Input {
