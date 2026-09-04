@@ -18,6 +18,9 @@ interface LLMClient {
      * 多轮问答。
      * @param freeMode 自由对话模式：不绑定具体个股，可问大盘/宏观/选股思路等泛财经问题。
      *                 此时 [stock] 仅作为兜底上下文传入（可为任意标的），实现方不应把它当唯一话题。
+     * @param onDelta 流式增量回调（可选）：真实模型边生成边多次回调累计全文，用于"逐字蹦出"；
+     *                本地 Mock 一次性生成则只回调一次完整文本。任何情况下 [callback] 都会在
+     *                最终收尾时恰好调用一次（传最终完整文本）。
      */
     fun chat(
         stock: Stock,
@@ -25,5 +28,6 @@ interface LLMClient {
         history: List<ChatStore.ChatMessage>,
         callback: (String) -> Unit,
         freeMode: Boolean = false,
+        onDelta: ((String) -> Unit)? = null,
     )
 }

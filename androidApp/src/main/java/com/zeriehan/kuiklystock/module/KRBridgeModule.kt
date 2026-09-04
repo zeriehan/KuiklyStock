@@ -315,13 +315,27 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             callback?.invoke(mapOf("text" to ""))
             return
         }
-        val prompt = JSONObject(params).optString("prompt")
+        val obj = JSONObject(params)
+        val prompt = obj.optString("prompt")
+        val stream = obj.optBoolean("stream", false)
         val key = GLMConfig.API_KEY
         if (key.isBlank()) {
             Log.w("KRBridge", "GLM_API_KEY 未配置，回退空文本（shared 端将回退 Mock）")
             callback?.invoke(mapOf("text" to ""))
             return
         }
+        if (stream) {
+            llmAnalyzeStreaming(prompt, key, callback)
+        } else {
+            llmAnalyzeOnce(prompt, key, callback)
+        }
+    }
+
+    /**
+     * 非流式：一次性生成整段文本后回调一次 `{text}`。
+     * 带整体超时兜底：免费 Flash 池高峰可能很慢/降级链拖时，超时即回空 → shared 端走 Mock。
+     */
+    private fun llmAnalyzeOnce(prompt: String, key: String, callback: KuiklyRenderCallback?) {
         val mainHandler = Handler(Looper.getMainLooper())
         // 防重复回调：正常完成与超时兜底谁先到只触发一次
         val fired = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -339,9 +353,49 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             }
             fire(text)
         }
-        // 整体超时兜底：免费 Flash 池高峰可能很慢/降级链拖时，超时即回空 → shared 端走 Mock，
-        // 避免用户无限干等(曾 30s+ 无响应)。阈值与宿主 readTimeout(20s) 协调：略低于它。
         mainHandler.postDelayed({ fire("") }, LLM_OVERALL_TIMEOUT_MS)
+    }
+
+    /**
+     * 流式：GLM SSE 边生成边把「累计文本」逐段回调（`{type:"delta", text}`），
+     * 结束后回调 `{type:"done", text}` 收尾。
+     *
+     * 安全降级：若桥层只透传最后一次回调，shared 端会收到 done（含完整文本），
+     * 自动退化成"整段一次返回"——不会比非流式更差。整体超时兜底仍保留：若一直没产出任何
+     * 内容就超时，回调 done 空文本 → shared 走 Mock；一旦有首段产出则取消兜底，让生成自然走完。
+     */
+    private fun llmAnalyzeStreaming(prompt: String, key: String, callback: KuiklyRenderCallback?) {
+        val mainHandler = Handler(Looper.getMainLooper())
+        val finished = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun post(map: Map<String, Any>) {
+            mainHandler.post { callback?.invoke(map) }
+        }
+        fun finish(map: Map<String, Any>) {
+            if (finished.compareAndSet(false, true)) post(map)
+        }
+        // 整体超时兜底：若一直没产出内容就超时，回调 done 空文本 → shared 走 Mock。
+        // 一旦首段产出则移除该兜底，让长生成自然走完不被 15s 卡掉。
+        val watchdog = object : Runnable {
+            override fun run() {
+                finish(mapOf("type" to "done", "text" to ""))
+            }
+        }
+        mainHandler.postDelayed(watchdog, LLM_OVERALL_TIMEOUT_MS)
+        thread(name = "glm-llm-stream") {
+            try {
+                val result = glmChatStream(prompt, key) { text ->
+                    // 首段一到就取消超时兜底；之后每段都透传累计文本
+                    if (text.isNotBlank()) {
+                        mainHandler.removeCallbacks(watchdog)
+                    }
+                    post(mapOf("type" to "delta", "text" to text))
+                }
+                finish(mapOf("type" to "done", "text" to result.orEmpty()))
+            } catch (e: Throwable) {
+                Log.e("KRBridge", "llmAnalyzeStreaming failed", e)
+                finish(mapOf("type" to "done", "text" to ""))
+            }
+        }
     }
 
     /**
@@ -415,6 +469,120 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             val choices = json.optJSONArray("choices") ?: return null
             if (choices.length() == 0) return null
             return choices.optJSONObject(0)?.optJSONObject("message")?.optString("content")
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * 流式聊天：尝试 [GLMConfig.MODEL_CANDIDATES]，首个"真的开始产出内容"的模型胜出。
+     * 每个 SSE content 增量累加后回调 [onDelta]（透传累计全文，shared 端据此增量渲染）。
+     * @return 最终完整文本；全部模型在产内容前失败返回 null（上层回调 done 空 → shared 走 Mock）。
+     */
+    private fun glmChatStream(prompt: String, key: String, onDelta: (String) -> Unit): String? {
+        for (model in GLMConfig.MODEL_CANDIDATES) {
+            var produced = false
+            var acc = ""
+            try {
+                acc = glmChatStreamOnce(prompt, key, model) { full ->
+                    if (!produced && full.isNotBlank()) produced = true
+                    acc = full
+                    onDelta(full)
+                }
+                if (produced) {
+                    Log.i("KRBridge", "AI 流式成功，实际使用模型：$model")
+                    return acc
+                }
+                Log.w("KRBridge", "模型 $model 流式未产出内容，降级下一个候选")
+            } catch (e: Throwable) {
+                // 产内容前失败 → 该模型不可用，试下一个；已在产内容中途失败 → 保留已产部分收尾，
+                // 不跳到下一个候选（避免两段不同模型的文本被拼接成乱文）。
+                if (produced) {
+                    Log.w("KRBridge", "模型 $model 流式中途失败，保留已产内容收尾", e)
+                    return acc
+                }
+                Log.w("KRBridge", "模型 $model 流式请求异常，尝试下一个候选", e)
+            }
+        }
+        Log.e("KRBridge", "全部候选模型流式均失败，回退 Mock")
+        return null
+    }
+
+    /**
+     * 对单个模型发起 SSE 流式请求，逐段累加全文并回调 [onDelta]。
+     * 仅当连接成功且拿到首段内容才逐段回调；连接/HTTP 错误或产内容前异常直接抛出由上层降级。
+     * @return 最终完整文本。
+     */
+    private fun glmChatStreamOnce(
+        prompt: String,
+        key: String,
+        model: String,
+        onDelta: (String) -> Unit,
+    ): String {
+        val conn = (URL(GLMConfig.ENDPOINT).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Authorization", "Bearer $key")
+            setRequestProperty("Accept", "text/event-stream")
+            doOutput = true
+            connectTimeout = GLMConfig.CONNECT_TIMEOUT_MS
+            readTimeout = GLMConfig.READ_TIMEOUT_MS
+        }
+        val body = JSONObject().apply {
+            put("model", model)
+            put("temperature", GLMConfig.TEMPERATURE)
+            put("stream", true)
+            // 关闭思考过程：只把正文内容增量推给 shared（thinking:disabled，4.5/4.7 支持，旧模型忽略）
+            put("thinking", JSONObject().apply { put("type", "disabled") })
+            put("messages", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", prompt)
+                })
+            })
+        }.toString()
+
+        try {
+            conn.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
+
+            val code = conn.responseCode
+            if (code != HttpURLConnection.HTTP_OK) {
+                val err = conn.errorStream?.bufferedReader()?.readText()
+                Log.e("KRBridge", "GLM[$model] stream HTTP $code: $err")
+                throw IllegalStateException("GLM stream HTTP $code")
+            }
+
+            val reader = conn.inputStream.bufferedReader(StandardCharsets.UTF_8)
+            val sb = StringBuilder()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                val l = line!!.trim()
+                if (l.isEmpty()) continue
+                // SSE 格式：一行 "data: {json}"；流结束为 "data: [DONE]"
+                if (!l.startsWith("data:")) continue
+                val payload = l.removePrefix("data:").trim()
+                if (payload.isEmpty() || payload == "[DONE]") continue
+                val json = try {
+                    JSONObject(payload)
+                } catch (e: Throwable) {
+                    continue
+                }
+                // 模型层错误（error 字段非空，可能发生在首段前=可降级，或中途）
+                val errObj = json.optJSONObject("error")
+                if (errObj != null) {
+                    val msg = errObj.optString("message")
+                    Log.e("KRBridge", "GLM[$model] stream error ${errObj.optString("code")}: $msg")
+                    // 已产内容则保留已产部分继续读完；未产则抛给上层降级
+                    if (sb.isEmpty()) throw IllegalStateException("GLM stream error")
+                    continue
+                }
+                val delta = json.optJSONArray("choices")
+                    ?.optJSONObject(0)?.optJSONObject("delta")?.optString("content")
+                if (delta.isNullOrEmpty()) continue
+                sb.append(delta)
+                onDelta(sb.toString())
+            }
+            return sb.toString()
         } finally {
             conn.disconnect()
         }

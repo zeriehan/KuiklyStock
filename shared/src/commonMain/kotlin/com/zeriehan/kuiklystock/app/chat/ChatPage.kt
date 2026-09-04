@@ -80,6 +80,12 @@ internal class ChatPage : BasePager() {
     private var revealRunning = false
     /** 上次已做过浮现动画的 AI 文本(用于检测"新出现的 AI 回答"，避免旧消息/删除后误判重复播) */
     private var lastRevealedAiText: String? = null
+    /** 是否正在流式接收 AI 回复（渲染一条"正在生长"的 AI 气泡） */
+    internal var streaming: Boolean by observable(false)
+    /** 流式已收到的累计文本：气泡 Text attr 现读它，每段 delta 只重绘这一条文字，不重建整列表 */
+    internal var streamText: String by observable("")
+    /** 流式令牌：每次发起新请求 +1，用于丢弃被清空/超车后迟到的旧流（避免旧文本拼进新气泡） */
+    private var streamToken: Int = 0
     /** 消息长按菜单：当前操作的消息索引 / 文本（复制、选取文字用） */
     internal var msgMenuIndex: Int? by observable(null)
     internal var msgMenuText: String by observable("")
@@ -230,27 +236,49 @@ internal class ChatPage : BasePager() {
         // 用户发出第一条话后：快捷建议区使命完成，收起以免一直挡视野
         quickTipsVisible = false
         ChatStore.setPending(code, true)
-        // 统一走 ChatSync.bump()：本页监听刷新气泡，主框架监听刷新「最近对话」
+        // 进入流式态：列表重建出现一条"正在生长"的 AI 气泡（首段 delta 到达前是空 + 光标）
+        val token = ++streamToken
+        if (!destroyed) {
+            streaming = true
+            streamText = ""
+        }
+        // 统一走 ChatSync.bump()：本页监听刷新气泡（重建含流式气泡），主框架刷新「最近对话」
         ChatSync.bump()
 
         // 传完整历史给模型作为上下文
         val history = ChatStore.messages(code)
-        // ⚠️ 回调必须用具名参数 callback = {...}：混用「尾随 lambda + 具名参数 freeMode」时
+        // ⚠️ 回调必须用具名参数 callback = {...}：混用「尾随 lambda + 具名参数 freeMode/onDelta」时
         //    编译器会把尾随 lambda 误判成多余的实参（No value passed for parameter 'callback'）。
-        LLM.client.chat(stock, q, history, callback = { text ->
-            val reply = text.ifBlank { "（暂时没有回复，请稍后再试）" }
-            // 结果写进单例 ChatStore：即使本页已销毁，重新进入也能看到这条回复
-            ChatStore.append(code, ChatStore.ChatMessage("assistant", reply))
-            ChatStore.setPending(code, false)
-            ChatSync.bump()
-            // 后台跑完的提示：若用户已退出聊天页，用常驻桥弹 toast 告知（本页桥可能已失效）
-            if (destroyed) {
-                AIJobCenter.toast(
-                    if (freeMode) "AI 自由问答已回复，点开查看"
-                    else "「${stock.name}」的 AI 已回复，点开对话查看"
-                )
+        LLM.client.chat(
+            stock, q, history,
+            freeMode = freeMode,
+            onDelta = { acc ->
+                // 流式增量：只更新本页那条流式气泡的文本（attr 现读 streamText，逐字蹦出、不重建列表）
+                if (!destroyed && token == streamToken) {
+                    streamText = acc
+                    tryScrollToBottom()
+                }
+            },
+            callback = { text ->
+                val reply = text.ifBlank { "（暂时没有回复，请稍后再试）" }
+                // 结束流式态（页面还活着才需要清理 UI 状态；本页已销毁则仅写单例）
+                if (!destroyed && token == streamToken) {
+                    streaming = false
+                    streamText = ""
+                }
+                // 结果写进单例 ChatStore：即使本页已销毁，重新进入也能看到这条回复
+                ChatStore.append(code, ChatStore.ChatMessage("assistant", reply))
+                ChatStore.setPending(code, false)
+                ChatSync.bump()
+                // 后台跑完的提示：若用户已退出聊天页，用常驻桥弹 toast 告知（本页桥可能已失效）
+                if (destroyed) {
+                    AIJobCenter.toast(
+                        if (freeMode) "AI 自由问答已回复，点开查看"
+                        else "「${stock.name}」的 AI 已回复，点开对话查看"
+                    )
+                }
             }
-        }, freeMode = freeMode)
+        )
     }
 
     /** 点按快捷问句：直接把该问句发出去（等同输入后点发送） */
@@ -268,8 +296,11 @@ internal class ChatPage : BasePager() {
     private fun clearChat() {
         // 清空会让全部勾选索引失效（操作栏会残留「已选 N」、点删除空转），必须先退出多选态
         if (msgSelectMode) exitMsgSelect()
+        // 使正在流式中的迟回 delta/结果作废（token 递增），避免旧流拼进被清空的对话
+        streamToken++
         ChatStore.clear(code)
         ChatStore.setPending(code, false)
+        if (!destroyed) { streaming = false; streamText = "" }
         updateThinkingUI(false)
         ChatStore.append(code, ChatStore.ChatMessage("assistant", "对话已清空，有什么想问的？"))
         ChatSync.bump()
@@ -679,8 +710,40 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
         Text { attr { text("（暂无消息）"); fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginTop(20f) } }
     }
     msgs.forEachIndexed { i, m -> renderMessage(ctx, i, m.role, m.text, maxBubbleW) }
-    // 思考中占位气泡：动态三点（正在输入观感，thinkingDot 定时器驱动高亮轮转）
-    vif({ ctx.aiThinking }) {
+    // ===== 流式回答气泡：正在边生成边长出的 AI 回复 =====
+    // 文字用「普通 Text + 尾光标」，Text attr 现读 ctx.streamText，每段 delta 只重绘这一条，不重建整列表；
+    // 流结束后（callback 到）转成真实 markdown 富文本气泡。故这里不解析 Markdown/提及股卡片，留给 done 阶段。
+    vif({ ctx.streaming }) {
+        View {
+            attr {
+                flexDirectionRow(); alignItemsCenter()
+                justifyContent(FlexJustifyContent.FLEX_START); marginBottom(10f)
+            }
+            View {
+                attr {
+                    maxWidth(maxBubbleW)
+                    flexDirectionRow(); alignItemsCenter()
+                    padding(12f, 10f); borderRadius(12f)
+                    backgroundColor(Color(0xFFFFFFFF))
+                }
+                Text {
+                    attr {
+                        // attr 内现读 streamText：observable 变化只重跑本 attr，文字就地增长
+                        text(
+                            if (ctx.streamText.isNotEmpty()) ctx.streamText + "▍"
+                            else "正在思考…"
+                        )
+                        fontSize(UserSettings.fs(14f))
+                        color(Color(0xFF333333))
+                        maxWidth(maxBubbleW - 24f)
+                    }
+                }
+            }
+        }
+    }
+    // 思考中占位气泡：动态三点（正在输入观感，thinkingDot 定时器驱动高亮轮转）。
+    // 一旦进入流式态(streaming)就隐藏——流式气泡本身已在表达"AI 正在回复"，避免三点与流式文字同时出现。
+    vif({ ctx.aiThinking && !ctx.streaming }) {
         View {
             attr {
                 alignSelfFlexStart(); marginBottom(10f)

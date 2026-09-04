@@ -56,20 +56,39 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
         history: List<ChatStore.ChatMessage>,
         callback: (String) -> Unit,
         freeMode: Boolean,
+        onDelta: ((String) -> Unit)?,
     ) {
         val prompt = buildChatPrompt(stock, question, history, freeMode)
+        var finalized = false
+        fun finish(text: String) {
+            if (finalized) return
+            finalized = true
+            if (text.isBlank()) {
+                // 真实链路全部失败/未配 Key → 回退 Mock（Mock 也会回调最终文本）
+                fallback.chat(stock, question, history, callback, freeMode, onDelta)
+            } else {
+                callback(text)
+            }
+        }
         try {
-            // 走 AIJobCenter（常驻根页面桥）：退出聊天页后 AI 仍会在"后台"回复
-            AIJobCenter.sendPrompt(prompt) { resp ->
-                val text = resp?.optString("text") ?: ""
-                if (text.isBlank()) {
-                    fallback.chat(stock, question, history, callback, freeMode)
-                } else {
-                    callback(text)
+            // 走 AIJobCenter（常驻根页面桥）：退出聊天页后 AI 仍在"后台"边生成边回调
+            AIJobCenter.sendPrompt(prompt, stream = true) { resp ->
+                if (resp == null) {
+                    finish("")
+                    return@sendPrompt
+                }
+                val type = resp.optString("type")
+                val text = resp.optString("text")
+                when (type) {
+                    // 增量：透传累计全文，驱动聊天气泡"逐字蹦出"
+                    "delta" -> onDelta?.invoke(text)
+                    // 收尾（宿主任何路径最终都会发一次 done；兼容旧宿主只有 text 无 type 时也当完成）
+                    else -> finish(text)
                 }
             }
         } catch (e: Throwable) {
-            fallback.chat(stock, question, history, callback, freeMode)
+            // 桥不可用（极端情况如页面已销毁）→ 回退 Mock，保证不卡死在"分析中"
+            finish("")
         }
     }
 

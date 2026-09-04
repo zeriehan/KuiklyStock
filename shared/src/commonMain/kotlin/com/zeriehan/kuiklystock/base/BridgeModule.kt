@@ -83,12 +83,15 @@ internal class BridgeModule : Module() {
     }
 
     /**
-     * AI 分析：把自然语言 prompt 下发到 Android 宿主，由宿主用 GLM-4-Flash 生成文本后回调。
+     * AI 分析：把自然语言 prompt 下发到 Android 宿主，由宿主用 GLM 生成文本后回调。
      * 异步返回，回调参数形如 { "text": "..." }；生成失败/未配置 Key 时 text 为空串（上层回退 Mock）。
+     * @param stream true 时宿主用 SSE 边生成边多次回调：{ "type":"delta", "text":累计全文 } → 收尾 { "type":"done", "text":全文 }；
+     *                false（默认）一次性回调一次 { "type":"done", "text":全文 }（兼容旧 analyze 调用）。
      */
-    fun llmAnalyze(prompt: String, callbackFn: CallbackFn) {
+    fun llmAnalyze(prompt: String, stream: Boolean = false, callbackFn: CallbackFn) {
         val methodArgs = JSONObject()
         methodArgs.put("prompt", prompt)
+        methodArgs.put("stream", stream)
         callNativeMethod(LLM_ANALYZE, methodArgs, callbackFn)
     }
 

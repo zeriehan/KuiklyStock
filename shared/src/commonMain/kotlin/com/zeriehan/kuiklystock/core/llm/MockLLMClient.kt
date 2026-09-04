@@ -28,8 +28,12 @@ class MockLLMClient : LLMClient {
         history: List<ChatStore.ChatMessage>,
         callback: (String) -> Unit,
         freeMode: Boolean,
+        onDelta: ((String) -> Unit)?,
     ) {
-        callback(if (freeMode) buildFreeChat(question) else buildChat(stock, question))
+        val text = if (freeMode) buildFreeChat(question) else buildChat(stock, question)
+        // Mock 本地即时生成，无中间态：直接把完整文本回调一次（也通过 onDelta 走一次，保持流式契约一致）
+        onDelta?.invoke(text)
+        callback(text)
     }
 
     /** 自由对话（不绑个股）的离线兜底：给出通用财经问答框架，并如实说明未接模型 */

@@ -46,20 +46,21 @@ internal object AIJobCenter {
 
     /**
      * 下发 prompt。优先用根页桥（后台安全）；未注册时退回当前页桥（兜底）。
+     * @param stream true 走宿主流式回调（多次 delta + 一次 done）；false 一次性 done。
      * 任何异常都以 null 回调，上层（GLMFlashClient）会回退 Mock，不会卡在「分析中」。
      */
-    fun sendPrompt(prompt: String, callback: (JSONObject?) -> Unit) {
+    fun sendPrompt(prompt: String, stream: Boolean = false, callback: (JSONObject?) -> Unit) {
         val bridge = rootBridge
         if (bridge != null) {
             try {
-                bridge.llmAnalyze(prompt) { resp -> callback(resp) }
+                bridge.llmAnalyze(prompt, stream) { resp -> callback(resp) }
                 return
             } catch (e: Throwable) {
                 // 根页桥异常（极端情况）→ 继续尝试当前页桥
             }
         }
         try {
-            Utils.currentBridgeModule().llmAnalyze(prompt) { resp -> callback(resp) }
+            Utils.currentBridgeModule().llmAnalyze(prompt, stream) { resp -> callback(resp) }
         } catch (e: Throwable) {
             callback(null)
         }
