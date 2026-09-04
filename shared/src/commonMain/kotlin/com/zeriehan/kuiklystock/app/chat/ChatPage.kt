@@ -19,6 +19,7 @@ import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.Stock
+import com.zeriehan.kuiklystock.core.QuickTipsGate
 import com.zeriehan.kuiklystock.core.StockMention
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
@@ -69,6 +70,8 @@ internal class ChatPage : BasePager() {
     internal var thinkingDot: Int by observable(0)
     /** 思考动画定时器是否在跑（防重） */
     private var thinkingAnimRunning = false
+    /** 快捷建议区是否可见：由 QuickTipsGate 决定(每次打开 App 首次进对话提示一次)，发话后本页收起 */
+    internal var quickTipsVisible: Boolean by observable(true)
     /** 消息长按菜单：当前操作的消息索引 / 文本（复制、选取文字用） */
     internal var msgMenuIndex: Int? by observable(null)
     internal var msgMenuText: String by observable("")
@@ -149,6 +152,9 @@ internal class ChatPage : BasePager() {
             }
             ChatStore.append(code, ChatStore.ChatMessage("assistant", greeting))
         }
+        // 快捷建议区：每次打开 App(进程启动/重进主界面)后，本次第一个进入的对话提示一次(QuickTipsGate)。
+        // 注意绑个股会话常驻(不清空)，故不能按"有没有 user 消息"决定，否则首次提问后永不出现。
+        quickTipsVisible = QuickTipsGate.claim()
         bootstrapped = true
         // 若上一条提问还在"后台"生成中，进入页面时继续保持思考态
         updateThinkingUI(ChatStore.isPending(code))
@@ -210,6 +216,8 @@ internal class ChatPage : BasePager() {
         inputText = ""
         inputRef.view?.setText("")
         ChatStore.append(code, ChatStore.ChatMessage("user", q))
+        // 用户发出第一条话后：快捷建议区使命完成，收起以免一直挡视野
+        quickTipsVisible = false
         ChatStore.setPending(code, true)
         // 统一走 ChatSync.bump()：本页监听刷新气泡，主框架监听刷新「最近对话」
         ChatSync.bump()
@@ -453,6 +461,8 @@ internal class ChatPage : BasePager() {
             }
 
             // ===== 快捷问句（点按即问，降低冷启动成本）=====
+            // 仅当用户还没发过话(quickTipsVisible)时显示，发过第一条即自动收起，避免常驻挡视野
+            vif({ ctx.quickTipsVisible }) {
             // ⚠️ 用普通 View 分行 + flex(1f)，不用横 Scroller —— 横 Scroller 会吞掉子元素的 click。
             View {
                 attr {
@@ -492,6 +502,7 @@ internal class ChatPage : BasePager() {
                     }
                 }
             }
+            } // vif(quickTipsVisible) 结束
 
             // ===== 输入栏 =====
             View {

@@ -19,6 +19,7 @@ import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.components.KRTable.KRStockList
 import com.zeriehan.kuiklystock.components.KRStockBadge.KRStockBadge
 import com.zeriehan.kuiklystock.core.StockData
+import com.zeriehan.kuiklystock.core.QuickTipsGate
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.Sector
 import com.zeriehan.kuiklystock.core.StockColor
@@ -140,6 +141,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
     override fun viewDidLoad() {
         super.viewDidLoad()
         loadState()
+        // 每次打开 App 主界面(=重进 MainTab)即重新武装聊天快捷建议门控，使本次启动进对话可再提示一次
+        QuickTipsGate.rearm()
         // 注入聊天持久化句柄：冷启动时从 SharedPreferences 恢复历史对话（否则「AI」Tab 记录会丢）
         ChatStore.attach(prefs)
         // 注入 AI 分析缓存持久化句柄：冷启动后详情页直接读磁盘缓存，不再每次等网络
