@@ -53,9 +53,11 @@ import com.zeriehan.kuiklystock.components.KRChatMiniChart
  *    因此退出本页后 AI 仍会继续生成；结果写进单例 ChatStore（并已落盘 SharedPreferences），
  *    重新进入时 pageDidAppear 会同步出来。等待状态由 ChatStore.isPending 跨页面保留。
  * 4. 键盘：宿主 AndroidManifest 用 windowSoftInputMode="adjustNothing"（配合沉浸式 LAYOUT_FULLSCREEN，
- *    内容顶到状态栏后）。已实测 adjustResize 在此沉浸式下不生效(系统不 resize 窗口)；shared 手动改
- *    padding/占位也不触发引擎整页重排。故键盘弹出会覆盖页面上部(已知取舍，暂不处理)。这里仅用
- *    keyboardHeightChange 拿到 keyboardH 用于视口估算/滚到底，不让输入框上移。
+ *    内容顶到状态栏后）。已实测 adjustResize 在此沉浸式下不生效(系统不 resize 窗口)；根 attr 的
+ *    paddingBottom(keyboardH) 也不响应。正确做法：在**输入栏之后的根 column 末尾**放一个
+ *    height=keyboardH 的占位 Spacer（普通子视图 attr 现读 observable 必有 reactive），键盘弹起时其
+ *    高度变化把输入栏顶到键盘上沿、Spacer 自身被键盘盖住；inputBlur 时收回。keyboardHeightChange
+ *    偶发漏回调时用 inputFocus + 上次实测高度兜底。
  */
 @Page("Chat", supportInLocal = true)
 internal class ChatPage : BasePager() {
@@ -102,8 +104,10 @@ internal class ChatPage : BasePager() {
     internal var renderToggle: Boolean by observable(false)
     /** 本会话已触发过真实分时拉取的股票 code 集合（渲染卡片时去重，避免每次重建重复请求） */
     private val trendsRequested = mutableSetOf<String>()
-    /** 键盘高度：仅用于视口估算与"键盘弹起时保持最新可见"(adjustNothing 下不用于抬内容,见类注释) */
+    /** 键盘高度：驱动输入栏后 Spacer 抬起（adjustNothing 下键盘本身会盖住页面上部，见类注释与 Spacer 说明） */
     private var keyboardH: Float by observable(0f)
+    /** 键盘历史实测高度（memory）：inputFocus 兜底用——keyboardHeightChange 偶发迟到/漏回调时，用上次实测高度顶上 */
+    private var lastKeyboardH: Float = 0f
     /** 输入框 ref，用于发送后清空 */
     private lateinit var inputRef: ViewRef<InputView>
     /** 消息流 Scroller ref，进页/来新消息时滚到底部（最新） */
@@ -608,17 +612,6 @@ internal class ChatPage : BasePager() {
             }
             } // vif(quickTipsVisible) 结束
 
-            // ===== 键盘抬起占位 Spacer =====
-            // 普通子视图的 height 现读 keyboardH 一定有 reactive，键盘弹起时其高度变化即把输入栏
-            // 和它上方所有内容顶起到键盘上沿。绕开根 attr 的 paddingBottom 不响应式的不确定。
-            // 背景色与页底色一致（0xFFF2F3F5），这块占位看起来"无缝"。
-            View {
-                attr {
-                    height(ctx.keyboardH)
-                    backgroundColor(Color(0xFFF2F3F5))
-                }
-            }
-
             // ===== 输入栏 =====
             // ⚠️ padding 必须 4 边对称(top/left/bottom/right 全给)，否则只有 top/left，输入栏内文字
             // 偏贴底部；此处更要紧的是：消息区与输入栏紧贴无间距(原代码)，最后一条气泡底部直接挨着
@@ -642,11 +635,23 @@ internal class ChatPage : BasePager() {
                     }
                     event {
                         textDidChange { ctx.inputText = it.text }
-                        // 键盘高度变化：记录高度供视口估算，并尝试保持最新消息可见(不抬内容,见类注释)
+                        // 键盘高度变化：驱动输入栏后的占位 Spacer 把输入栏顶到键盘上沿，并保持最新消息可见
                         keyboardHeightChange { params ->
-                            ctx.keyboardH = params.height
+                            val h = params.height.coerceAtLeast(0f)
+                            if (h > 0f) ctx.lastKeyboardH = h   // 记住实测高度，供 inputFocus 兜底
+                            ctx.keyboardH = h
                             ctx.tryScrollToBottom()
                         }
+                        // 兜底：少数情况下 keyboardHeightChange 迟到/漏回调，输入栏会不上浮。
+                        // 拿到焦点时若高度仍为 0，用历史实测高度补上（首次打开无历史则仍等真实事件）。
+                        inputFocus {
+                            if (ctx.keyboardH <= 0f && ctx.lastKeyboardH > 0f) {
+                                ctx.keyboardH = ctx.lastKeyboardH
+                                ctx.tryScrollToBottom()
+                            }
+                        }
+                        // 失焦即收起占位：避免键盘已关而 Spacer 残留、把输入栏顶在半空
+                        inputBlur { ctx.keyboardH = 0f }
                     }
                 }
                 Button {
@@ -662,6 +667,22 @@ internal class ChatPage : BasePager() {
                         }
                     }
                     event { click { ctx.send() } }
+                }
+            }
+
+            // ===== 键盘抬起占位 Spacer（必须放在输入栏【之后】，作为根 column 的最后一项）=====
+            // ⚠️ 位置是成败关键，放错就等于没做：
+            //    flex column 的布局顺序是「固定高子项先占位，剩余空间才分给 flex(1f) 的消息区」。
+            //    · Spacer 放在输入栏**上方**：它变高只会挤压上方 flex(1f) 的消息区，输入栏自身位置
+            //      纹丝不动 → 表现为「键盘上方多出一条空白、输入栏不上浮」（本 bug 的成因）。
+            //    · Spacer 放在输入栏**下方**：它变高同样挤压消息区，但输入栏在其上方、被一起顶上去，
+            //      y = 消息区底 → 正好落在键盘上沿；Spacer 自己则被不透明键盘盖住，看不见。
+            // 高度读 observable 的 reactive 由「普通子视图 attr 现读」保证（比根 attr 的
+            // paddingBottom 可靠，后者 24e41c9 已实测不响应）。
+            View {
+                attr {
+                    height(ctx.keyboardH)
+                    backgroundColor(Color(0xFFF2F3F5))
                 }
             }
 
