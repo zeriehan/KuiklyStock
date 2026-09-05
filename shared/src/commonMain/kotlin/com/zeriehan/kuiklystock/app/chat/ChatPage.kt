@@ -644,7 +644,9 @@ internal class ChatPage : BasePager() {
                     border(Border(1f, BorderStyle.SOLID, Color(0xFFEEEEEE)))
                 }
                 // 输入胶囊：Input 原生不支持 padding（文字贴左边界），故外包一层 View 承载 背景+圆角+左右内边距，
-                // 让 placeholder / 光标 / 输入文字在胶囊内有左侧空隙（与 MainTabPager 的搜索框同款做法）。
+                // 让 placeholder / 光标 / 输入文字在胶囊内有左侧空隙。
+                // ⚠️ 内层 Input 必须显式给 height(与外层胶囊等高)——若只给 flex(1f) 无 height，Input 会在
+                //    嵌套容器里塌陷成 0 高，导致输入框不可见、点不中调不出键盘(已踩坑)。
                 View {
                     attr {
                         flex(1f); height(38f)
@@ -655,7 +657,7 @@ internal class ChatPage : BasePager() {
                     Input {
                         ref { ctx.inputRef = it }
                         attr {
-                            flex(1f)
+                            flex(1f); height(38f)
                             fontSize(UserSettings.fs(15f)); color(Color(0xFF222222))
                             placeholder(if (ctx.freeMode) "问大盘、行业或任意股票…" else "问点什么…")
                             placeholderColor(Color(0xFF999999))
