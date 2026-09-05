@@ -309,10 +309,12 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
 ### Task02 关键实现速览（供演示/续做）
 - **富文本**：KRMarkdown 解析 Markdown→块+行内 token；渲染用 Kuikly `RichText+Span`(跨行/自动换行/行内 click)，块=标题/段落/列表/引用/代码；股票名→主题色可点跳详情。字号走 `UserSettings.fs`。
 - **提及股卡片**：AI 文本现扫 `StockMention.extract` 命中池内股→回答下方横滚窄卡(真实分时小走势)。详情页 AI 分析仍走纯文本(刻意不混富文本)。
+- **⭐ 图表选点 → AI 解读**：AI 回复按 `[KCHART:代码:周期]` 指令内嵌迷你走势图(`KRChatMiniChart`)，详情主图(`KRKLineChart`)同源。两图点按十字光标吸附 → 组件 `onAsk` 透传点位(不绑股票上下文) → 外层拼完整追问 → openPage Chat 带 prompt 自动 ask，实现"看哪根 K 线点哪根问哪根"。(详见《亮点与创新.md》第四节)
 - **思考态**：动态三点(thinkingDot+setTimeout 自递归)。
 - **数据**：StockData 门面 = mock 种子 + 东财真实并入；K线走腾讯、分时走东财。
 
 ### 已知限制 / 说明（诚实备注，交付时知情）
-- **聊天键盘弹出不自动顶起内容**：宿主为沉浸式全屏(`windowSoftInputMode=adjustNothing` + 内容铺到状态栏后)。实测 `adjustResize` 在此沉浸式下不生效(系统不 resize 窗口)、shared 手动改 padding/占位也不触发引擎整页重排。故**键盘弹出会盖住页面下部输入区上方一部分**，属已知取舍；历史消息仍可手动滚动查看。根治需宿主侧用 IME insets 给渲染容器加 bottom padding(真实 View 尺寸变化才触发重排)，暂未做。
+- **键盘**：宿主沉浸式全屏(`windowSoftInputMode=adjustNothing`)，输入栏通过**输入栏后置占位 Spacer**(height=键盘高)主动随键盘顶起；沉浸式下非整页重排(页面顶部不随键盘缩放)属 Kuikly/沉浸式系统行为。
+- **北交所/新股历史日K**：当前免费行情源不提供，详情页该类股票显示诚实占位(分时与实时价真实)，不拿假波浪冒充。
 - **AI 回复延迟取决于 GLM 免费池**：free Flash 池高峰可能慢/限流(HTTP 1305 访问量过大)，代码会自动降级候选模型；整体 15s 超时兜底(超时回本地 Mock，不无限等)。演示/录制建议在 GLM 通畅时进行，避免频繁落到 Mock 造成结论与实时行情脱节。
 - **AI 回答为流式(SSE)逐字蹦出**，仅真实 GLM 走流式；Mock 为本地即时生成(无中间态)。
