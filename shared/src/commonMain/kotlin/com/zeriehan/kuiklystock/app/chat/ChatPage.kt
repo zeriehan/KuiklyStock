@@ -126,6 +126,8 @@ internal class ChatPage : BasePager() {
     private var bootstrapped: Boolean = false
     /** 页面是否已销毁：销毁后监听回调直接返回，避免操作已失效的 observable */
     private var destroyed: Boolean = false
+    /** 本实例是否已把持久化草稿恢复到输入框（避免 ref 回调和 ensureInit 重复 apply） */
+    private var draftRestored: Boolean = false
     /** ChatSync 监听（须为稳定的同一对象，才能在 pageWillDestroy 里精确移除） */
     private val chatListener: () -> Unit = { refreshMessages() }
 
@@ -145,6 +147,8 @@ internal class ChatPage : BasePager() {
     override fun pageWillDestroy() {
         destroyed = true
         ChatSync.removeListener(chatListener)
+        // 草稿：退出时把输入框里仍未发送的内容持久化（防打字中途退出丢内容）；已发送的草稿在 send 里已清除
+        ChatStore.setDraft(code, inputText)
         super.pageWillDestroy()
     }
 
@@ -190,6 +194,19 @@ internal class ChatPage : BasePager() {
         // 以确保「一定会执行」—— 部分子页生命周期下 pageDidAppear 不可靠，会导致从不滚到底。
         // 主路径由 contentSizeChanged 驱动；这里补一个延迟兜底，防止个别情况该事件不触发。
         com.tencent.kuikly.core.timer.setTimeout(pagerId, 300) { tryScrollToBottom() }
+        // 草稿恢复：进入时把上次未发送的输入框内容填回（退出/冷启动后草稿不丢）
+        val savedDraft = ChatStore.draft(code)
+        if (savedDraft.isNotBlank()) {
+            inputText = savedDraft
+            // 真正写入原生输入框放到输入框 ref 就绪后（本函数在 body 头部执行时 inputRef 尚未赋值）
+            com.tencent.kuikly.core.timer.setTimeout(pagerId, 100) {
+                if (!destroyed && !draftRestored) {
+                    draftRestored = true
+                    inputText = savedDraft
+                    inputRef.view?.setText(savedDraft)
+                }
+            }
+        }
         // 外部预填问题（如个股页「AI 选股」推荐问题 chips）：进入即自动发出，复用现有对话能力
         val presetPrompt = pageData.params.optString("prompt").trim()
         if (presetPrompt.isNotEmpty()) {
@@ -239,6 +256,8 @@ internal class ChatPage : BasePager() {
         if (msgSelectMode) exitMsgSelect()
         inputText = ""
         inputRef.view?.setText("")
+        // 草稿：这条内容已发出，清掉持久化草稿，避免下次进入把已发的内容又当草稿恢复
+        ChatStore.clearDraft(code)
         ChatStore.append(code, ChatStore.ChatMessage("user", q))
         // 用户发出第一条话后：快捷建议区使命完成，收起以免一直挡视野
         quickTipsVisible = false
@@ -634,7 +653,12 @@ internal class ChatPage : BasePager() {
                         placeholderColor(Color(0xFF999999))
                     }
                     event {
-                        textDidChange { ctx.inputText = it.text }
+                        textDidChange {
+                            ctx.inputText = it.text
+                            // 草稿：每次输入变化即持久化，退出/冷启动后回来能恢复（发送时由 send 清除）
+                            if (!ctx.draftRestored) { /* 首次恢复阶段不写回，避免覆盖刚从草稿读出的内容 */ }
+                            else ChatStore.setDraft(ctx.code, it.text)
+                        }
                         // 键盘高度变化：驱动输入栏后的占位 Spacer 把输入栏顶到键盘上沿，并保持最新消息可见
                         keyboardHeightChange { params ->
                             val h = params.height.coerceAtLeast(0f)

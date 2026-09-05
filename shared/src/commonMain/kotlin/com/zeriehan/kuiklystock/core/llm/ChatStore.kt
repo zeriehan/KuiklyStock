@@ -20,6 +20,9 @@ object ChatStore {
 
     private const val KEY_CHAT = "kb_chat_log"
 
+    /** 未发送的输入框草稿（按会话 code 隔离），独立于聊天记录单独落盘 */
+    private const val KEY_DRAFT = "kb_chat_draft"
+
     // 三级分隔符（控制字符，正文里几乎不可能出现；仍做转义兜底）
     private const val SEP_CONV = "\u001E" // 会话之间
     private const val SEP_MSG = "\u001F"  // 消息之间
@@ -38,6 +41,13 @@ object ChatStore {
      */
     private val pending = mutableSetOf<String>()
 
+    /**
+     * 未发送的输入框草稿：code → 草稿文本。
+     * 聊天页输入框内容变化即写入；退出聊天页再进入（或冷启动后重进）时恢复。
+     * 独立落盘（KEY_DRAFT），不随清空对话而清掉（除非显式 [clear] 一并清草稿）。
+     */
+    private val drafts = linkedMapOf<String, String>()
+
     private var prefs: SharedPreferencesModule? = null
 
     // ===== 持久化 =====
@@ -51,6 +61,7 @@ object ChatStore {
 
     private fun load() {
         val p = prefs ?: return
+        loadDrafts(p)
         val raw = p.getItem(KEY_CHAT)
         conversations.clear()
         if (raw.isBlank()) return
@@ -286,6 +297,50 @@ object ChatStore {
     /** 标记/取消「等待 AI 回复」 */
     fun setPending(code: String, value: Boolean) {
         if (value) pending.add(code) else pending.remove(code)
+    }
+
+    // ===== 未发送草稿（按会话 code 隔离，落盘持久化）=====
+
+    /** 取某会话上次未发送的输入框草稿（无则空串） */
+    fun draft(code: String): String = drafts[code] ?: ""
+
+    /**
+     * 保存/更新某会话输入框草稿；text 为空白时清除该草稿。
+     * 每次输入内容变化都调用（代价小，仅落盘一次该 code），使退出/冷启动后能恢复。
+     */
+    fun setDraft(code: String, text: String) {
+        val t = text.trim()
+        if (t.isBlank()) {
+            if (drafts.remove(code) != null) saveDrafts()
+        } else if (drafts[code] != t) {
+            drafts[code] = t
+            saveDrafts()
+        }
+    }
+
+    /** 会话已发送该草稿（或清空对话）时，删掉草稿，避免已发出的内容又被当成草稿恢复 */
+    fun clearDraft(code: String) {
+        if (drafts.remove(code) != null) saveDrafts()
+    }
+
+    private fun loadDrafts(p: SharedPreferencesModule) {
+        drafts.clear()
+        val raw = p.getItem(KEY_DRAFT)
+        if (raw.isBlank()) return
+        raw.split(SEP_CONV).forEach { seg ->
+            if (seg.isBlank()) return@forEach
+            val kv = seg.split(SEP_KV, limit = 2)
+            val code = kv.getOrNull(0)?.trim() ?: return@forEach
+            if (code.isEmpty()) return@forEach
+            val text = unesc(kv.getOrNull(1) ?: "")
+            if (text.isNotBlank()) drafts[code] = text
+        }
+    }
+
+    private fun saveDrafts() {
+        val p = prefs ?: return
+        val raw = drafts.entries.joinToString(SEP_CONV) { (code, text) -> code + SEP_KV + esc(text) }
+        p.setItem(KEY_DRAFT, raw)
     }
 
     data class ChatMessage(
