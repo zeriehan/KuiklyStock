@@ -502,28 +502,27 @@ internal class StockDetailPage : BasePager() {
                             }
                             KRRefreshButton({ ctx.aiLoading }) { ctx.reanalyze(stock, code) }
                         }
-                        // 量化结论：两个醒目的"徽章按钮"（纯展示，不可点）——左=风险档、右=操作建议
-                        // ⚠️ 用整块实色大胶囊 + 白粗字，比文字/浅标签更醒目，一眼看懂"高风险 / 买入"
+                        // 量化结论：两个醒目的"徽章按钮"（纯展示，不可点），在本行居中
+                        // 语义：风险 = 按左格那个操作去做的风险（"操作风险"），而非整只股票的笼统风险
                         vif({ ctx.aiVerdict != null }) {
                             val v = ctx.aiVerdict
                             if (v != null) {
                                 View {
-                                    attr { flexDirectionRow(); alignItemsCenter(); marginTop(10f) }
-                                    val riskColor = when (v.risk) {
-                                        "低风险" -> Color(0xFF1ABE5B)   // 绿
-                                        "高风险" -> Color(0xFFE54D42)   // 红
-                                        else -> Color(0xFFFF9800)       // 橙
-                                    }
+                                    attr { flexDirectionRow(); alignItemsCenter(); justifyContentCenter(); marginTop(10f) }
                                     val isBuy = v.action == "买入"
                                     val isSell = v.action == "卖出"
+                                    // 左格：操作建议（大字动作）
                                     val actionColor = if (isBuy) Color(0xFFE54D42)
                                         else if (isSell) Color(0xFF1ABE5B)
                                         else Color(0xFF8A8A8A)
-                                    // 左：风险徽章
-                                    verdictBadge(v.risk, riskColor)
-                                    // 右：操作徽章（买入红/卖出绿/持有灰）
-                                    val actLabel = if (isBuy) "买入" else if (isSell) "卖出" else "持有"
-                                    verdictBadge(actLabel, actionColor, isAction = true)
+                                    verdictBadge(v.action, actionColor, caption = "操作建议")
+                                    // 右格：该操作的风险（低绿/中橙/高红）
+                                    val riskColor = when (v.risk) {
+                                        "低风险" -> Color(0xFF1ABE5B)
+                                        "高风险" -> Color(0xFFE54D42)
+                                        else -> Color(0xFFFF9800)
+                                    }
+                                    verdictBadge(v.risk, riskColor, caption = "操作风险")
                                 }
                             }
                         }
@@ -684,21 +683,21 @@ internal fun parseAiVerdict(text: String): Pair<AiVerdict?, String> {
 
 /**
  * 渲染一个醒目的"徽章按钮"（纯展示、不可点）：
- * 实色大胶囊(圆角矩形) + 白粗字，形似按钮。内含两行：上一行 10px 半透白小标签(风险/操作)，
- * 下一行 18px 粗白大字(高风险/买入)。@param isAction 仅用于小标签措辞。
+ * 实色大胶囊(圆角矩形) + 白粗字，形似按钮。内含两行：上一行 10px 半透白小标签(caption)，
+ * 下一行 18px 粗白大字(value)。
  */
-private fun ViewContainer<*, *>.verdictBadge(value: String, color: Color, isAction: Boolean = false) {
+private fun ViewContainer<*, *>.verdictBadge(value: String, color: Color, caption: String) {
     View {
         attr {
             flexDirectionColumn(); alignItemsCenter(); justifyContentCenter()
-            marginRight(10f)
-            height(44f)
+            marginRight(12f)
+            height(46f)
             padding(left = 18f, right = 18f)
             borderRadius(10f)
             backgroundColor(color)
         }
         Text {
-            attr { text(if (isAction) "操作" else "风险"); fontSize(9f); color(Color(0xCCFFFFFF)) }
+            attr { text(caption); fontSize(9f); color(Color(0xCCFFFFFF)) }
         }
         Text {
             attr { text(value); fontSize(17f); fontWeightSemisolid(); color(Color.WHITE); marginTop(1f) }
