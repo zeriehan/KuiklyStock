@@ -46,8 +46,8 @@ class MockLLMClient : LLMClient {
             appendLine("")
             appendLine("【简要回应】")
             appendLine(
-                "当前未连接大模型（离线兜底），无法就该问题给出实时分析。" +
-                    "请在「我的-外观与个性化」之外确保已配置智谱 GLM Key，联网后即可获得真实回答。"
+                "AI 服务暂时没有返回（可能是网络不通、模型接口繁忙或未配置模型 Key），" +
+                    "这里先用本地兜底给你一个通用思路。稍后重试或确认联网/Key 配置后即可获得真实回答。"
             )
             appendLine("")
             appendLine("【参考思路】")
