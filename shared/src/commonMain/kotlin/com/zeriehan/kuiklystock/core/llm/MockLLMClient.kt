@@ -65,6 +65,9 @@ class MockLLMClient : LLMClient {
         val q = question.trim()
         val trendWord = if (stock.changePercent > 1.5f) "强势上行" else if (stock.changePercent < -1.5f) "弱势回调" else "区间震荡"
         return buildString {
+            // 先给结论徽章行：个股聊天也渲染「操作建议+操作风险」胶囊(与真实GLM一致, 离线限流兜底时演示不缺徽章)
+            appendLine(mockVerdictLine(stock.changePercent))
+            appendLine("")
             appendLine("【关于${stock.name}（${stock.code}）】")
             appendLine("")
             appendLine("你问的是：$q")
@@ -110,19 +113,9 @@ class MockLLMClient : LLMClient {
                 "方向尚不明朗，建议以观望为主，等待放量突破或回踩确认后再做决策"
         }
         // 供 AI 分析卡顶部的"风险徽章 + 操作徽章"解析（【AI观点】行格式与真实 GLM 一致）
-        val cp = stock.changePercent
-        val verdictRisk = when {
-            abs(cp) > 4.0f -> "高风险"   // 单日波动过大
-            abs(cp) > 1.5f -> "中风险"
-            else -> "低风险"
-        }
-        val verdictAction = when {
-            cp > 1.5f -> "卖出"          // 涨幅过热 → 获利了结
-            cp < -1.5f -> "买入"         // 深跌企稳 → 关注试错
-            else -> "持有"
-        }
+        val verdictLine = mockVerdictLine(stock.changePercent)
         return buildString {
-            appendLine("【AI观点】风险：$verdictRisk｜操作建议：$verdictAction")
+            appendLine(verdictLine)
             appendLine("")
             appendLine("【${stock.name}（${stock.code}）AI 速览】")
             appendLine("")
@@ -148,5 +141,21 @@ class MockLLMClient : LLMClient {
             appendLine("")
             appendLine("（以上由大模型基于量价数据生成，仅供参考，不构成投资建议）")
         }.trimEnd()
+    }
+
+    /** 由单日涨跌幅推导「风险档 + 操作建议」，生成与真实 GLM 一致的【AI观点】结论行（供徽章解析） */
+    private fun mockVerdictLine(changePercent: Float): String {
+        val cp = changePercent
+        val risk = when {
+            abs(cp) > 4.0f -> "高风险"   // 单日波动过大
+            abs(cp) > 1.5f -> "中风险"
+            else -> "低风险"
+        }
+        val action = when {
+            cp > 1.5f -> "卖出"          // 涨幅过热 → 获利了结
+            cp < -1.5f -> "买入"         // 深跌企稳 → 关注试错
+            else -> "持有"
+        }
+        return "【AI观点】风险：$risk｜操作建议：$action"
     }
 }
