@@ -9,6 +9,7 @@ import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.manager.BridgeManager
 import com.tencent.kuikly.core.reactive.handler.observable
+import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.layout.FlexJustifyContent
 import com.tencent.kuikly.core.views.*
 import com.tencent.kuikly.core.views.CanvasContext
@@ -22,6 +23,7 @@ import com.zeriehan.kuiklystock.core.computeRSI
 import com.zeriehan.kuiklystock.core.computeBOLL
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
+import com.zeriehan.kuiklystock.core.UserSettings
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
@@ -63,6 +65,13 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     /** 加载更多历史（横向滚到最左时由外层设置） */
     var onLoadMore: (() -> Unit)? = null
 
+    /**
+     * 「就这点问」回调：用户十字光标选中某根 K线/分时点后，点按钮把被选点信息交给外层。
+     * 组件本身不含股票上下文，故只把【被选点信息】传出，由外层拼完整追问（股票名/代码/周期）。
+     * 参数：label(时间/日期)、price(价)、chgPct(涨跌%)、isTime(是否分时)。
+     */
+    var onAsk: ((label: String, price: Float, chgPct: Float, isTime: Boolean) -> Unit)? = null
+
     /** 主图 Scroller ref：初次/换股时把可视区定位到最新一根（最右） */
     private lateinit var scrollerRef: ViewRef<ScrollerView<*, *>>
     /**
@@ -90,6 +99,8 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
     var crossY: Float by observable(0f)   // 主画布局部 Y
     /** 主画布最近一次实际内容宽（吸附十字光标用，与 drawMain 的 s=w/n 对齐） */
     private var lastCanvasW: Float = 0f
+    /** 十字光标当前选中的那根信息（非空时显示「就这点问」条）：label/price/chgPct/isTime */
+    var picked: KLPick? by observable(null)
 
     /** 交互内部状态 */
     private var atStart = false
@@ -115,6 +126,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
         crossActive = false
         crossX = 0f
         crossY = 0f
+        picked = null
     }
 
     private fun setCross(x: Float, y: Float) {
@@ -126,6 +138,23 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
         crossX = idx * s + s / 2f
         crossY = y
         crossActive = true
+        // 记录选中那根信息（供「就这点问」）：与 drawInfoBar 的涨跌幅口径一致
+        picked = if (isTimeSharing()) {
+            val hp = timeSharing.getOrNull(idx)
+            if (hp == null) null
+            else {
+                val chg = if (refPrice != 0f) (hp.price - refPrice) / refPrice * 100f else 0f
+                KLPick(hp.time, hp.price, chg, true)
+            }
+        } else {
+            val b = bars.getOrNull(idx)
+            if (b == null) null
+            else {
+                val prevClose = if (idx > 0) bars[idx - 1].close else 0f
+                val chg = if (prevClose != 0f) (b.close - prevClose) / prevClose * 100f else 0f
+                KLPick(b.date, b.close, chg, false)
+            }
+        }
     }
 
     /** 缩放（± 按钮 / 兜底捏合），限制在 0.5x–3x */
@@ -406,6 +435,36 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
                     Canvas(
                         { attr { flex(1f); height(ctx.AXIS_H) } }
                     ) { c, w, h -> ctx.drawDateAxis(c, w, h) }
+                }
+
+                // 「就这点问」：十字光标选中某根后浮现，点按钮把选中点信息交给外层去拼追问（跳聊天页）
+                vif({ ctx.picked != null && ctx.onAsk != null }) {
+                    val p = ctx.picked
+                    if (p != null) {
+                        View {
+                            attr {
+                                flexDirectionRow(); alignItemsCenter()
+                                marginTop(6f); padding(6f, 8f); borderRadius(8f)
+                                backgroundColor(Color(0xFFEEF1F5))
+                            }
+                            Text {
+                                attr {
+                                    text("已选中 ${p.label} 价 ${formatPrice(p.price)}  ${formatPercent(p.chgPct)}")
+                                    fontSize(11f); color(Color(0xFF555555))
+                                }
+                            }
+                            View { attr { flex(1f) } }
+                            View {
+                                attr {
+                                    height(24f); padding(top = 0f, left = 12f, bottom = 0f, right = 12f); borderRadius(12f)
+                                    alignItemsCenter(); justifyContentCenter()
+                                    backgroundColor(Color(UserSettings.themeColor))
+                                }
+                                event { click { ctx.onAsk?.invoke(p.label, p.price, p.chgPct, p.isTime) } }
+                                Text { attr { text("就这点问"); fontSize(11f); color(Color.WHITE) } }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -831,3 +890,11 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
 internal fun ViewContainer<*, *>.KRKLineChart(init: KRKLineChart.() -> Unit) {
     addChild(KRKLineChart(), init)
 }
+
+/** 十字光标选中的 K线/分时点信息（供「就这点问」）：label/price/chgPct/isTime */
+internal data class KLPick(
+    val label: String,
+    val price: Float,
+    val chgPct: Float,
+    val isTime: Boolean,
+)

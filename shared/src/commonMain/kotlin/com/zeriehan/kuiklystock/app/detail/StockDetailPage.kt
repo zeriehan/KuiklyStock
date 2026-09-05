@@ -408,6 +408,17 @@ internal class StockDetailPage : BasePager() {
                                 }
                             }
                         }
+                        // 「就这点问」：十字光标选点后跳转到该股的 AI 聊天页，自动发送针对这根K线/分时点的追问
+                        onAsk = { label, price, chg, isTime ->
+                            val periodName = if (isTime) "分时" else ctx.periods[ctx.selectedPeriod] + "K"
+                            val follow = "关于 ${stock.name}(${stock.code}) 在 $label 的$periodName" +
+                                "（${if (isTime) "价" else "收"} ${formatPrice(price)}，涨跌 ${formatPercent(chg)}），" +
+                                "这一时刻为什么这么走？帮我分析一下当时的走势逻辑。"
+                            val data = JSONObject()
+                            data.put("stockCode", stock.code)
+                            data.put("prompt", follow)
+                            ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", data)
+                        }
                     }
                     }
                     vif({ ctx.selectedPeriod != 0 && ctx.klineMissing }) {
