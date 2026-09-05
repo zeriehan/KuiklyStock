@@ -30,6 +30,7 @@ import com.zeriehan.kuiklystock.core.llm.ChatSync
 import com.zeriehan.kuiklystock.core.llm.LLM
 import com.zeriehan.kuiklystock.components.KRStockCard.renderAiStockCards
 import com.zeriehan.kuiklystock.components.KRMarkdown.renderMarkdown
+import com.zeriehan.kuiklystock.components.KRChatMiniChart
 
 /**
  * AI 聊天页（按股票代码隔离的同一段对话）。
@@ -289,6 +290,16 @@ internal class ChatPage : BasePager() {
         inputText = q
         inputRef.view?.setText(q)
         send()
+    }
+
+    /**
+     * 把迷你图「就这点问」生成的追问预填进输入框（不自动发送），用户在聊天页编辑后自行发送。
+     * 图表组件选点后调用，实现「据十字光标位置继续讨论」。
+     */
+    internal fun prefillFollowUp(q: String) {
+        inputText = q
+        inputRef.view?.setText(q)
+        bridgeModule.toast("已为你预填追问，改改就能发")
     }
 
     /**
@@ -877,15 +888,44 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
                     }
                 }
             } else {
-                // AI 气泡：KRMarkdown 富文本渲染（标题/列表/引用/代码 + 行内加粗/可点股票），
-                // 兼容历史纯文本/AI 开场白（按单段渲染）。点行内股票跳详情。
-                renderMarkdown(
-                    text = text,
-                    contentW = maxBubbleW - 20f,
-                    textColor = Color(0xFF333333),
-                    accent = Color(UserSettings.themeColor),
-                    onOpenStock = { code -> ctx.openStockDetailByCode(code) },
-                )
+                // AI 气泡：先把文本按 [KCHART:...] 指令拆成「文本段 + 迷你图段」分别渲染。
+                // 无图指令时等价于原单段 KRMarkdown 渲染；流式态不在此解析(见 renderMessages 注释，留给 done 阶段)。
+                val segments = parseChatSegments(text)
+                if (segments.size == 1 && segments[0] is ChatSegment.Text) {
+                    renderMarkdown(
+                        text = text,
+                        contentW = maxBubbleW - 20f,
+                        textColor = Color(0xFF333333),
+                        accent = Color(UserSettings.themeColor),
+                        onOpenStock = { code -> ctx.openStockDetailByCode(code) },
+                    )
+                } else {
+                    segments.forEach { seg ->
+                        when (seg) {
+                            is ChatSegment.Text -> if (seg.text.isNotBlank()) {
+                                renderMarkdown(
+                                    text = seg.text,
+                                    contentW = maxBubbleW - 20f,
+                                    textColor = Color(0xFF333333),
+                                    accent = Color(UserSettings.themeColor),
+                                    onOpenStock = { code -> ctx.openStockDetailByCode(code) },
+                                )
+                            }
+                            is ChatSegment.Chart -> {
+                                val stk = resolveChartStock(seg.codeOrName)
+                                if (stk != null) {
+                                    KRChatMiniChart {
+                                        stock = stk
+                                        period = seg.period
+                                        onAsk = { q -> ctx.prefillFollowUp(q) }
+                                    }
+                                } else {
+                                    Text { attr { text("（无法识别股票：${seg.codeOrName}）"); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)); marginTop(4f) } }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -901,3 +941,38 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
     private fun ViewContainer<*, *>.chatMsgDivider() {
         View { attr { height(0.5f); backgroundColor(Color(0xFFEEEEEE)); marginLeft(16f) } }
     }
+
+    /** 聊天 AI 回复里的段：纯文本 或 迷你图指令 */
+    private sealed class ChatSegment {
+        data class Text(val text: String) : ChatSegment()
+        data class Chart(val codeOrName: String, val period: String) : ChatSegment()
+    }
+
+    /** 把 AI 回复文本按 [KCHART:代码:周期] 拆成 文本段 + 迷你图段（保持出现顺序） */
+    private fun parseChatSegments(text: String): List<ChatSegment> {
+        val out = mutableListOf<ChatSegment>()
+        var last = 0
+        KCHART_RE.findAll(text).forEach { m ->
+            val head = text.substring(last, m.range.first())
+            if (head.isNotEmpty()) out.add(ChatSegment.Text(head))
+            out.add(ChatSegment.Chart(m.groupValues[1], m.groupValues[2]))
+            last = m.range.last() + 1
+        }
+        val tail = text.substring(last)
+        if (tail.isNotEmpty()) out.add(ChatSegment.Text(tail))
+        return out
+    }
+
+    /** 解析图表指令里的股票：6 位代码精确匹配；否则按名称(精确/包含)匹配行情池 */
+    private fun resolveChartStock(raw: String): Stock? {
+        val r = raw.trim()
+        if (r.length == 6 && r.all { it.isDigit() }) {
+            StockData.getQuotes().firstOrNull { it.code == r }?.let { return it }
+        }
+        val pool = StockData.getQuotes()
+        pool.firstOrNull { it.name == r }?.let { return it }
+        pool.firstOrNull { it.name.contains(r) }?.let { return it }
+        return null
+    }
+
+    private val KCHART_RE = Regex("\\[KCHART:([^\\]:]+):(intraday|day|week|month)\\]")

@@ -159,13 +159,14 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
                 appendLine("用户可能问大盘、宏观、行业或任意个股；缺少实时数据时基于公开常识谨慎作答，并提示以实时行情为准。")
             } else {
                 appendLine("你是一名资深证券分析师，正在和用户聊一只股票。请基于股票信息与对话历史，专业、客观地回答用户的问题。")
+                appendLine("当前股票代码：${stock.code}（如需展示走势图，用 [KCHART:${stock.code}:day] 等指令）。")
             }
             if (freeMode) {
                 // 引导模型优先提及界面能实时展示行情卡片的池内股票（Task02：提及股→末尾附迷你走势卡片可点跳详情）
                 val pool = StockData.getQuotes().filter { !it.isIndex }.take(18)
                 if (pool.isNotEmpty()) {
-                    appendLine("如需谈及个股，请优先从下方这些可实时查看行情详情的股票中选择，并写全称（方便用户点卡片看走势）：")
-                    appendLine(pool.joinToString("、") { it.name })
+                    appendLine("如需谈及个股，请优先从下方这些可实时查看行情详情的股票中选择，并写全称+代码（方便用户点卡片看走势）：")
+                    appendLine(pool.joinToString("、") { "${it.name}(${it.code})" })
                     appendLine()
                 }
             }
@@ -173,6 +174,7 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
             appendLine("- 用 # 或 ## 作为段落/要点标题（每个要点一个标题），正文作为标题下方普通段落；")
             appendLine("- 关键结论可用 **加粗**；并列项可用 - 无序列表；引用强调用 > 引用；")
             appendLine("- 提及具体股票时，请同时写出股票名与 6 位代码，如“贵州茅台(600519)”，不要只用简称；")
+            appendLine("- 若回答需要展示某只股票的走势图（分时或K线），在合适位置插入指令 [KCHART:股票代码:period]，period 取 intraday(分时)/day(日K)/week(周K)/month(月K)；确有走势可展示时才用，每篇最多 1-2 张；例如讨论贵州茅台日K时写「……[KCHART:600519:day]……」。用户可在图上点选某根K线/分时点继续追问。")
             appendLine("- 全文用空行分隔不同段落，避免一大段；总字数控制在 300 字以内，避免过长。")
             appendLine()
             append(dataCtx)
