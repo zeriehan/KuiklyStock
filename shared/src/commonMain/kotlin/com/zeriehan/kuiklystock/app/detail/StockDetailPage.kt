@@ -30,6 +30,9 @@ import com.zeriehan.kuiklystock.core.llm.DataSync
 import com.zeriehan.kuiklystock.core.llm.LLM
 import com.zeriehan.kuiklystock.components.KRRefreshButton.KRRefreshButton
 import com.zeriehan.kuiklystock.components.KRKLineChart.KRKLineChart
+import com.zeriehan.kuiklystock.components.AiVerdict
+import com.zeriehan.kuiklystock.components.parseAiVerdict
+import com.zeriehan.kuiklystock.components.renderAiVerdictBadges
 
 /**
  * 个股详情页（P2，骨架 + 假数据）。
@@ -502,29 +505,10 @@ internal class StockDetailPage : BasePager() {
                             }
                             KRRefreshButton({ ctx.aiLoading }) { ctx.reanalyze(stock, code) }
                         }
-                        // 量化结论：两个醒目的"徽章按钮"（纯展示，不可点），在本行居中
-                        // 语义：风险 = 按左格那个操作去做的风险（"操作风险"），而非整只股票的笼统风险
+                        // 量化结论：两个醒目的居中徽章（操作建议 + 操作风险），纯展示不可点
                         vif({ ctx.aiVerdict != null }) {
                             val v = ctx.aiVerdict
-                            if (v != null) {
-                                View {
-                                    attr { flexDirectionRow(); alignItemsCenter(); justifyContentCenter(); marginTop(10f) }
-                                    val isBuy = v.action == "买入"
-                                    val isSell = v.action == "卖出"
-                                    // 左格：操作建议（大字动作）
-                                    val actionColor = if (isBuy) Color(0xFFE54D42)
-                                        else if (isSell) Color(0xFF1ABE5B)
-                                        else Color(0xFF8A8A8A)
-                                    verdictBadge(v.action, actionColor, caption = "操作建议")
-                                    // 右格：该操作的风险（低绿/中橙/高红）
-                                    val riskColor = when (v.risk) {
-                                        "低风险" -> Color(0xFF1ABE5B)
-                                        "高风险" -> Color(0xFFE54D42)
-                                        else -> Color(0xFFFF9800)
-                                    }
-                                    verdictBadge(v.risk, riskColor, caption = "操作风险")
-                                }
-                            }
+                            if (v != null) this.renderAiVerdictBadges(v)
                         }
                         // 长按需弹出原生可选中文本对话框（选取文字 / 部分复制）；Kuikly Text 本身不支持文字选中
                         View {
@@ -642,65 +626,6 @@ internal fun ViewContainer<*, *>.renderWatchButton(ctx: StockDetailPage, code: S
                 fontSize(13f)
                 color(if (watched) Color(0xFFE58A00) else Color.WHITE)
             }
-        }
-    }
-}
-
-/** AI 结构化结论：风险档(低/中/高) + 操作档(买入/持有/卖出) */
-internal data class AiVerdict(val risk: String, val action: String)
-
-/**
- * 从 AI 分析全文解析顶部【AI观点】行 → 结论 + 剥离该行后的正文。
- * 兼容模型输出的轻微格式差异：风险取 低/中/高风险 归一为 低/中/高，操作取 买入/加仓→买入、
- * 卖出/减持→卖出、持有/观望→持有。解析不到(老缓存/模型没按格式) → 返回 (null, 全文) 不崩，UI 仅显示正文。
- */
-internal fun parseAiVerdict(text: String): Pair<AiVerdict?, String> {
-    if (text.isBlank()) return null to text
-    // 找到「风险：...」与「操作建议：...」(或「操作:」)，无论是否带【AI观点】前缀
-    val riskRegex = Regex("风险[：:](\\s*[高中低]\\s*(?:风险)?)")
-    val actionRegex = Regex("操作建议?[：:](\\s*(?:买入|加仓|持有|观望|减持|卖出))")
-    val riskM = riskRegex.find(text)
-    val actionM = actionRegex.find(text)
-    if (riskM == null || actionM == null) return null to text
-    val rawRisk = riskM.groupValues[1].trim()
-    val rawAction = actionM.groupValues[1].trim()
-    val risk = when {
-        rawRisk.contains("高") -> "高风险"
-        rawRisk.contains("低") -> "低风险"
-        else -> "中风险"
-    }
-    val action = when {
-        rawAction.contains("买入") || rawAction.contains("加仓") -> "买入"
-        rawAction.contains("卖出") || rawAction.contains("减持") -> "卖出"
-        else -> "持有"
-    }
-    // 剥离整条【AI观点】结论行：从"风险"所在那一行行首 到 该行行尾(含换行)，用于正文展示
-    val lineStart = text.lastIndexOf('\n', riskM.range.first).let { if (it < 0) 0 else it + 1 }
-    val lineEnd = text.indexOf('\n', actionM.range.last).let { if (it < 0) text.length else it + 1 }
-    val body = (text.substring(0, lineStart).trimEnd() + "\n" + text.substring(lineEnd)).trimStart('\n').trim()
-    return AiVerdict(risk, action) to body
-}
-
-/**
- * 渲染一个醒目的"徽章按钮"（纯展示、不可点）：
- * 实色大胶囊(圆角矩形) + 白粗字，形似按钮。内含两行：上一行 10px 半透白小标签(caption)，
- * 下一行 18px 粗白大字(value)。
- */
-private fun ViewContainer<*, *>.verdictBadge(value: String, color: Color, caption: String) {
-    View {
-        attr {
-            flexDirectionColumn(); alignItemsCenter(); justifyContentCenter()
-            marginRight(12f)
-            height(46f)
-            padding(left = 18f, right = 18f)
-            borderRadius(10f)
-            backgroundColor(color)
-        }
-        Text {
-            attr { text(caption); fontSize(9f); color(Color(0xCCFFFFFF)) }
-        }
-        Text {
-            attr { text(value); fontSize(17f); fontWeightSemisolid(); color(Color.WHITE); marginTop(1f) }
         }
     }
 }

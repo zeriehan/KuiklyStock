@@ -188,6 +188,12 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
             appendLine("用户当前问题：$question")
             appendLine()
             appendLine("请直接回答用户问题；若涉及操作，务必强调仅供参考、不构成投资建议。")
+            appendLine()
+            appendLine("【可选的结论徽章行】如果这次回答明确给出了某只股票(或整体)的买卖倾向/风险判断（例如用户问\"该买吗/能追吗/怎么操作/风险大吗\"，或你明确建议买入/持有/卖出），")
+            appendLine("就在回答的**最末尾、独占一行**额外追加一行结论，格式务必严格：")
+            appendLine("【AI观点】风险：X｜操作建议：Y")
+            appendLine("其中 X 只能取：低风险 / 中风险 / 高风险；Y 只能取：买入 / 持有 / 卖出。")
+            appendLine("若本次回答并未给出明确买卖倾向或风险判断（例如只是科普、讲解、闲聊），**不要加这一行**，避免每句都冒结论。")
         }.trimEnd()
     }
 

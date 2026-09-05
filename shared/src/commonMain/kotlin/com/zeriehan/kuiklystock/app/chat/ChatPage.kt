@@ -31,6 +31,8 @@ import com.zeriehan.kuiklystock.core.llm.LLM
 import com.zeriehan.kuiklystock.components.KRStockCard.renderAiStockCards
 import com.zeriehan.kuiklystock.components.KRMarkdown.renderMarkdown
 import com.zeriehan.kuiklystock.components.KRChatMiniChart
+import com.zeriehan.kuiklystock.components.parseAiVerdict
+import com.zeriehan.kuiklystock.components.renderAiVerdictBadges
 
 /**
  * AI 聊天页（按股票代码隔离的同一段对话）。
@@ -957,12 +959,16 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
                     }
                 }
             } else {
-                // AI 气泡：先把文本按 [KCHART:...] 指令拆成「文本段 + 迷你图段」分别渲染。
+                // AI 气泡：先尝试解析末尾【AI观点】结论行(投资建议/风险徽章用)；解析到→正文剥离该行并渲染徽章
+                val parsed = parseAiVerdict(text)
+                val aiVerdict = parsed.first
+                val bodyText = parsed.second
+                // 把文本按 [KCHART:...] 指令拆成「文本段 + 迷你图段」分别渲染。
                 // 无图指令时等价于原单段 KRMarkdown 渲染；流式态不在此解析(见 renderMessages 注释，留给 done 阶段)。
-                val segments = parseChatSegments(text)
+                val segments = parseChatSegments(bodyText)
                 if (segments.size == 1 && segments[0] is ChatSegment.Text) {
                     renderMarkdown(
-                        text = text,
+                        text = bodyText,
                         contentW = maxBubbleW - 20f,
                         textColor = Color(0xFF333333),
                         accent = Color(UserSettings.themeColor),
@@ -996,6 +1002,8 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
                         }
                     }
                 }
+                // 命中结论徽章：在气泡内容下方渲染「操作建议 + 操作风险」两个醒目徽章（纯展示）
+                if (aiVerdict != null) this.renderAiVerdictBadges(aiVerdict)
             }
         }
     }
