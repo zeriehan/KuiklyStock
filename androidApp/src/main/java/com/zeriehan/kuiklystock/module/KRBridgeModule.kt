@@ -640,6 +640,16 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 }
 
 /**
+ * 市场段(secid 中 "." 前部分) → 腾讯行情源前缀：1→sh、bj→bj、其余→sz。
+ * 兼容北交所 bj 前缀(secidOf 已对 8xxxxx/920xxx 返回 bj.)，使 K线/分时/报价真正可达。
+ */
+private fun txMarketPrefix(market: String): String = when (market) {
+    "1" -> "sh"
+    "bj" -> "bj"
+    else -> "sz"
+}
+
+/**
  * 拉取东方财富实时行情（免 token 的 push2 批量接口）。
  * 在子线程请求，结果切回主线程回调；任何失败回调空列表（shared 端保留 mock）。
  *
@@ -692,7 +702,7 @@ private fun fetchEastMoneyQuotesPerStock(secids: String): String {
         val dot = s.indexOf('.')
         val market = if (dot > 0) s.substring(0, dot) else "1"
         val code = if (dot > 0) s.substring(dot + 1) else s
-        (if (market == "1") "sh" else "sz") + code
+        (txMarketPrefix(market)) + code
     }.joinToString(",")
     val url = "https://qt.gtimg.cn/q=$codes"
     try {
@@ -717,7 +727,7 @@ private fun fetchEastMoneyQuotesPerStock(secids: String): String {
                 val dot = s.indexOf('.')
                 val market = if (dot > 0) s.substring(0, dot) else "1"
                 val code = if (dot > 0) s.substring(dot + 1) else s
-                val key = (if (market == "1") "sh" else "sz") + code
+                val key = (txMarketPrefix(market)) + code
                 // 找 v_<key>="..."
                 val marker = "v_$key=\""
                 val idx = body.indexOf(marker)
@@ -1029,7 +1039,7 @@ private fun fetchKline(params: String?, callback: KuiklyRenderCallback?) {
             val dot = secid.indexOf('.')
             val market = if (dot > 0) secid.substring(0, dot) else "1"
             val code = if (dot > 0) secid.substring(dot + 1) else secid
-            val prefix = if (market == "1") "sh" else "sz"
+            val prefix = txMarketPrefix(market)
             val periodKey = when (klt) { 102 -> "week"; 103 -> "month"; 104 -> "year"; else -> "day" }
             val fqKey = "qfq" + when (klt) { 102 -> "week"; 103 -> "month"; else -> "day" } // qfqweek/qfqmonth/qfqday
             val url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get" +
@@ -1094,7 +1104,7 @@ private fun fetchTrends(params: String?, callback: KuiklyRenderCallback?) {
             val dot = secid.indexOf('.')
             val market = if (dot > 0) secid.substring(0, dot) else "1"
             val code = if (dot > 0) secid.substring(dot + 1) else secid
-            val prefix = if (market == "1") "sh" else "sz"
+            val prefix = txMarketPrefix(market)
             val tcode = "$prefix$code"
             val url = "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=$tcode"
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {

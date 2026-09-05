@@ -78,6 +78,8 @@ internal class StockDetailPage : BasePager() {
     private var curCode: String = ""
     /** 最新报价快照（observable）：行情刷新(DataSync)后更新，驱动 名称/现价/涨跌幅 顶栏与大字价实时跟上真实价 */
     internal var liveStock: Stock? by observable(null)
+    /** 真实日K 行情源未返回（北交所/超新股）：详情页日K 卡片诚实占位而非显示本地假波浪 */
+    internal var klineMissing: Boolean by observable(false)
 
     /**
      * 执行一次 AI 分析。
@@ -93,7 +95,7 @@ internal class StockDetailPage : BasePager() {
             }
         }
         aiLoading = true
-        // 新股/退化数据无可信历史K线，传空列表给模型，避免其基于本地合成走势给出误导结论
+        // 仅行情源不支持的市场无可信历史K线（传空列表）；新股/北交所现传真实日K给模型
         val klineForAI = if (isUnsafeStock(stock)) emptyList() else StockData.getKLine(stock, "日")
         LLM.client.analyze(stock, klineForAI) { text ->
             val ts = Utils.currentBridgeModule().currentTimeStamp()
@@ -110,6 +112,13 @@ internal class StockDetailPage : BasePager() {
         runAnalysis(stock, code, force = true)
     }
 
+    /** 复制 AI 分析全文到剪贴板，并提示 */
+    private fun copyAi() {
+        if (aiText.isBlank()) return
+        bridgeModule.copyToPasteboard(aiText)
+        bridgeModule.toast("已复制")
+    }
+
     override fun viewDidLoad() {
         super.viewDidLoad()
         watchlistCodes = UserStockStore.loadWatchlist(acquireModule(SharedPreferencesModule.MODULE_NAME))
@@ -121,9 +130,8 @@ internal class StockDetailPage : BasePager() {
         val c = curCode
         if (c.isNotBlank()) {
             val st = StockData.findByCode(c)
-            // 退化数据/新股：跳过真实数据拉取。其 secid 可能触发原生桥(fetchTrends/fetchKline)
-            // 在 native 侧异常并导致整进程闪退，而该异常无法被 shared 的 Kotlin try/catch 捕获。
-            // 这类股票直接走安全页，不触碰原生桥，从根源避免崩溃。
+            // 仅「行情源不支持的市场」(老三板/退市等 secid 为空)跳过真实拉取；
+            // 新股/北交所现已接入真实源，直接拉真实分时+日K（回调已加固，异常自动回退本地，不会崩）。
             if (!isUnsafeStock(st)) {
                 StockData.loadTrends(st) {
                     if (selectedPeriod == 0) chartRef?.view?.let { ch ->
@@ -133,7 +141,7 @@ internal class StockDetailPage : BasePager() {
                         ch.resetToLatest()
                     }
                 }
-                StockData.loadKline(st, "日", 80) {}
+                StockData.loadKline(st, "日", 80) { klineMissing = StockData.isKlineMissing(st.code) }
             }
         }
     }
@@ -148,7 +156,7 @@ internal class StockDetailPage : BasePager() {
 
     /** 按周期切换 K线图数据 / 分时数据，并同步当前指标与十字光标清理 */
     private fun applyPeriod(stock: Stock, i: Int) {
-        // 新股/退化数据：仅在本地合成数据间切换，绝不触碰原生桥（避免闪退）
+        // 仅行情源不支持的市场（老三板/退市等）才停留在本地合成数据；新股/北交所已接真实源
         if (isUnsafeStock(stock)) {
             chartRef?.view?.let { chart ->
                 chart.clearCrosshair()
@@ -183,7 +191,7 @@ internal class StockDetailPage : BasePager() {
 
     /** 异步拉取真实数据（分时 i=0 / 该周期K线 i>0），到达后更新当前图 */
     private fun loadRealAndRefresh(stock: Stock, i: Int) {
-        // 新股/退化数据：跳过原生桥拉取（其 secid 易触发 native 层闪退），仅用本地合成数据
+        // 仅「行情源不支持的市场」跳过原生桥；新股/北交所现已接入真实源，直接拉（回调加固不会崩）
         if (isUnsafeStock(stock)) return
         if (i == 0) {
             StockData.loadTrends(stock) {
@@ -197,6 +205,7 @@ internal class StockDetailPage : BasePager() {
         } else {
             val period = periods[i]
             StockData.loadKline(stock, period, klineCount) {
+                klineMissing = StockData.isKlineMissing(stock.code)
                 if (selectedPeriod == i) chartRef?.view?.let { ch ->
                     ch.bars = StockData.getKLine(stock, period, klineCount)
                     ch.resetToLatest()
@@ -213,10 +222,14 @@ internal class StockDetailPage : BasePager() {
         }
     }
 
-    /** 判断该股票是否「数据不可靠」：新股(N开头)或任意数值字段退化(NaN/Infinity)。
-     *  命中则跳过图表、跳过真实数据拉取，避免原生 Canvas/桥异常导致闪退。 */
+    /**
+     * 判断该股票是否「行情源不支持 / 数据不可靠」，需跳过原生桥、用本地合成走势兜底：
+     * - 数值字段退化(NaN/Infinity) → 图表/桥可能异常，走兜底；
+     * - 老三板/退市/新三板等 secidOf 返回空 → 由 isUnsupportedExchange 判定为不支持 → 自动兜底。
+     * 注：新股(N开头)与北交所(bj)现已接入真实源，不再在此强制 mock（回调已加固，异常自动回退不崩）。
+     */
     private fun isUnsafeStock(stock: Stock): Boolean {
-        if (stock.name.startsWith("N", ignoreCase = true)) return true
+        if (isUnsupportedExchange(stock)) return true
         if (!stock.price.isFinite() || !stock.change.isFinite() || !stock.changePercent.isFinite()) return true
         if (!StockData.intradayRefPrice(stock).isFinite()) return true
         if (StockData.getIntraday(stock).any { !it.price.isFinite() || !it.avg.isFinite() }) return true
@@ -224,12 +237,20 @@ internal class StockDetailPage : BasePager() {
         return false
     }
 
+    /**
+     * 行情源(腾讯/东财)不支持的市场：以「secidOf 能否给出有效 secid」判定。
+     * secidOf 对北交所已返回 bj. 前缀(真实可达)；唯有老三板/退市/新三板等返回空 secid → 判为不支持，
+     * 自动用本地合成走势兜底。这样未来新增任何无法映射的市场代码都不会漏网导致闪退。
+     */
+    private fun isUnsupportedExchange(stock: Stock): Boolean {
+        return StockData.secidOf(stock).isEmpty()
+    }
+
     override fun body(): ViewBuilder {
         val ctx = this
         val code = pageData.params.optString("stockCode")
         val stock = StockData.findByCode(code)
-        // 新股/数据退化标的（如 N金钛）：不进原生桥（viewDidLoad 与下方刷新均已守卫），
-        // 图表用本地合成「模拟走势」，顶部加说明横幅；其余布局与普通股票一致，呈现正常详情页而非空白兜底。
+        // 行情源不支持的市场（老三板/退市等）用本地合成走势 + 横幅说明；新股/北交所走真实源。
         val unsafe = ctx.isUnsafeStock(stock)
         // 触发 AI 分析：首次进入自动分析；若已有缓存（同一股票再次进入）则直接展示缓存结果 + 时间
         ctx.runAnalysis(stock, code, false)
@@ -297,11 +318,11 @@ internal class StockDetailPage : BasePager() {
                     }
                 }
 
-                // 新股说明横幅：明确下方走势为模拟示意，非真实历史数据
+                // 行情源不支持的市场（老三板/退市等）说明横幅：下方走势为本地模拟示意，非真实数据
                 vif({ unsafe }) {
                     View {
                         attr { margin(12f); padding(10f, 12f); backgroundColor(Color(0xFFFDF6E3)); borderRadius(10f) }
-                        Text { attr { text("新股上市首日：以下走势为本地模拟示意，非真实历史数据"); fontSize(12f); color(Color(0xFF8A6D3B)) } }
+                        Text { attr { text("该股票当前行情源暂不支持（老三板 / 退市等）：以下走势为本地模拟示意，非真实数据"); fontSize(12f); color(Color(0xFF8A6D3B)) } }
                     }
                 }
 
@@ -368,6 +389,8 @@ internal class StockDetailPage : BasePager() {
                     }
                     }
                     // 图表区（横向滚动；分时 / K线 自适配；触摸拖动十字光标、双指缩放、滚到最左加载更多）
+                    // 日K 模式且真实源未返回（北交所/超新股）→ 诚实占位，不显示本地假波浪冒充真实历史
+                    vif({ !(ctx.selectedPeriod != 0 && ctx.klineMissing) }) {
                     KRKLineChart {
                         ref { ctx.chartRef = it }
                         attr { marginTop(8f) }
@@ -382,6 +405,18 @@ internal class StockDetailPage : BasePager() {
                                     // 用户视野停在同一根 K线上，不会被弹回最新一根。
                                     ch.notifyPrepend(added)
                                     ch.bars = StockData.getKLine(stock, ctx.periods[ctx.selectedPeriod], ctx.klineCount)
+                                }
+                            }
+                        }
+                    }
+                    }
+                    vif({ ctx.selectedPeriod != 0 && ctx.klineMissing }) {
+                        View {
+                            attr { height(300f); marginTop(8f); justifyContentCenter(); alignItemsCenter() }
+                            Text {
+                                attr {
+                                    text("该股票暂无历史日K（当前免费行情源未提供北交所 / 新股历史K线）\n分时与实时报价为真实数据")
+                                    fontSize(13f); color(Color(0xFF999999)); textAlignCenter()
                                 }
                             }
                         }
@@ -432,12 +467,29 @@ internal class StockDetailPage : BasePager() {
                                     fontSize(12f); color(Color(0xFF999999)); marginRight(8f)
                                 }
                             }
+                            // 复制全文按钮（分析完成有内容时才显示）
+                            vif({ ctx.aiText.isNotEmpty() }) {
+                                View {
+                                    attr {
+                                        height(24f); paddingLeft(10f); paddingRight(10f); borderRadius(12f)
+                                        justifyContentCenter(); alignItemsCenter(); marginRight(8f)
+                                        backgroundColor(Color(0xFFF2F3F5))
+                                    }
+                                    event { click { ctx.copyAi() } }
+                                    Text { attr { text("复制"); fontSize(12f); color(Color(0xFF666666)) } }
+                                }
+                            }
                             KRRefreshButton({ ctx.aiLoading }) { ctx.reanalyze(stock, code) }
                         }
-                        Text {
-                            attr {
-                                text(if (ctx.aiText.isEmpty()) "AI 分析中…" else ctx.aiText)
-                                fontSize(13f); color(Color(0xFF555555)); marginTop(8f)
+                        // 长按需弹出原生可选中文本对话框（选取文字 / 部分复制）；Kuikly Text 本身不支持文字选中
+                        View {
+                            attr { marginTop(8f) }
+                            event { longPress { if (ctx.aiText.isNotBlank()) ctx.bridgeModule.showSelectableText("AI 分析", ctx.aiText) } }
+                            Text {
+                                attr {
+                                    text(if (ctx.aiText.isEmpty()) "AI 分析中…" else ctx.aiText)
+                                    fontSize(13f); color(Color(0xFF555555))
+                                }
                             }
                         }
                         Button {

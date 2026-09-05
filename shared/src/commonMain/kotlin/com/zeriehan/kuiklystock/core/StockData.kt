@@ -142,6 +142,8 @@ object StockData {
     // ===================== 真实 K线 / 分时 缓存（loadKline / loadTrends 填入）=====================
     // key: "secid|period" → 真实历史K线（最老→最新）。命中则 getKLine 用它，不再本地生成。
     private val realKline = mutableMapOf<String, List<KLineBar>>()
+    /** 曾尝试拉取真实日K但源未返回（北交所/上市不足一日的超新股等）：详情页据此诚实占位而非显示本地假波浪 */
+    private val realKlineMissing = mutableSetOf<String>()
     // key: "secid" → 真实当日分时（逐分钟）。命中则 getIntraday 用它。
     private val realTrends = mutableMapOf<String, List<TimeSharingPoint>>()
     // key: code → 真实分时的昨收(前收)基准；分时图基线/涨跌应以此为准，避免用可能过期的 stock.change
@@ -226,6 +228,9 @@ object StockData {
         return cleanBars(src)
     }
 
+    /** 该股票是否曾尝试拉取真实日K但行情源未返回（北交所/超新股）：详情页用于诚实占位 */
+    fun isKlineMissing(code: String): Boolean = realKlineMissing.contains(code)
+
     /** 边界兜底：任何来源的K线只要含非法浮点（NaN/Infinity）一律滤掉，指标/蜡烛计算绝不吃到 */
     private fun cleanBars(bars: List<KLineBar>): List<KLineBar> =
         bars.filter { it.open.isFinite() && it.high.isFinite() && it.low.isFinite() && it.close.isFinite() }
@@ -236,13 +241,19 @@ object StockData {
      */
     fun loadKline(stock: Stock, period: String, count: Int, onDone: (() -> Unit)? = null) {
         val b = bridge ?: run { onDone?.invoke(); return }
-        try {
-            b.fetchKline(secidOf(stock), kltOf(period), count.coerceAtLeast(20)) { resp ->
+        // ⚠️ 回调在原生桥回传时于「主线程」执行，外层 try 只兜住同步注册，兜不住回调体；
+        // 任一解析/回写异常都必须吞掉并回退本地，否则会冒泡到主线程致整进程闪退。
+        b.fetchKline(secidOf(stock), kltOf(period), count.coerceAtLeast(20)) { resp ->
+            try {
                 val raw = resp?.optString("kline") ?: ""
                 val bars = if (raw.isBlank() || raw == "[]") emptyList() else parseKlineJson(raw)
                 if (bars.isNotEmpty()) {
                     realKline["${stock.code}|${period}"] = bars
                     realHistoryLoaded = true
+                    if (period == "日") realKlineMissing.remove(stock.code)
+                } else if (period == "日") {
+                    // 源未提供日K（北交所/上市不足一日的超新股）：登记，详情页显示占位而非假波浪
+                    realKlineMissing.add(stock.code)
                 }
                 // 用真实K线最新一根回写行情池报价：修正外部行情行仍显示过期 mock 价的问题
                 if (period == "日" && bars.size >= 2) {
@@ -251,9 +262,9 @@ object StockData {
                     val chg = if (prev.close != 0f) (last.close - prev.close) / prev.close * 100f else 0f
                     applyRealQuote(stock.code, last.close, chg)
                 }
-                onDone?.invoke()
+            } catch (e: Throwable) {
+                // 解析/回写异常：丢弃真实数据，保持本地兜底
             }
-        } catch (e: Throwable) {
             onDone?.invoke()
         }
     }
@@ -368,8 +379,10 @@ object StockData {
      */
     fun loadTrends(stock: Stock, onDone: (() -> Unit)? = null) {
         val b = bridge ?: run { onDone?.invoke(); return }
-        try {
-            b.fetchTrends(secidOf(stock)) { resp ->
+        // ⚠️ 回调在原生桥回传时于「主线程」执行，外层 try 只兜住同步注册，兜不住回调体；
+        // 任一解析/回写异常都必须吞掉并回退本地，否则会冒泡到主线程致整进程闪退。
+        b.fetchTrends(secidOf(stock)) { resp ->
+            try {
                 val raw = resp?.optString("trends") ?: ""
                 val pts = if (raw.isBlank() || raw == "[]") emptyList() else parseTrendsJson(raw)
                 if (pts.isNotEmpty()) {
@@ -384,9 +397,9 @@ object StockData {
                     val chg = if (pre > 0f) (lastP - pre) / pre * 100f else stock.changePercent
                     applyRealQuote(stock.code, lastP, chg, if (pre > 0f) lastP - pre else stock.change)
                 }
-                onDone?.invoke()
+            } catch (e: Throwable) {
+                // 解析/回写异常：丢弃真实数据，保持本地兜底
             }
-        } catch (e: Throwable) {
             onDone?.invoke()
         }
     }
@@ -457,9 +470,12 @@ object StockData {
         }
         if (stock.code == "000002") return "0.000001" // mock 里"平安银行"的真实 secid
         return when {
-            stock.code.startsWith("6") -> "1.${stock.code}" // 沪市
-            stock.code.startsWith("8") -> "1.${stock.code}" // 科创板/联通等
-            else -> "0.${stock.code}"                        // 深市
+            stock.code.startsWith("6") -> "1.${stock.code}"    // 沪市(含科创板 688)
+            stock.code.startsWith("920") -> "bj.${stock.code}" // 北交所 新代码段
+            stock.code.startsWith("889") -> ""                 // 新三板(889xxx) 行情源不支持
+            stock.code.startsWith("8") -> "bj.${stock.code}"   // 北交所 旧代码段(8xxxxx)
+            stock.code.startsWith("4") -> ""                   // 老三板/退市(4xxxxx/43xxxx) 行情源不支持
+            else -> "0.${stock.code}"                          // 深市(0/3 开头)
         }
     }
 
@@ -472,11 +488,10 @@ object StockData {
         if (baseQuotes.isEmpty()) return
         val map = mutableMapOf<String, Stock>()
         baseQuotes.forEach { map[secidOf(it)] = it }
-        val secids = map.keys.joinToString(",")
-        try {
-            b.fetchQuotes(secids) { resp -> applyQuotes(resp, map) }
-        } catch (e: Throwable) {
-            // 桥不可用 → 保持 mock
+        val secids = map.keys.filter { it.isNotBlank() }.joinToString(",")
+        // ⚠️ 回调于主线程执行，外层 try 只兜同步注册；回调体(applyQuotes)异常必须吞掉，否则主线程闪退。
+        b.fetchQuotes(secids) { resp ->
+            try { applyQuotes(resp, map) } catch (e: Throwable) { /* 桥数据异常 → 保持 mock */ }
         }
     }
 
@@ -491,8 +506,8 @@ object StockData {
         if (indices.isEmpty()) { onDone?.invoke(); return }
         val done = IntArray(1)
         for (idx in indices) {
-            try {
-                b.fetchTrends(secidOf(idx)) { resp ->
+            b.fetchTrends(secidOf(idx)) { resp ->
+                try {
                     done[0]++
                     val pts = parseTrendsJson(resp?.optString("trends") ?: "")
                     val pre = resp?.optDouble("preClose", 0.0)?.toFloat() ?: 0f
@@ -505,10 +520,11 @@ object StockData {
                         }
                     }
                     if (done[0] >= indices.size) { DataSync.bump(); onDone?.invoke() }
+                } catch (e: Throwable) {
+                    // 单只指数解析异常：计入完成计数，避免回调链卡死
+                    done[0]++
+                    if (done[0] >= indices.size) { DataSync.bump(); onDone?.invoke() }
                 }
-            } catch (e: Throwable) {
-                done[0]++
-                if (done[0] >= indices.size) { DataSync.bump(); onDone?.invoke() }
             }
         }
     }
