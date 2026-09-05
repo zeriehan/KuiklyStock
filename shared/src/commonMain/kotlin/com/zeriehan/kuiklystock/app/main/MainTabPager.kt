@@ -1682,7 +1682,9 @@ private fun ViewContainer<*, *>.renderAIPickCard(ctx: MainTabPager) {
                     borderRadius(19f); backgroundColor(Color(ctx.themeColor))
                     alignItemsCenter(); justifyContentCenter()
                 }
-                event { click { ctx.openAIPickFree("") } }
+                event { click { ctx.openAIPickFree(
+                    "请结合当下行情帮我做一次选股：选出 3-5 只当前值得关注的个股，说明看好逻辑、所处板块与介入参考，兼顾不同风格（强势题材 / 低估值 / 趋势突破）。"
+                ) } }
                 Text { attr { text("开始选股"); fontSize(ctx.fs(14f)); color(Color.WHITE) } }
             }
         }
