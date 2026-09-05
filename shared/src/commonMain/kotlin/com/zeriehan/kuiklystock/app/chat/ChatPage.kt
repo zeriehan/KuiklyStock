@@ -481,8 +481,10 @@ internal class ChatPage : BasePager() {
                 flexDirectionColumn()
                 // 页面底色与全 App 统一用 0xFFF2F3F5(其它列表/聊天Tab 同款浅灰)，白色气泡仍清晰可辨
                 backgroundColor(Color(0xFFF2F3F5))
-                // 键盘：宿主用 adjustNothing(沉浸式下 adjustResize 不生效)；shared 手动改 padding/占位
-                // 不触发引擎整页重排。故根这里不放任何 keyboardH 依赖的布局，键盘会盖住页面上部(已知取舍)。
+                // ⚠️ 根容器不放 paddingBottom(keyboardH)——24e41c9 实测根 attr 的 paddingBottom 不响应
+                // keyboardHeightChange（chips/气泡被键盘盖住）；改在输入栏前放占位 Spacer（普通子 View 的
+                // height 现读 observable 必有 reactive，已验证），键盘弹起时其高度变化把输入栏顶到键盘上沿。
+                // 这里**不再加 paddingBottom**，避免与 Spacer 重复造成上推过多。
             }
             // 消息列表的实际渲染放在 renderMessages() 中，由消息流 Scroller 内的 vif(renderToggle) 翻转重建。
 
@@ -605,6 +607,17 @@ internal class ChatPage : BasePager() {
                 }
             }
             } // vif(quickTipsVisible) 结束
+
+            // ===== 键盘抬起占位 Spacer =====
+            // 普通子视图的 height 现读 keyboardH 一定有 reactive，键盘弹起时其高度变化即把输入栏
+            // 和它上方所有内容顶起到键盘上沿。绕开根 attr 的 paddingBottom 不响应式的不确定。
+            // 背景色与页底色一致（0xFFF2F3F5），这块占位看起来"无缝"。
+            View {
+                attr {
+                    height(ctx.keyboardH)
+                    backgroundColor(Color(0xFFF2F3F5))
+                }
+            }
 
             // ===== 输入栏 =====
             // ⚠️ padding 必须 4 边对称(top/left/bottom/right 全给)，否则只有 top/left，输入栏内文字
@@ -917,6 +930,7 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
                                     KRChatMiniChart {
                                         stock = stk
                                         period = seg.period
+                                        contentW = maxBubbleW - 20f
                                         onAsk = { q -> ctx.prefillFollowUp(q) }
                                     }
                                 } else {

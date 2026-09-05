@@ -49,6 +49,8 @@ internal class KRChatMiniChart : ComposeView<ComposeAttr, ComposeEvent>() {
     var period: String by observable("day")
     /** 选中点后，把预填追问传回聊天页（填入输入框，不直接发送） */
     var onAsk: ((String) -> Unit)? = null
+    /** 组件可用宽度（由外部气泡传入，避免 Canvas 在 flex column 里拿不到宽度而空白） */
+    var contentW: Float by observable(300f)
 
     /** 分时数据（非空即分时模式） */
     var timeSharing: List<TimeSharingPoint> by observable(emptyList())
@@ -166,6 +168,10 @@ internal class KRChatMiniChart : ComposeView<ComposeAttr, ComposeEvent>() {
             View {
                 attr {
                     flexDirectionColumn()
+                    // 父 View 显式 width，让 Canvas 在 flex column 内能拿到真实宽度。
+                    // 之前用 alignSelfStretch 但效果不稳（Canvas 在某些 flex 列里拿不到 layoutFrame.width，
+                    // drawAll 里 w=0 导致完全空白），所以这里直接给 width(contentW)。
+                    width(ctx.contentW)
                     marginTop(6f); marginBottom(2f)
                     padding(8f); borderRadius(10f)
                     backgroundColor(Color(0xFFF6F7F9))
@@ -180,6 +186,10 @@ internal class KRChatMiniChart : ComposeView<ComposeAttr, ComposeEvent>() {
                 }
 
                 // 单 Canvas：左侧价格轴 + 主图（避免 flex row 里两个 Canvas 的兼容性问题）
+                // ⚠️ **不显式设 width**：复刻 KRMiniTimeSharing 的成熟写法——只给 height，
+                // Canvas 在父 View 的 padding 内自然 fill 到 (contentW - 16f)。
+                // 之前显式 width(contentW - 16f) 在聊天气泡的 flex column 里 flex 算法有时算错，
+                // 导致 flexNode.layoutFrame.width 在 drawCallback 里取到 0，整片空白。
                 Canvas(
                     {
                         attr { height(ctx.CHART_H) }
