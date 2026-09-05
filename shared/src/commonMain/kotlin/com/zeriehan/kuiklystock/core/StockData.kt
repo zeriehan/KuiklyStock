@@ -112,6 +112,61 @@ object StockData {
 
     private fun poolAll(): List<Stock> = baseQuotes + realPool.values
 
+    /**
+     * 强制拉取指定 code 列表的实时报价并并入行情池（自选页冷启动恢复用）。
+     *
+     * ⚠️ 自选修复关键：自选 Tab 的展示靠 `watchlistStocks() = getQuotes().filter{ it.code in 自选 }`，
+     * 而 getQuotes = baseQuotes(约 25 只 mock 种子) + realPool(仅运行期由榜单/成分股并入，内存态)。
+     * 冷启动时 realPool 为空，若用户自选的股票不在 baseQuotes、也不在启动只拉的那张涨幅榜 top30 里，
+     * 它就不在行情池 → 自选 Tab 把它过滤掉 → 表现为「加进自选，重进 app 就没了」。
+     *
+     * 本方法为「恰好是自选、却不在池里」的这些 code 单独走宿主 fetchQuotes（东财返回含 code/name/price…），
+     * 解析成完整 Stock 并入 realPool，再 bump 触发自选重建，使冷启动后自选股能恢复显示真实价。
+     * 已在池内的 code 会被覆盖为最新价；拉取失败(code 无数据/停牌)保持原状，不崩。
+     */
+    fun loadCodesQuotes(codes: Set<String>, onDone: (() -> Unit)? = null) {
+        val b = bridge ?: run { onDone?.invoke(); return }
+        val target = codes.filter { it.isNotBlank() && it != "000001" } // 上证指数走 index 链路，跳过
+        if (target.isEmpty()) { onDone?.invoke(); return }
+        val secids = target.map { secidOfCode(it) }.filter { it.isNotBlank() }
+        if (secids.isEmpty()) { onDone?.invoke(); return }
+        b.fetchQuotes(secids.joinToString(",")) { resp ->
+            try {
+                val raw = resp?.optString("quotes") ?: ""
+                if (raw.isBlank() || raw == "[]") return@fetchQuotes
+                val arr = JSONArray(raw)
+                var merged = 0
+                for (i in 0 until arr.length()) {
+                    val it = arr.optJSONObject(i) ?: continue
+                    val code = it.optString("code")
+                    val price = it.optDouble("price").toFloat()
+                    if (code.isBlank() || price <= 0f) continue
+                    val name = it.optString("name").ifBlank { code }
+                    val clean = Stock(
+                        code = code, name = name,
+                        price = price,
+                        change = it.optDouble("change").toFloat(),
+                        changePercent = it.optDouble("changePercent").toFloat(),
+                        high = it.optDouble("high").toFloat(),
+                        low = it.optDouble("low").toFloat(),
+                        volume = it.optDouble("volume").toFloat(),
+                    ).sanitize()
+                    val idx = baseQuotes.indexOfFirst { q -> q.code == code }
+                    if (idx >= 0) baseQuotes[idx] = clean else realPool[code] = clean
+                    merged++
+                }
+                if (merged > 0) {
+                    realLoaded = true
+                    DataSync.bump()
+                }
+            } catch (e: Throwable) {
+                // 桥数据异常 → 保持现状，不崩
+            }
+            onDone?.invoke()
+        }
+    }
+
+
     private var bridge: BridgeModule? = null
     /** 由常驻根页面（MainTabPager）注入桥，刷新/拉榜走宿主网络 */
     internal fun attach(b: BridgeModule) { bridge = b }
@@ -468,15 +523,18 @@ object StockData {
                 else -> "1.${stock.code}"
             }
         }
-        if (stock.code == "000002") return "0.000001" // mock 里"平安银行"的真实 secid
-        return when {
-            stock.code.startsWith("6") -> "1.${stock.code}"    // 沪市(含科创板 688)
-            stock.code.startsWith("920") -> "bj.${stock.code}" // 北交所 新代码段
-            stock.code.startsWith("889") -> ""                 // 新三板(889xxx) 行情源不支持
-            stock.code.startsWith("8") -> "bj.${stock.code}"   // 北交所 旧代码段(8xxxxx)
-            stock.code.startsWith("4") -> ""                   // 老三板/退市(4xxxxx/43xxxx) 行情源不支持
-            else -> "0.${stock.code}"                          // 深市(0/3 开头)
-        }
+        return secidOfCode(stock.code)
+    }
+
+    /** 个股 code → 行情源 secid（不含指数；北交所 bj、老三板/新三板返回空=源不支持） */
+    private fun secidOfCode(code: String): String = when {
+        code == "000002" -> "0.000001"       // mock 里"平安银行"的真实 secid
+        code.startsWith("6") -> "1.$code"    // 沪市(含科创板 688)
+        code.startsWith("920") -> "bj.$code" // 北交所 新代码段
+        code.startsWith("889") -> ""         // 新三板(889xxx) 行情源不支持
+        code.startsWith("8") -> "bj.$code"   // 北交所 旧代码段(8xxxxx)
+        code.startsWith("4") -> ""           // 老三板/退市(4xxxxx/43xxxx) 行情源不支持
+        else -> "0.$code"                    // 深市(0/3 开头)
     }
 
     /** 刷新「base 行情池（含大盘指数 + mock 种子）」的实时价。真实价覆盖后标记 isReal；失败保留 mock。

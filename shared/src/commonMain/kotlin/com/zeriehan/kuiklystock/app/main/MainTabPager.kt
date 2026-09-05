@@ -183,6 +183,9 @@ internal class MainTabPager : BasePager(), StockNavigator {
         StockData.refresh()
         // 大盘市场热度/领涨领跌读池内非指数真实股票：冷启动即拉一次涨幅榜(新浪)入池，首进大盘即有真实非指数股。
         StockData.loadRank(0)
+        // ⚠️ 自选恢复：冷启动 realPool 为空，自选里那些不在 baseQuotes 种子/涨幅榜 top30 的股票
+        //    若不单独拉报价，就不在行情池 → 自选 Tab 过滤掉(加进自选、重进 app 就没了)。此处强制拉取。
+        StockData.loadCodesQuotes(watchlistCodes)
     }
 
     /** 从子页（如 ChatPage / HiddenStocks）返回时强制刷新：已隐藏列表 / 最近对话即时同步 */
@@ -213,6 +216,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
         // ⚠️ 始终刷新行情池：isReal() 在拉过榜单/成分后即 true，不代表大盘指数/baseQuotes 已刷新；
         // 从详情/设置返回时 refresh 一次，保证行情池(含指数)回到真实价，随 listToggle 翻转重建显示。
         StockData.refresh()
+        // 自选恢复：返回时兜底把自选 code 的报价拉回池内（冷启动/首帧 loadState 后 realPool 可能仍缺个别自选股）
+        StockData.loadCodesQuotes(watchlistCodes)
     }
 
     // ===== 持久化读写 =====
@@ -406,9 +411,13 @@ internal class MainTabPager : BasePager(), StockNavigator {
 
     // ===== 标签/隐藏变更 =====
     private fun toggleWatch(code: String) {
-        watchlistCodes = if (watchlistCodes.contains(code)) watchlistCodes - code else watchlistCodes + code
+        val adding = !watchlistCodes.contains(code)
+        watchlistCodes = if (adding) watchlistCodes + code else watchlistCodes - code
         UserStockStore.saveWatchlist(prefs, watchlistCodes)
         bumpList()
+        // 新加的自选若不在行情池(baseQuotes 种子之外、且尚未被榜单/成分并入)：立即拉一次报价并入，
+        // 否则刚加即被 watchlistStocks 的池内过滤挡掉(自选 Tab 空白)。
+        if (adding) StockData.loadCodesQuotes(watchlistCodes)
     }
 
     /** 标签/隐藏/恢复天数变更后：计数 + 翻转让行情/自选列表（vif 内）整体重建 */
