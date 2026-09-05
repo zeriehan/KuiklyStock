@@ -502,26 +502,28 @@ internal class StockDetailPage : BasePager() {
                             }
                             KRRefreshButton({ ctx.aiLoading }) { ctx.reanalyze(stock, code) }
                         }
-                        // 结构化结论条：风险档 + 操作建议 两枚彩色标签（解析不到【AI观点】行为 null → 不显示）
+                        // 量化结论：两个醒目的"徽章按钮"（纯展示，不可点）——左=风险档、右=操作建议
+                        // ⚠️ 用整块实色大胶囊 + 白粗字，比文字/浅标签更醒目，一眼看懂"高风险 / 买入"
                         vif({ ctx.aiVerdict != null }) {
                             val v = ctx.aiVerdict
                             if (v != null) {
                                 View {
-                                    attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
-                                    // 风险档：低=绿 中=橙 高=红 —— 浅底同色字(读起来是"提示")
+                                    attr { flexDirectionRow(); alignItemsCenter(); marginTop(10f) }
                                     val riskColor = when (v.risk) {
-                                        "低风险" -> Color(0xFF1ABE5B)
-                                        "高风险" -> Color(0xFFE54D42)
-                                        else -> Color(0xFFFF9800)
+                                        "低风险" -> Color(0xFF1ABE5B)   // 绿
+                                        "高风险" -> Color(0xFFE54D42)   // 红
+                                        else -> Color(0xFFFF9800)       // 橙
                                     }
-                                    chipLabel(v.risk, riskColor, emphasized = false)
-                                    // 操作建议：买入=红 卖出=绿 持有=灰 —— 实底白字(读起来是"结论/动作")
                                     val isBuy = v.action == "买入"
                                     val isSell = v.action == "卖出"
                                     val actionColor = if (isBuy) Color(0xFFE54D42)
                                         else if (isSell) Color(0xFF1ABE5B)
-                                        else Color(0xFF888888)
-                                    chipLabel(if (isBuy) "建议买入" else if (isSell) "建议卖出" else "建议持有", actionColor, emphasized = true)
+                                        else Color(0xFF8A8A8A)
+                                    // 左：风险徽章
+                                    verdictBadge(v.risk, riskColor)
+                                    // 右：操作徽章（买入红/卖出绿/持有灰）
+                                    val actLabel = if (isBuy) "买入" else if (isSell) "卖出" else "持有"
+                                    verdictBadge(actLabel, actionColor, isAction = true)
                                 }
                             }
                         }
@@ -681,35 +683,26 @@ internal fun parseAiVerdict(text: String): Pair<AiVerdict?, String> {
 }
 
 /**
- * 渲染一枚小的结论标签 pill。
- * @param emphasized true=实底白字(操作建议, 结论感强)；false=浅底同色字(风险提示, 弱化感)。
+ * 渲染一个醒目的"徽章按钮"（纯展示、不可点）：
+ * 实色大胶囊(圆角矩形) + 白粗字，形似按钮。内含两行：上一行 10px 半透白小标签(风险/操作)，
+ * 下一行 18px 粗白大字(高风险/买入)。@param isAction 仅用于小标签措辞。
  */
-private fun ViewContainer<*, *>.chipLabel(label: String, color: Color, emphasized: Boolean) {
+private fun ViewContainer<*, *>.verdictBadge(value: String, color: Color, isAction: Boolean = false) {
     View {
         attr {
-            flexDirectionRow(); alignItemsCenter(); justifyContentCenter()
-            marginRight(8f)
-            padding(left = 10f, right = 10f, top = 4f, bottom = 4f)
-            borderRadius(12f)
-            // 浅底版：把主色 20% 透明度叠白底；实底版直接用主色
-            backgroundColor(if (emphasized) color else mixLight(color))
+            flexDirectionColumn(); alignItemsCenter(); justifyContentCenter()
+            marginRight(10f)
+            height(44f)
+            padding(left = 18f, right = 18f)
+            borderRadius(10f)
+            backgroundColor(color)
         }
         Text {
-            attr {
-                text(label)
-                fontSize(11f)
-                fontWeightSemisolid()
-                color(if (emphasized) Color.WHITE else color)
-            }
+            attr { text(if (isAction) "操作" else "风险"); fontSize(9f); color(Color(0xCCFFFFFF)) }
+        }
+        Text {
+            attr { text(value); fontSize(17f); fontWeightSemisolid(); color(Color.WHITE); marginTop(1f) }
         }
     }
 }
 
-/** 把主色(AARRGGBB)叠到白底得到浅色调(约 18% 主色 + 82% 白)，用于"浅底同色字"标签 */
-private fun mixLight(c: Color): Color {
-    val h = c.hexColor
-    val r = (((h ushr 16) and 0xFFL) * 0.18f + 0xFF * 0.82f).toLong()
-    val g = (((h ushr 8) and 0xFFL) * 0.18f + 0xFF * 0.82f).toLong()
-    val b = ((h and 0xFFL) * 0.18f + 0xFF * 0.82f).toLong()
-    return Color(0xFF000000L or (r shl 16) or (g shl 8) or b)
-}

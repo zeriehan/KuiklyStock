@@ -109,7 +109,21 @@ class MockLLMClient : LLMClient {
             else ->
                 "方向尚不明朗，建议以观望为主，等待放量突破或回踩确认后再做决策"
         }
+        // 供 AI 分析卡顶部的"风险徽章 + 操作徽章"解析（【AI观点】行格式与真实 GLM 一致）
+        val cp = stock.changePercent
+        val verdictRisk = when {
+            abs(cp) > 4.0f -> "高风险"   // 单日波动过大
+            abs(cp) > 1.5f -> "中风险"
+            else -> "低风险"
+        }
+        val verdictAction = when {
+            cp > 1.5f -> "卖出"          // 涨幅过热 → 获利了结
+            cp < -1.5f -> "买入"         // 深跌企稳 → 关注试错
+            else -> "持有"
+        }
         return buildString {
+            appendLine("【AI观点】风险：$verdictRisk｜操作建议：$verdictAction")
+            appendLine("")
             appendLine("【${stock.name}（${stock.code}）AI 速览】")
             appendLine("")
             appendLine(
