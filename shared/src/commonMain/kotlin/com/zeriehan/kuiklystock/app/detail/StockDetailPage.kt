@@ -71,6 +71,10 @@ internal class StockDetailPage : BasePager() {
     private var aiLoading: Boolean by observable(false)
     /** AI 分析时间文案（如 08-29 17:52）；首次进入为空，分析完成后写入；再次进入直接读缓存 */
     private var aiTimeText: String by observable("")
+    /** AI 结论：风险等级 + 操作建议（从 aiText 顶部【AI观点】行解析；解析不到为 null → 不显示标签，仅显示正文） */
+    private var aiVerdict: AiVerdict? by observable(null)
+    /** 去掉【AI观点】结论行后的正文（供卡片正文展示；aiText 保留全文用于复制） */
+    private var aiBody: String by observable("")
     /** 自选集合（响应式镜像）与「加自选」按钮刷新触发器 */
     internal var watchlistCodes: Set<String> by observable(emptySet())
     private var watchUIVersion: Boolean by observable(false)
@@ -91,6 +95,9 @@ internal class StockDetailPage : BasePager() {
             AIAnalysisStore.get(code)?.let {
                 aiText = it.text
                 aiTimeText = it.timeText
+                val (v, body) = parseAiVerdict(it.text)
+                aiVerdict = v
+                aiBody = body
                 return
             }
         }
@@ -102,6 +109,9 @@ internal class StockDetailPage : BasePager() {
             val tText = if (ts > 0) Utils.currentBridgeModule().dateFormatter(ts, "MM-dd HH:mm") else ""
             aiText = text
             aiTimeText = tText
+            val (v, body) = parseAiVerdict(text)
+            aiVerdict = v
+            aiBody = body
             aiLoading = false
             AIAnalysisStore.put(code, text, tText)
         }
@@ -492,13 +502,36 @@ internal class StockDetailPage : BasePager() {
                             }
                             KRRefreshButton({ ctx.aiLoading }) { ctx.reanalyze(stock, code) }
                         }
+                        // 结构化结论条：风险档 + 操作建议 两枚彩色标签（解析不到【AI观点】行为 null → 不显示）
+                        vif({ ctx.aiVerdict != null }) {
+                            val v = ctx.aiVerdict
+                            if (v != null) {
+                                View {
+                                    attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
+                                    // 风险档：低=绿 中=橙 高=红 —— 浅底同色字(读起来是"提示")
+                                    val riskColor = when (v.risk) {
+                                        "低风险" -> Color(0xFF1ABE5B)
+                                        "高风险" -> Color(0xFFE54D42)
+                                        else -> Color(0xFFFF9800)
+                                    }
+                                    chipLabel(v.risk, riskColor, emphasized = false)
+                                    // 操作建议：买入=红 卖出=绿 持有=灰 —— 实底白字(读起来是"结论/动作")
+                                    val isBuy = v.action == "买入"
+                                    val isSell = v.action == "卖出"
+                                    val actionColor = if (isBuy) Color(0xFFE54D42)
+                                        else if (isSell) Color(0xFF1ABE5B)
+                                        else Color(0xFF888888)
+                                    chipLabel(if (isBuy) "建议买入" else if (isSell) "建议卖出" else "建议持有", actionColor, emphasized = true)
+                                }
+                            }
+                        }
                         // 长按需弹出原生可选中文本对话框（选取文字 / 部分复制）；Kuikly Text 本身不支持文字选中
                         View {
                             attr { marginTop(8f) }
                             event { longPress { if (ctx.aiText.isNotBlank()) ctx.bridgeModule.showSelectableText("AI 分析", ctx.aiText) } }
                             Text {
                                 attr {
-                                    text(if (ctx.aiText.isEmpty()) "AI 分析中…" else ctx.aiText)
+                                    text(if (ctx.aiText.isEmpty()) "AI 分析中…" else ctx.aiBody)
                                     fontSize(13f); color(Color(0xFF555555))
                                 }
                             }
@@ -610,4 +643,73 @@ internal fun ViewContainer<*, *>.renderWatchButton(ctx: StockDetailPage, code: S
             }
         }
     }
+}
+
+/** AI 结构化结论：风险档(低/中/高) + 操作档(买入/持有/卖出) */
+internal data class AiVerdict(val risk: String, val action: String)
+
+/**
+ * 从 AI 分析全文解析顶部【AI观点】行 → 结论 + 剥离该行后的正文。
+ * 兼容模型输出的轻微格式差异：风险取 低/中/高风险 归一为 低/中/高，操作取 买入/加仓→买入、
+ * 卖出/减持→卖出、持有/观望→持有。解析不到(老缓存/模型没按格式) → 返回 (null, 全文) 不崩，UI 仅显示正文。
+ */
+internal fun parseAiVerdict(text: String): Pair<AiVerdict?, String> {
+    if (text.isBlank()) return null to text
+    // 找到「风险：...」与「操作建议：...」(或「操作:」)，无论是否带【AI观点】前缀
+    val riskRegex = Regex("风险[：:](\\s*[高中低]\\s*(?:风险)?)")
+    val actionRegex = Regex("操作建议?[：:](\\s*(?:买入|加仓|持有|观望|减持|卖出))")
+    val riskM = riskRegex.find(text)
+    val actionM = actionRegex.find(text)
+    if (riskM == null || actionM == null) return null to text
+    val rawRisk = riskM.groupValues[1].trim()
+    val rawAction = actionM.groupValues[1].trim()
+    val risk = when {
+        rawRisk.contains("高") -> "高风险"
+        rawRisk.contains("低") -> "低风险"
+        else -> "中风险"
+    }
+    val action = when {
+        rawAction.contains("买入") || rawAction.contains("加仓") -> "买入"
+        rawAction.contains("卖出") || rawAction.contains("减持") -> "卖出"
+        else -> "持有"
+    }
+    // 剥离整条【AI观点】结论行：从"风险"所在那一行行首 到 该行行尾(含换行)，用于正文展示
+    val lineStart = text.lastIndexOf('\n', riskM.range.first).let { if (it < 0) 0 else it + 1 }
+    val lineEnd = text.indexOf('\n', actionM.range.last).let { if (it < 0) text.length else it + 1 }
+    val body = (text.substring(0, lineStart).trimEnd() + "\n" + text.substring(lineEnd)).trimStart('\n').trim()
+    return AiVerdict(risk, action) to body
+}
+
+/**
+ * 渲染一枚小的结论标签 pill。
+ * @param emphasized true=实底白字(操作建议, 结论感强)；false=浅底同色字(风险提示, 弱化感)。
+ */
+private fun ViewContainer<*, *>.chipLabel(label: String, color: Color, emphasized: Boolean) {
+    View {
+        attr {
+            flexDirectionRow(); alignItemsCenter(); justifyContentCenter()
+            marginRight(8f)
+            padding(left = 10f, right = 10f, top = 4f, bottom = 4f)
+            borderRadius(12f)
+            // 浅底版：把主色 20% 透明度叠白底；实底版直接用主色
+            backgroundColor(if (emphasized) color else mixLight(color))
+        }
+        Text {
+            attr {
+                text(label)
+                fontSize(11f)
+                fontWeightSemisolid()
+                color(if (emphasized) Color.WHITE else color)
+            }
+        }
+    }
+}
+
+/** 把主色(AARRGGBB)叠到白底得到浅色调(约 18% 主色 + 82% 白)，用于"浅底同色字"标签 */
+private fun mixLight(c: Color): Color {
+    val h = c.hexColor
+    val r = (((h ushr 16) and 0xFFL) * 0.18f + 0xFF * 0.82f).toLong()
+    val g = (((h ushr 8) and 0xFFL) * 0.18f + 0xFF * 0.82f).toLong()
+    val b = ((h and 0xFFL) * 0.18f + 0xFF * 0.82f).toLong()
+    return Color(0xFF000000L or (r shl 16) or (g shl 8) or b)
 }

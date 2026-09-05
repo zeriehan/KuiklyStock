@@ -213,11 +213,15 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
             appendLine("成交量：${formatPrice(stock.volume)} 万手")
             appendLine("${periodDesc}收盘价序列（由远及近）：${closes.joinToString(", ")}")
             appendLine()
-            appendLine("请按以下四部分输出：")
+            appendLine("先在最开头给一句量化结论，格式务必严格为一行：")
+            appendLine("【AI观点】风险：X｜操作建议：Y")
+            appendLine("其中 X 只能取三档之一：低风险 / 中风险 / 高风险；Y 只能取三档之一：买入 / 持有 / 卖出。")
+            appendLine("（判断依据：结合上述量价数据综合判断；若趋势向好、量价配合则偏向买入，若走弱或波动大则降低风险/偏向卖出，中性则持有。风险与操作可不对应单一方向，例如\"中风险 + 持有\"。）")
+            appendLine("这行【AI观点】必须独占一行、用中文冒号与顿号分隔、不要加其它说明。之后空一行再按以下部分展开正文：")
             appendLine("【综合研判】当前多空格局与今日表现")
             appendLine("【走势研判】价格趋势与关键波动区间")
             appendLine("【量价分析】成交量与价格配合关系")
-            appendLine("【操作建议】给出风险提示与参考操作（强调仅供参考、不构成投资建议）")
+            appendLine("【操作建议】展开说明上述结论的依据与风险提示（强调仅供参考、不构成投资建议）")
         }.trimEnd()
     }
 }
