@@ -989,4 +989,4 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
         return null
     }
 
-    private val KCHART_RE = Regex("\\[KCHART:([^\\]:]+):(intraday|day|week|month)\\]")
+    private val KCHART_RE = Regex("\\[KCHART:([^\\]:]+):(intraday|day|week|month|year)\\]")

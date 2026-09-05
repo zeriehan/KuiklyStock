@@ -45,12 +45,14 @@ internal class KRChatMiniChart : ComposeView<ComposeAttr, ComposeEvent>() {
 
     /** 目标股票 */
     var stock: Stock by observable(StockData.findByCode("000001"))
-    /** 周期：intraday / day / week / month */
+    /** 周期：intraday / day / week / month / year（用户可在卡片上切换，不再被 AI 指令定死） */
     var period: String by observable("day")
     /** 选中点后，把预填追问传回聊天页（填入输入框，不直接发送） */
     var onAsk: ((String) -> Unit)? = null
     /** 组件可用宽度（由外部气泡传入，避免 Canvas 在 flex column 里拿不到宽度而空白） */
     var contentW: Float by observable(300f)
+    /** 周期选择列表是否展开（点头部的「股票名 · 周期 ▾」翻转） */
+    var expanded: Boolean by observable(false)
 
     /** 分时数据（非空即分时模式） */
     var timeSharing: List<TimeSharingPoint> by observable(emptyList())
@@ -76,13 +78,47 @@ internal class KRChatMiniChart : ComposeView<ComposeAttr, ComposeEvent>() {
     private val DATE_BOTTOM = 14f
     private val LEFT_AXIS_W = 44f
 
+    /** 可切换的周期选项：key=period 值，value=展示文案。分时 + 日/周/月/年K（StockData.kltOf 支持 101~104） */
+    private val PERIOD_OPTIONS = listOf(
+        "intraday" to "分时",
+        "day" to "日K",
+        "week" to "周K",
+        "month" to "月K",
+        "year" to "年K",
+    )
+
     private fun isIntraday() = period == "intraday"
     private fun isTimeSharing() = timeSharing.isNotEmpty()
     private fun periodLabel() = when (period) {
-        "day" -> "日"; "week" -> "周"; "month" -> "月"; else -> "日"
+        "day" -> "日"; "week" -> "周"; "month" -> "月"; "year" -> "年"; else -> "日"
     }
     private fun periodTitle() = when (period) {
-        "intraday" -> "分时"; "day" -> "日K"; "week" -> "周K"; "month" -> "月K"; else -> "日K"
+        "intraday" -> "分时"; "day" -> "日K"; "week" -> "周K"; "month" -> "月K"; "year" -> "年K"; else -> "日K"
+    }
+
+    /**
+     * 切换周期：清空旧数据 → 重置拉取守卫 → 改 period → 按新周期重新拉数据。
+     *
+     * ⚠️ 关键：ComposeView 的 body() **只跑一次**，不能靠 body 重跑触发取数，
+     *    所以这里必须手动再调一次 [ensureData]；同时把 [dataRequested] 置回 false，
+     *    否则守卫会认为"已请求过"而拒绝拉取新周期的数据（表现为切周期后永远空白）。
+     */
+    private fun switchPeriod(p: String) {
+        expanded = false
+        if (p == period) return
+        period = p
+        // 清掉旧周期的数据与选点状态，避免新周期拿到空数据时残留旧曲线/旧十字光标
+        timeSharing = emptyList()
+        bars = emptyList()
+        picked = null
+        crossActive = false
+        dataRequested = false
+        ensureData()
+    }
+
+    /** 周期文案（用于「就这点问」预填追问里描述是哪类K线） */
+    private fun periodAskLabel() = when (period) {
+        "week" -> "周K"; "month" -> "月K"; "year" -> "年K"; else -> "日K"
     }
 
     private fun priceBounds(): Pair<Float, Float> {
@@ -128,11 +164,11 @@ internal class KRChatMiniChart : ComposeView<ComposeAttr, ComposeEvent>() {
         }
     }
 
-    /** 预填追问文案 */
+    /** 预填追问文案（周期跟随当前所选，切到周/月/年K 时措辞同步变化） */
     private fun buildQuestion(p: CrossInfo): String {
         val nameCode = "${p.stockName}(${p.code})"
         return if (p.isKline) {
-            "关于 $nameCode 在 ${p.label} 的日K（收 ${formatPrice(p.price)}，涨跌 ${formatPercent(p.chgPct)}），这一根线有什么说法？"
+            "关于 $nameCode 在 ${p.label} 的${periodAskLabel()}（收 ${formatPrice(p.price)}，涨跌 ${formatPercent(p.chgPct)}），这一根线有什么说法？"
         } else {
             "关于 $nameCode 在 ${p.label} 的分时（价 ${formatPrice(p.price)}，涨跌 ${formatPercent(p.chgPct)}），当时为什么这么走？"
         }
@@ -177,12 +213,72 @@ internal class KRChatMiniChart : ComposeView<ComposeAttr, ComposeEvent>() {
                     backgroundColor(Color(0xFFF6F7F9))
                 }
 
-                // 头部：股票名 + 周期 + 「轻点图表选点」提示
+                // 头部：左侧「股票名 · 周期 ▾」可点（点开/收起周期列表）；右侧选点提示
                 View {
                     attr { flexDirectionRow(); alignItemsCenter(); marginBottom(4f) }
-                    Text { attr { text("${ctx.stock.name} · ${ctx.periodTitle()}"); fontSize(12f); fontWeightSemisolid(); color(Color(0xFF333333)) } }
+
+                    // 可点区域：股票名 · 当前周期 ▾（展开时底色加深，形成"激活"反馈）
+                    View {
+                        attr {
+                            flexDirectionRow(); alignItemsCenter()
+                            // padding 上下/左右对称，保证文字居中不偏
+                            padding(top = 3f, left = 6f, bottom = 3f, right = 6f)
+                            borderRadius(6f)
+                            backgroundColor(if (ctx.expanded) Color(0xFFDDE3EC) else Color(0x00000000L))
+                        }
+                        event { click { ctx.expanded = !ctx.expanded } }
+                        Text {
+                            attr {
+                                text("${ctx.stock.name} · ${ctx.periodTitle()}")
+                                fontSize(12f); fontWeightSemisolid(); color(Color(0xFF333333))
+                            }
+                        }
+                        Text {
+                            attr {
+                                text(if (ctx.expanded) " ▴" else " ▾")
+                                fontSize(10f); color(Color(0xFF888888)); marginLeft(3f)
+                            }
+                        }
+                    }
+
                     View { attr { flex(1f) } }
                     Text { attr { text("轻点选点可追问"); fontSize(10f); color(Color(0xFFAAAAAA)) } }
+                }
+
+                // 周期选择列表（展开时才渲染）：分时 / 日K / 周K / 月K / 年K，选中项高亮主题色
+                vif({ ctx.expanded }) {
+                    View {
+                        attr {
+                            flexDirectionRow(); alignItemsCenter()
+                            marginBottom(6f)
+                            padding(top = 6f, left = 6f, bottom = 6f, right = 6f)
+                            borderRadius(8f)
+                            backgroundColor(Color(0xFFE9EDF2))
+                        }
+                        ctx.PERIOD_OPTIONS.forEach { (p, label) ->
+                            View {
+                                attr {
+                                    if (p != "intraday") marginLeft(6f)
+                                    height(24f)
+                                    padding(top = 0f, left = 10f, bottom = 0f, right = 10f)
+                                    borderRadius(12f)
+                                    backgroundColor(
+                                        if (ctx.period == p) Color(UserSettings.themeColor)
+                                        else Color(0xFFFFFFFF)
+                                    )
+                                    alignItemsCenter(); justifyContentCenter()
+                                }
+                                event { click { ctx.switchPeriod(p) } }
+                                Text {
+                                    attr {
+                                        text(label)
+                                        fontSize(11f)
+                                        color(if (ctx.period == p) Color.WHITE else Color(0xFF555555))
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // 单 Canvas：左侧价格轴 + 主图（避免 flex row 里两个 Canvas 的兼容性问题）

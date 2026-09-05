@@ -174,7 +174,7 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
             appendLine("- 用 # 或 ## 作为段落/要点标题（每个要点一个标题），正文作为标题下方普通段落；")
             appendLine("- 关键结论可用 **加粗**；并列项可用 - 无序列表；引用强调用 > 引用；")
             appendLine("- 提及具体股票时，请同时写出股票名与 6 位代码，如“贵州茅台(600519)”，不要只用简称；")
-            appendLine("- 若回答需要展示某只股票的走势图（分时或K线），在合适位置插入指令 [KCHART:股票代码:period]，period 取 intraday(分时)/day(日K)/week(周K)/month(月K)；确有走势可展示时才用，每篇最多 1-2 张；例如讨论贵州茅台日K时写「……[KCHART:600519:day]……」。用户可在图上点选某根K线/分时点继续追问。")
+            appendLine("- 若回答需要展示某只股票的走势图（分时或K线），在合适位置插入指令 [KCHART:股票代码:period]，period 取 intraday(分时)/day(日K)/week(周K)/month(月K)/year(年K)；确有走势可展示时才用，每篇最多 1-2 张；例如讨论贵州茅台日K时写「……[KCHART:600519:day]……」。图上方可切换周期（分时/日/周/月/年K），用户也可点选某根K线/分时点继续追问。")
             appendLine("- 全文用空行分隔不同段落，避免一大段；总字数控制在 300 字以内，避免过长。")
             appendLine()
             append(dataCtx)
