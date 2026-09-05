@@ -643,39 +643,48 @@ internal class ChatPage : BasePager() {
                     backgroundColor(Color.WHITE)
                     border(Border(1f, BorderStyle.SOLID, Color(0xFFEEEEEE)))
                 }
-                Input {
-                    ref { ctx.inputRef = it }
+                // 输入胶囊：Input 原生不支持 padding（文字贴左边界），故外包一层 View 承载 背景+圆角+左右内边距，
+                // 让 placeholder / 光标 / 输入文字在胶囊内有左侧空隙（与 MainTabPager 的搜索框同款做法）。
+                View {
                     attr {
                         flex(1f); height(38f)
-                        fontSize(UserSettings.fs(15f)); color(Color(0xFF222222))
+                        flexDirectionRow(); alignItemsCenter()
+                        padding(top = 0f, left = 12f, bottom = 0f, right = 12f)
                         backgroundColor(Color(0xFFF2F3F5)); borderRadius(19f)
-                        placeholder(if (ctx.freeMode) "问大盘、行业或任意股票…" else "问点什么…")
-                        placeholderColor(Color(0xFF999999))
                     }
-                    event {
-                        textDidChange {
-                            ctx.inputText = it.text
-                            // 草稿：每次输入变化即持久化，退出/冷启动后回来能恢复（发送时由 send 清除）
-                            if (!ctx.draftRestored) { /* 首次恢复阶段不写回，避免覆盖刚从草稿读出的内容 */ }
-                            else ChatStore.setDraft(ctx.code, it.text)
+                    Input {
+                        ref { ctx.inputRef = it }
+                        attr {
+                            flex(1f)
+                            fontSize(UserSettings.fs(15f)); color(Color(0xFF222222))
+                            placeholder(if (ctx.freeMode) "问大盘、行业或任意股票…" else "问点什么…")
+                            placeholderColor(Color(0xFF999999))
                         }
-                        // 键盘高度变化：驱动输入栏后的占位 Spacer 把输入栏顶到键盘上沿，并保持最新消息可见
-                        keyboardHeightChange { params ->
-                            val h = params.height.coerceAtLeast(0f)
-                            if (h > 0f) ctx.lastKeyboardH = h   // 记住实测高度，供 inputFocus 兜底
-                            ctx.keyboardH = h
-                            ctx.tryScrollToBottom()
-                        }
-                        // 兜底：少数情况下 keyboardHeightChange 迟到/漏回调，输入栏会不上浮。
-                        // 拿到焦点时若高度仍为 0，用历史实测高度补上（首次打开无历史则仍等真实事件）。
-                        inputFocus {
-                            if (ctx.keyboardH <= 0f && ctx.lastKeyboardH > 0f) {
-                                ctx.keyboardH = ctx.lastKeyboardH
+                        event {
+                            textDidChange {
+                                ctx.inputText = it.text
+                                // 草稿：每次输入变化即持久化，退出/冷启动后回来能恢复（发送时由 send 清除）
+                                if (!ctx.draftRestored) { /* 首次恢复阶段不写回，避免覆盖刚从草稿读出的内容 */ }
+                                else ChatStore.setDraft(ctx.code, it.text)
+                            }
+                            // 键盘高度变化：驱动输入栏后的占位 Spacer 把输入栏顶到键盘上沿，并保持最新消息可见
+                            keyboardHeightChange { params ->
+                                val h = params.height.coerceAtLeast(0f)
+                                if (h > 0f) ctx.lastKeyboardH = h   // 记住实测高度，供 inputFocus 兜底
+                                ctx.keyboardH = h
                                 ctx.tryScrollToBottom()
                             }
+                            // 兜底：少数情况下 keyboardHeightChange 迟到/漏回调，输入栏会不上浮。
+                            // 拿到焦点时若高度仍为 0，用历史实测高度补上（首次打开无历史则仍等真实事件）。
+                            inputFocus {
+                                if (ctx.keyboardH <= 0f && ctx.lastKeyboardH > 0f) {
+                                    ctx.keyboardH = ctx.lastKeyboardH
+                                    ctx.tryScrollToBottom()
+                                }
+                            }
+                            // 失焦即收起占位：避免键盘已关而 Spacer 残留、把输入栏顶在半空
+                            inputBlur { ctx.keyboardH = 0f }
                         }
-                        // 失焦即收起占位：避免键盘已关而 Spacer 残留、把输入栏顶在半空
-                        inputBlur { ctx.keyboardH = 0f }
                     }
                 }
                 Button {
