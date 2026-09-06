@@ -171,6 +171,15 @@ internal class BridgeModule : Module() {
         callNativeMethod(FETCH_TRENDS, methodArgs, callbackFn)
     }
 
+    /**
+     * 拉取个股基本面(F10 公司概况+最新业绩)。回调 { "finance": "JSON字符串" }；失败/无数据 finance=""。
+     */
+    fun fetchFinance(secid: String, callbackFn: CallbackFn) {
+        val methodArgs = JSONObject()
+        methodArgs.put("secid", secid)
+        callNativeMethod("fetchFinance", methodArgs, callbackFn)
+    }
+
     fun openPage(
         url: String,
         closeCurPage: Boolean = false,

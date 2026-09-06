@@ -122,6 +122,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
                 fetchTrends(params, callback)
             }
 
+            "fetchFinance" -> {
+                fetchFinance(params, callback)
+            }
+
             else -> callback?.invoke(
                 mapOf(
                     "code" to -1,
@@ -1178,4 +1182,98 @@ private fun JSONObject.toMap(): Map<Any, Any> {
         }
     }
     return map
+}
+
+/**
+ * 拉取个股基本面（F10：公司概况 + 最新业绩报表）。返回 JSON 字符串，失败返回空串（shared 端隐藏该区块）。
+ * 接口（东财网页端，真机可达）：
+ *   公司概况   emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code=SH600519|SZ000001|BJ...
+ *   业绩报表   datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_LICO_FN_CPD&filter=(SECURITY_CODE="...")
+ * shared 传 { "secid": "1.600519" }；market 1→SH,0→SZ,bj→BJ。
+ */
+private fun fetchFinance(params: String?, callback: KuiklyRenderCallback?) {
+    val empty = mapOf("finance" to "")
+    if (params == null) { callback?.invoke(empty); return }
+    val p = JSONObject(params)
+    val secid = p.optString("secid")
+    if (secid.isBlank()) { callback?.invoke(empty); return }
+    // secid "1.600519" / "0.000001" / "bj.430047" → f10 代码 "SH600519"/"SZ000001"/"BJ430047"
+    val dot = secid.indexOf('.')
+    val market = if (dot > 0) secid.substring(0, dot) else "1"
+    val code = if (dot > 0) secid.substring(dot + 1) else secid
+    val emPrefix = when (market) { "1" -> "SH"; "bj" -> "BJ"; else -> "SZ" }
+    val f10Code = "$emPrefix$code"
+    thread(name = "em-finance") {
+        val out = JSONObject()
+        try {
+            // 1) 公司概况
+            val surveyUrl = "https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code=$f10Code"
+            val survey = httpGetJson(surveyUrl, "https://emweb.securities.eastmoney.com/")
+            val jbzl = survey?.optJSONArray("jbzl")?.optJSONObject(0)
+            if (jbzl != null) {
+                val o = JSONObject()
+                o.put("name", jbzl.optString("SECURITY_NAME_ABBR"))
+                o.put("fullName", jbzl.optString("ORG_NAME"))
+                o.put("chairman", jbzl.optString("CHAIRMAN"))
+                o.put("manager", jbzl.optString("PRESIDENT"))
+                o.put("industry", jbzl.optString("EM2016"))
+                o.put("industryCsrc", jbzl.optString("INDUSTRYCSRC1"))
+                o.put("employees", jbzl.optLong("EMP_NUM", 0))
+                o.put("regCapital", jbzl.optString("REG_CAPITAL"))
+                o.put("province", jbzl.optString("PROVINCE"))
+                o.put("profile", jbzl.optString("ORG_PROFILE"))
+                o.put("web", jbzl.optString("ORG_WEB"))
+                out.put("company", o)
+            }
+        } catch (e: Throwable) {
+            Log.w("KRBridge", "fetchFinance survey failed", e)
+        }
+        try {
+            // 2) 最新业绩（每股收益/营收/净利/ROE/同比/每股净资产等）
+            val filter = "(SECURITY_CODE%3D%22$code%22)"
+            val finUrl = "https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_LICO_FN_CPD" +
+                "&columns=ALL&filter=$filter&pageNumber=1&pageSize=1&sortTypes=-1&sortColumns=REPORTDATE"
+            val fin = httpGetJson(finUrl, "https://data.eastmoney.com/")
+            val row = fin?.optJSONObject("result")?.optJSONArray("data")?.optJSONObject(0)
+            if (row != null) {
+                val o = JSONObject()
+                o.put("reportDate", row.optString("REPORTDATE").take(10))
+                o.put("reportType", row.optString("DATEMMDD"))
+                o.put("eps", row.optDouble("BASIC_EPS", 0.0))
+                o.put("roe", row.optDouble("WEIGHTAVG_ROE", 0.0))
+                o.put("revenue", row.optLong("TOTAL_OPERATE_INCOME", 0))
+                o.put("netProfit", row.optLong("PARENT_NETPROFIT", 0))
+                o.put("revYoy", row.optDouble("YSTZ", 0.0))
+                o.put("profitYoy", row.optDouble("SJLTZ", 0.0))
+                o.put("bps", row.optDouble("BPS", 0.0))
+                o.put("ocfPs", row.optDouble("MGJYXJJE", 0.0))
+                o.put("dividend", row.optString("ASSIGNDSCRPT"))
+                out.put("earnings", o)
+            }
+        } catch (e: Throwable) {
+            Log.w("KRBridge", "fetchFinance earnings failed", e)
+        }
+        val text = if (out.length() == 0) "" else out.toString()
+        Handler(Looper.getMainLooper()).post { callback?.invoke(mapOf("finance" to text)) }
+    }
+}
+
+/** 简单 GET 拉 JSON（带 UA/Referer），失败返回 null */
+private fun httpGetJson(url: String, referer: String): JSONObject? {
+    return try {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
+            setRequestProperty("User-Agent", "Mozilla/5.0")
+            setRequestProperty("Referer", referer)
+        }
+        if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+            Log.e("KRBridge", "httpGetJson HTTP ${conn.responseCode}: $url")
+            null
+        } else {
+            JSONObject(conn.inputStream.bufferedReader().readText())
+        }
+    } catch (e: Throwable) {
+        Log.w("KRBridge", "httpGetJson failed: $url", e)
+        null
+    }
 }
