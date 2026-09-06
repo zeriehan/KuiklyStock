@@ -110,7 +110,10 @@ internal class StockPickerPage : BasePager() {
                     ref { ctx.inputRef = it }
                     attr {
                         flex(1f); height(36f); fontSize(UserSettings.fs(14f))
-                        placeholder("搜索股票名/代码…"); placeholderColor(Color(0xFF999999))
+                        // 双向同步：attr 现读 ctx.query 让 native 输入框与 observable 保持一致
+                        text(ctx.query)
+                        placeholder(if (ctx.query.isBlank()) "搜索股票名/代码…" else "")
+                        placeholderColor(Color(0xFF999999))
                     }
                     event { textDidChange { ctx.query = it.text } }
                 }
@@ -136,7 +139,8 @@ private fun ViewContainer<*, *>.renderPickerContent(ctx: StockPickerPage) {
         if (ctx.picked.isEmpty()) {
             Text {
                 attr {
-                    text("尚未选股。"); fontSize(UserSettings.fs(13f)); color(Color(0xFFBBBBBB)); marginLeft(4f)
+                    text("尚未选股，请在搜索框输入股票名/代码后点「＋」加入对比。")
+                    fontSize(UserSettings.fs(13f)); color(Color(0xFFBBBBBB)); marginLeft(4f)
                 }
             }
         } else {

@@ -65,8 +65,13 @@ internal class KRMiniTimeSharing : ComposeView<KRMiniTimeSharingAttr, ComposeEve
 
                 // 昨收基准虚线（灰）
                 c.strokeStyle(StockColor.FLAT)
+                // 昨收基准虚线（灰）+ 右侧「昨收」价格标签，避免被误认为收盘价
+                c.strokeStyle(Color(0xFFBBBBBB))
                 c.lineWidth(1f)
                 ctx.dashLine(c, 0f, yOf(ref), w, yOf(ref))
+                c.fillStyle(Color(0xFF999999))
+                c.font(9f)
+                c.fillText("昨收 " + formatPrice(ref), (w - 60f).coerceAtLeast(0f), (yOf(ref) - 2f).coerceAtLeast(8f))
 
                 // 均价黄线
                 c.beginPath()
