@@ -45,6 +45,8 @@ internal class StockPickerPage : BasePager() {
     internal var query: String by observable("")
     /** 内容区 vif 重建触发器（切换 Tab/加删股/搜索 时翻转） */
     internal var toggle: Boolean by observable(false)
+    /** 已加对比 chips 区是否展开（默认折叠，节省纵向空间；点标题行展开/收起） */
+    internal var chipsExpanded: Boolean by observable(false)
     internal lateinit var inputRef: ViewRef<InputView>
 
     internal val RANK_TABS = listOf("涨幅榜", "跌幅榜", "换手榜", "振幅榜")
@@ -125,7 +127,7 @@ internal class StockPickerPage : BasePager() {
             View {
                 attr { flex(1f); flexDirectionColumn(); padding(top=6f, bottom=8f) }
                 Scroller {
-                    attr { flex(1f); flexDirectionColumn(); padding(left=12f, right=12f) }
+                    attr { flex(1f); flexDirectionColumn() }
                     vif({ ctx.toggle }) { val c = this; c.renderPickerRankList(ctx) }
                     vif({ !ctx.toggle }) { val c = this; c.renderPickerRankList(ctx) }
                 }
@@ -186,36 +188,50 @@ private fun ViewContainer<*, *>.renderPickerRankTabs(ctx: StockPickerPage) {
     }
 }
 
-/** 已加对比股 chips 区（随 toggle 重建以反映加/删）。 */
+/** 已加对比股 chips 区（默认折叠，点标题行展开；按用户灵感）。 */
 private fun ViewContainer<*, *>.renderPickerSelectedChips(ctx: StockPickerPage) {
+    val chipsExpanded = ctx.chipsExpanded
+    val n = ctx.picked.size
     View {
         attr { backgroundColor(Color.WHITE); padding(top=6f, bottom=8f) }
+        // 标题行：可点展开/收起
         View {
-            attr { flexDirectionRow(); alignItemsCenter(); padding(left=14f, right=14f, bottom=6f) }
+            attr {
+                flexDirectionRow(); alignItemsCenter(); padding(left=14f, right=14f, top=4f, bottom=4f)
+                height(36f)
+            }
+            event { click { ctx.chipsExpanded = !ctx.chipsExpanded; ctx.toggle = !ctx.toggle } }
             Text {
                 attr {
-                    text(if (ctx.picked.isEmpty()) "已加对比（0）· 点下方榜单股票或「＋」加入"
-                         else "已加对比（${ctx.picked.size}）· 点 × 移除")
-                    fontSize(UserSettings.fs(12f)); color(Color(0xFF999999))
+                    text(if (n == 0) "已加对比（0）· 点下方榜单股票或「＋」加入"
+                         else "已加对比（$n）· ${if (chipsExpanded) "点击收起" else "点击展开已选"}")
+                    fontSize(UserSettings.fs(13f)); color(Color(0xFF666666)); flex(1f)
                 }
+            }
+            if (n > 0) {
+                // 醒目"已加 N"按钮
+                View {
+                    attr {
+                        paddingLeft(10f); paddingRight(10f); height(24f); borderRadius(12f)
+                        justifyContentCenter(); alignItemsCenter()
+                        backgroundColor(Color(UserSettings.themeColor))
+                    }
+                    Text { attr { text("$n 只"); fontSize(11f); color(Color.WHITE); fontWeightSemiBold() } }
+                }
+                View { attr { width(8f) } }
+                Text { attr { text(if (chipsExpanded) "▴" else "▾"); fontSize(16f); color(Color(0xFF666666)) } }
             }
         }
-        if (ctx.picked.isEmpty()) {
-            Text {
-                attr {
-                    text("下方是行情同源的榜单，点行尾「＋」加入要对比的股票")
-                    fontSize(UserSettings.fs(12f)); color(Color(0xFFBBBBBB)); marginLeft(16f); marginBottom(4f)
-                }
-            }
-        } else {
+        // 展开的 chips 行
+        if (chipsExpanded && n > 0) {
             Scroller {
-                attr { flexDirectionRow(); padding(left=12f, right=12f) }
+                attr { flexDirectionRow(); padding(left=12f, right=12f); minHeight(40f); height(40f) }
                 ctx.picked.forEach { code ->
                     val st = StockData.findByCode(code)
                     if (st.code != code) return@forEach
                     View {
                         attr {
-                            height(32f); borderRadius(16f); marginRight(8f); paddingLeft(12f); paddingRight(4f)
+                            height(28f); borderRadius(14f); marginRight(8f); paddingLeft(12f); paddingRight(4f)
                             backgroundColor(Color(0xFFE8F1FB)); flexDirectionRow(); alignItemsCenter()
                         }
                         Text { attr { text(st.name); fontSize(UserSettings.fs(13f)); color(Color(0xFF222222)); marginRight(6f) } }
@@ -231,23 +247,27 @@ private fun ViewContainer<*, *>.renderPickerSelectedChips(ctx: StockPickerPage) 
     }
 }
 
-/** 榜单行列表：取真实榜(rankOf)或本地按 rankTab 排序；再按 query 过滤；每行 renderPickerRow。 */
+/** 榜单行列表：query 空按当前 rankTab 取榜/排序展示；query 非空跨整个股票池搜（不受当前榜限制），保证"中国平安"等非当前榜股也能被搜到。 */
 private fun ViewContainer<*, *>.renderPickerRankList(ctx: StockPickerPage) {
     val pool = StockData.getQuotes().filter { !it.isIndex }
-    val stocks: List<Stock> = StockData.rankOf(ctx.rankTab) ?: when (ctx.rankTab) {
-        0 -> pool.sortedByDescending { it.changePercent }
-        1 -> pool.sortedBy { it.changePercent }
-        2 -> pool.sortedByDescending { it.volume }
-        3 -> pool.sortedByDescending { if (it.price > 0f) (it.high - it.low) / it.price else 0f }
-        else -> pool
-    }
     val q = ctx.query.trim()
-    val shown = if (q.isEmpty()) stocks
-                else stocks.filter { it.name.contains(q, ignoreCase = true) || it.code.contains(q, ignoreCase = true) }
+    val shown: List<Stock> = if (q.isEmpty()) {
+        // 无搜索：按当前榜展示
+        StockData.rankOf(ctx.rankTab) ?: when (ctx.rankTab) {
+            0 -> pool.sortedByDescending { it.changePercent }
+            1 -> pool.sortedBy { it.changePercent }
+            2 -> pool.sortedByDescending { it.volume }
+            3 -> pool.sortedByDescending { if (it.price > 0f) (it.high - it.low) / it.price else 0f }
+            else -> pool
+        }
+    } else {
+        // 有搜索：跨全池按名/码匹配（不限当前榜）—— 修"B 搜索功能不全"：中国平安不在涨幅榜也能搜到
+        pool.filter { it.name.contains(q, ignoreCase = true) || it.code.contains(q, ignoreCase = true) }
+    }
     if (shown.isEmpty()) {
         Text {
             attr {
-                text(if (q.isEmpty()) "暂无个股数据" else "没有匹配「$q」的个股")
+                text(if (q.isEmpty()) "暂无个股数据" else "没有匹配「$q」的个股（全池已搜）")
                 fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginTop(16f); marginLeft(16f)
             }
         }
@@ -261,8 +281,8 @@ private fun ViewContainer<*, *>.renderPickerRow(ctx: StockPickerPage, st: Stock)
     val added = ctx.picked.contains(st.code)
     View {
         attr {
-            flexDirectionRow(); alignItemsCenter(); height(60f); marginBottom(6f)
-            backgroundColor(Color.WHITE); borderRadius(8f); padding(left=12f, right=8f)
+            flexDirectionRow(); alignItemsCenter(); height(60f); marginBottom(6f); marginLeft(12f); marginRight(12f)
+            backgroundColor(Color.WHITE); borderRadius(8f); padding(left=12f, right=12f)
         }
         event { click { ctx.togglePick(st) } }
         // 名 + code
