@@ -114,84 +114,36 @@ internal class StockPickerPage : BasePager() {
                 }
             }
 
-            // ===== 内容区（整体竖向可滑）：已选区 + 榜单Tab + 搜索 + 榜单 =====
-            vif({ ctx.toggle }) { val c = this; c.renderPickerBody(ctx) }
-            vif({ !ctx.toggle }) { val c = this; c.renderPickerBody(ctx) }
+            // ===== 内容区 =====
+            // 搜索框/榜单Tab 静态（不随 toggle 重建，保输入不丢焦点）；已选区随 toggle 重建；
+            // 榜单列表为 flex(1f) 竖向滚动区（可下滑），点某行/按钮切换加入对比。
+            renderPickerSearch(ctx)
+            renderPickerRankTabs(ctx)
+            vif({ ctx.toggle }) { val c = this; c.renderPickerSelectedChips(ctx) }
+            vif({ !ctx.toggle }) { val c = this; c.renderPickerSelectedChips(ctx) }
+            // 榜单滚动区
+            View {
+                attr { flex(1f); flexDirectionColumn(); padding(top=6f, bottom=8f) }
+                Scroller {
+                    attr { flex(1f); flexDirectionColumn(); padding(left=12f, right=12f) }
+                    vif({ ctx.toggle }) { val c = this; c.renderPickerRankList(ctx) }
+                    vif({ !ctx.toggle }) { val c = this; c.renderPickerRankList(ctx) }
+                }
+            }
         }
     }
 }
 
-/** 内容主体（整页竖向 Scroller）：已选区 + 榜单Tab + 搜索 + 榜单行。 */
-private fun ViewContainer<*, *>.renderPickerBody(ctx: StockPickerPage) {
-    Scroller {
-        attr { flex(1f); flexDirectionColumn() }
-
-        // ===== ① 已选区 =====
-        View {
-            attr { backgroundColor(Color(if (UserSettings.darkMode) 0xFF1A1B1EL else 0xFFF2F3F5L)); padding(top=10f, bottom=6f) }
-            // 标题行：说明
-            View { attr { flexDirectionRow(); alignItemsCenter(); padding(left=14f, right=14f, bottom=6f) }
-                Text { attr { text("已加对比（${ctx.picked.size}）· 点榜单股票或「＋」加入"); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)) } }
-            }
-            if (ctx.picked.isEmpty()) {
-                Text {
-                    attr {
-                        text("暂无，去下方榜单挑选要对比的股票")
-                        fontSize(UserSettings.fs(13f)); color(Color(0xFF999999))
-                        marginLeft(16f); marginTop(2f); marginBottom(10f)
-                    }
-                }
-            } else {
-                // 横滚 chips（每 chip: 名 + ×）
-                Scroller {
-                    attr { flexDirectionRow(); padding(left=12f, right=12f) }
-                    ctx.picked.forEach { code ->
-                        val st = StockData.findByCode(code)
-                        if (st.code != code) return@forEach
-                        View {
-                            attr {
-                                height(32f); borderRadius(16f); marginRight(8f); paddingLeft(12f); paddingRight(4f)
-                                backgroundColor(Color(0xFFE8F1FB)); flexDirectionRow(); alignItemsCenter()
-                            }
-                            Text { attr { text(st.name); fontSize(UserSettings.fs(13f)); color(Color(0xFF222222)); marginRight(6f) } }
-                            View {
-                                attr { width(22f); height(22f); justifyContentCenter(); alignItemsCenter() }
-                                event { click { ctx.removeByCode(code) } }
-                                Text { attr { text("×"); fontSize(16f); color(Color(0xFF666666)) } }
-                            }
-                        }
-                    }
-                }
-            }
+/** 搜索框（静态，不随 toggle 重建；query 经 ctx.query observable 驱动过滤，输入不丢焦点）。 */
+private fun ViewContainer<*, *>.renderPickerSearch(ctx: StockPickerPage) {
+    View {
+        attr {
+            backgroundColor(Color.WHITE); padding(top=10f, bottom=2f)
         }
-
-        // ===== ② 榜单 Tab =====
-        View {
-            attr { flexDirectionRow(); backgroundColor(Color.WHITE); height(40f); alignItemsCenter(); padding(left=6f) }
-            ctx.RANK_TABS.forEachIndexed { i, label ->
-                val on = ctx.rankTab == i
-                View {
-                    attr {
-                        flex(1f); height(32f); marginLeft(4f); marginRight(4f); borderRadius(8f)
-                        justifyContentCenter(); alignItemsCenter()
-                        backgroundColor(if (on) Color(0xFFFFF3E0) else Color(0x00000000L))
-                    }
-                    event { click { ctx.selectRank(i) } }
-                    Text {
-                        attr {
-                            text(label); fontSize(UserSettings.fs(14f)); fontWeightSemiBold()
-                            color(if (on) Color(UserSettings.themeColor) else Color(0xFF666666))
-                        }
-                    }
-                }
-            }
-        }
-
-        // ===== ③ 搜索框 =====
         View {
             attr {
-                margin(12f); height(40f); borderRadius(20f); paddingLeft(14f); paddingRight(14f)
-                backgroundColor(Color.WHITE); flexDirectionRow(); alignItemsCenter()
+                height(40f); borderRadius(20f); paddingLeft(14f); paddingRight(14f); margin(left=12f, right=12f)
+                backgroundColor(Color(if (UserSettings.darkMode) 0xFF26272AL else 0xFFF2F3F5L)); flexDirectionRow(); alignItemsCenter()
             }
             Text { attr { text("🔍"); fontSize(UserSettings.fs(14f)); color(Color(0xFF999999)); marginRight(6f) } }
             Input {
@@ -203,11 +155,78 @@ private fun ViewContainer<*, *>.renderPickerBody(ctx: StockPickerPage) {
                 event { textDidChange { ctx.query = it.text; ctx.toggle = !ctx.toggle } }
             }
         }
+    }
+}
 
-        // ===== ④ 榜单列表 =====
+/** 榜单 Tab 栏（静态；选中态 attr 现读 ctx.rankTab 即时变色，无需整体重建）。 */
+private fun ViewContainer<*, *>.renderPickerRankTabs(ctx: StockPickerPage) {
+    View {
+        attr {
+            flexDirectionRow(); height(44f); alignItemsCenter()
+            backgroundColor(Color.WHITE); paddingLeft(6f); paddingRight(6f)
+        }
+        ctx.RANK_TABS.forEachIndexed { i, label ->
+            View {
+                attr { flex(1f); height(44f); flexDirectionColumn(); alignItemsCenter(); justifyContentCenter() }
+                event { click { ctx.selectRank(i) } }
+                Text {
+                    attr {
+                        text(label); fontSize(UserSettings.fs(13f)); fontWeightSemiBold()
+                        color(if (ctx.rankTab == i) Color(UserSettings.themeColor) else Color(0xFF666666))
+                    }
+                }
+                View {
+                    attr {
+                        width(24f); height(2.5f); marginTop(3f); borderRadius(1.25f)
+                        backgroundColor(if (ctx.rankTab == i) Color(UserSettings.themeColor) else Color(0))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 已加对比股 chips 区（随 toggle 重建以反映加/删）。 */
+private fun ViewContainer<*, *>.renderPickerSelectedChips(ctx: StockPickerPage) {
+    View {
+        attr { backgroundColor(Color.WHITE); padding(top=6f, bottom=8f) }
         View {
-            attr { padding(left=12f, right=12f, bottom=12f) }
-            renderPickerRankList(ctx)
+            attr { flexDirectionRow(); alignItemsCenter(); padding(left=14f, right=14f, bottom=6f) }
+            Text {
+                attr {
+                    text(if (ctx.picked.isEmpty()) "已加对比（0）· 点下方榜单股票或「＋」加入"
+                         else "已加对比（${ctx.picked.size}）· 点 × 移除")
+                    fontSize(UserSettings.fs(12f)); color(Color(0xFF999999))
+                }
+            }
+        }
+        if (ctx.picked.isEmpty()) {
+            Text {
+                attr {
+                    text("下方是行情同源的榜单，点行尾「＋」加入要对比的股票")
+                    fontSize(UserSettings.fs(12f)); color(Color(0xFFBBBBBB)); marginLeft(16f); marginBottom(4f)
+                }
+            }
+        } else {
+            Scroller {
+                attr { flexDirectionRow(); padding(left=12f, right=12f) }
+                ctx.picked.forEach { code ->
+                    val st = StockData.findByCode(code)
+                    if (st.code != code) return@forEach
+                    View {
+                        attr {
+                            height(32f); borderRadius(16f); marginRight(8f); paddingLeft(12f); paddingRight(4f)
+                            backgroundColor(Color(0xFFE8F1FB)); flexDirectionRow(); alignItemsCenter()
+                        }
+                        Text { attr { text(st.name); fontSize(UserSettings.fs(13f)); color(Color(0xFF222222)); marginRight(6f) } }
+                        View {
+                            attr { width(22f); height(22f); justifyContentCenter(); alignItemsCenter() }
+                            event { click { ctx.removeByCode(code) } }
+                            Text { attr { text("×"); fontSize(16f); color(Color(0xFF666666)) } }
+                        }
+                    }
+                }
+            }
         }
     }
 }
