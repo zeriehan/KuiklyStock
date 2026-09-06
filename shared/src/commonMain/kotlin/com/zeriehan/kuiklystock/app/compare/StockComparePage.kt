@@ -84,6 +84,31 @@ internal class StockComparePage : BasePager() {
         uiToggle = !uiToggle
     }
 
+    /** 页面重新出现（从选股页「完成」返回 / 从个股详情返回 / 重进前台）时自动重读持久化的对比股并应用——
+     *  实现"选股页完成即自动生效"，无需在对比页手动点「应用选股」。 */
+    override fun pageDidAppear() {
+        super.pageDidAppear()
+        // 读持久化最新对比股；若与当前不同则应用（幂等，避免每次 appear 都重复重建）
+        val saved = loadSavedCompare()
+        if (saved != compareCodes && saved.isNotEmpty()) {
+            compareCodes = saved
+            comparePeriods = saved.associateWith { "intraday" }
+            // 对新列表补拉各周期数据
+            saved.forEach { code ->
+                val st = StockData.findByCode(code)
+                if (!st.isIndex) {
+                    StockData.loadTrends(st) { uiToggle = !uiToggle }
+                    StockData.loadKline(st, "日", 80) { uiToggle = !uiToggle }
+                    StockData.loadKline(st, "周", 60) { uiToggle = !uiToggle }
+                    StockData.loadKline(st, "月", 60) { uiToggle = !uiToggle }
+                    StockData.loadKline(st, "年", 60) { uiToggle = !uiToggle }
+                }
+            }
+            uiToggle = !uiToggle
+            bridgeModule.toast("已应用对比股")
+        }
+    }
+
     /** 切换某股迷你走势周期（"intraday" 分时 / "day" 日K）。 */
     internal fun setPeriod(code: String, period: String) {
         comparePeriods = comparePeriods.toMutableMap().apply { put(code, period) }
@@ -202,16 +227,7 @@ internal class StockComparePage : BasePager() {
                     attr { text("股票对比"); fontSize(17f); color(Color(0xFF222222)); fontWeightSemiBold(); marginLeft(8f) }
                 }
                 View { attr { flex(1f) } }
-                // 「设置」：跳选股页；「应用选股」：从选股页回来后读单例/持久化应用新列表
-                // （Kuikly 无可靠"子页 close →父页自动 resume"，故设好后在对比页点一次「应用选股」生效并记住）
-                View {
-                    attr {
-                        paddingLeft(10f); paddingRight(10f); height(30f); borderRadius(15f); marginRight(6f)
-                        justifyContentCenter(); alignItemsCenter(); backgroundColor(Color(0xFFF2F3F5))
-                    }
-                    event { click { ctx.applyPendingPicker() } }
-                    Text { attr { text("应用选股"); fontSize(13f); color(Color(0xFF666666)) } }
-                }
+                // 「设置」：跳选股页；选股页点「完成」落盘后，pageDidAppear 自动重读并应用（完成即生效）
                 View {
                     attr {
                         paddingLeft(10f); paddingRight(10f); height(30f); borderRadius(15f)
