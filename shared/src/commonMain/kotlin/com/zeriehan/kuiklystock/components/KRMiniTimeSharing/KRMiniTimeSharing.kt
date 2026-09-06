@@ -106,11 +106,11 @@ internal class KRMiniTimeSharing : ComposeView<KRMiniTimeSharingAttr, ComposeEve
                     c.lineWidth(1f)
                     ctx.dashLine(c, cx, top, cx, bot)
                     ctx.dashLine(c, 0f, cy, w, cy)
-                    // 底部时间
+                    // 底部时间：留 14px 下方空间避免被画布/父容器裁掉下半截
                     val t = pts[idx].time
                     c.fillStyle(Color(0xFF666666))
                     c.font(10f)
-                    c.fillText(t, (cx - 16f).coerceIn(0f, (w - 32f).coerceAtLeast(0f)), h - 3f)
+                    c.fillText(t, (cx - 16f).coerceIn(0f, (w - 32f).coerceAtLeast(0f)), h - 14f)
                     // 右侧价格
                     val pr = pts[idx].price
                     c.fillStyle(ctx.color)

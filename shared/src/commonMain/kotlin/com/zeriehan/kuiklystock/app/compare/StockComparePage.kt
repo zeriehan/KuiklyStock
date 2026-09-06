@@ -53,6 +53,10 @@ internal class StockComparePage : BasePager() {
     /** 聊天区域 vif 重建触发器（消息变更/等待态变更时翻转以更新列表） */
     internal var chatToggle: Boolean by observable(false)
     internal lateinit var cmpInputRef: ViewRef<InputView>
+    /** 键盘实测高度（inputFocus 兜底用——keyboardHeightChange 偶发迟到/漏回调时，用上次实测高度顶上） */
+    internal var lastKeyboardH: Float by observable(0f)
+    /** 键盘当前抬起高度，驱动输入栏后的占位 Spacer 把输入栏顶到键盘上沿 */
+    internal var keyboardH: Float by observable(0f)
 
     override fun viewDidLoad() {
         super.viewDidLoad()
@@ -61,12 +65,15 @@ internal class StockComparePage : BasePager() {
         compareCodes = if (list.isNotEmpty()) list else listOf("600519", "000858")
         // 每只股默认迷你走势周期为「分时」
         comparePeriods = compareCodes.associateWith { "intraday" }
-        // 拉各股真实行情/分时/K线，保证对比数据真
+        // 拉各股真实行情/分时/K线(各周期)，保证对比数据真
         compareCodes.forEach { code ->
             val st = StockData.findByCode(code)
             if (!st.isIndex) {
                 StockData.loadTrends(st) { uiToggle = !uiToggle }
                 StockData.loadKline(st, "日", 80) { uiToggle = !uiToggle }
+                StockData.loadKline(st, "周", 60) { uiToggle = !uiToggle }
+                StockData.loadKline(st, "月", 60) { uiToggle = !uiToggle }
+                StockData.loadKline(st, "年", 60) { uiToggle = !uiToggle }
             }
         }
         uiToggle = !uiToggle
@@ -257,33 +264,50 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
                         padding(10f); borderRadius(10f); flexDirectionColumn()
                         backgroundColor(Color.WHITE)
                     }
-                    // 名 + code + 价+涨跌（紧凑单行；点名字跳选股页）
-                    View {
-                        attr { flexDirectionRow(); alignItemsCenter() }
-                        event { click { ctx.openComparePicker(idx) } }
-                        Text { attr { text(st.name); fontSize(UserSettings.fs(15f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                    // 名（点击跳详情·红下划线，模仿聊天的提及股卡片样式）+ code + 价+涨跌（紧凑单行）
+                    View { attr { flexDirectionRow(); alignItemsCenter() }
+                        // 股票名 RichText +红下划线 +点击 → 跳个股详情页
+                        RichText {
+                            attr { maxWidth(160f) }
+                            Span {
+                                fontSize(UserSettings.fs(15f)); fontWeightSemiBold()
+                                color(UserSettings.themeColor); textDecorationUnderLine()
+                                text(st.name)
+                                click {
+                                    val d = JSONObject().put("stockCode", st.code)
+                                    ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
+                                }
+                            }
+                        }
                         Text { attr { text(st.code); fontSize(UserSettings.fs(11f)); color(Color(0xFF999999)); marginLeft(6f) } }
-                        Text { attr { text("  ✎"); fontSize(UserSettings.fs(11f)); color(Color(0xFFBBBBBB)); marginLeft(2f) } }
                         View { attr { flex(1f) } }
                         Text { attr { text(formatPrice(st.price) + "  " + formatPercent(st.changePercent)); fontSize(UserSettings.fs(14f)); fontWeightSemisolid(); color(StockColor.text(st.changePercent)) } }
                     }
-                    // 周期 chips（分时 / 日K）；对标自选展开迷你图尺寸的紧凑切换
+                    // 周期 chips（分时 / 日K / 周K / 月K / 年K）
                     View { attr { flexDirectionRow(); marginTop(6f) }
                         comparePeriodChip(ctx, code, "intraday", "分时", period)
                         comparePeriodChip(ctx, code, "day", "日K", period)
+                        comparePeriodChip(ctx, code, "week", "周K", period)
+                        comparePeriodChip(ctx, code, "month", "月K", period)
+                        comparePeriodChip(ctx, code, "year", "年K", period)
                     }
-                    // 紧凑迷你走势：分时用 KRMiniTimeSharing(自选展开同款)，日K用 KRTrendChart 收盘价趋势
-                    if (period == "intraday") {
-                        KRMiniTimeSharing {
-                            points = StockData.getIntraday(st)
-                            refPrice = StockData.intradayRefPrice(st)
-                            color = StockColor.of(st.changePercent)
+                    // 紧凑迷你走势：分时用 KRMiniTimeSharing(自选展开同款)，日/周/月/年K 用 KRTrendChart 收盘价趋势
+                    when (period) {
+                        "intraday" -> {
+                            KRMiniTimeSharing {
+                                points = StockData.getIntraday(st)
+                                refPrice = StockData.intradayRefPrice(st)
+                                color = StockColor.of(st.changePercent)
+                            }
                         }
-                    } else {
-                        val closes = StockData.getKLine(st, "日", 60).map { it.close }
-                        KRTrendChart {
-                            points = closes
-                            chartHeight = 122f
+                        else -> {
+                            // StockData.getKLine 中文 key: 日/周/月/年
+                            val periodKey = if (period == "day") "日" else when (period) { "week" -> "周"; "month" -> "月"; "year" -> "年"; else -> "日" }
+                            val closes = StockData.getKLine(st, periodKey, 60).map { it.close }
+                            KRTrendChart {
+                                points = closes
+                                chartHeight = 122f
+                            }
                         }
                     }
                 }
@@ -376,6 +400,17 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
                     }
                     event {
                         textDidChange { ctx.cmpInput = it.text }
+                        // 键盘抬起时把输入栏后的 Spacer 撑到键盘上沿（保持最新消息可见）
+                        keyboardHeightChange { params ->
+                            val h = params.height.coerceAtLeast(0f)
+                            if (h > 0f) ctx.lastKeyboardH = h
+                            ctx.keyboardH = h
+                        }
+                        // 兜底：极少数 keyboardHeightChange 漏回调时用上次实测高度顶上
+                        inputFocus {
+                            if (ctx.keyboardH <= 0f && ctx.lastKeyboardH > 0f) ctx.keyboardH = ctx.lastKeyboardH
+                        }
+                        inputBlur { ctx.keyboardH = 0f }
                     }
                 }
             }
@@ -392,6 +427,13 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
                         fontSize(UserSettings.fs(13f)); color(Color.WHITE); fontWeightSemiBold()
                     }
                 }
+            }
+        }
+        // 占位 Spacer（键盘抬起时撑高，把输入栏顶到键盘上沿；自身落进键盘遮挡区）
+        View {
+            attr {
+                height(ctx.keyboardH)
+                backgroundColor(if (UserSettings.darkMode) Color(0xFF1A1B1E) else Color(0xFFF2F3F5))
             }
         }
     }

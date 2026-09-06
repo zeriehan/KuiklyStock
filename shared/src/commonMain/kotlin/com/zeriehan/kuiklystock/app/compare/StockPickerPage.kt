@@ -116,88 +116,37 @@ internal class StockPickerPage : BasePager() {
                 }
             }
 
-            // 搜索结果（可加入对比股）
-            Scroller {
-                attr { flex(1f); flexDirectionColumn(); paddingLeft(12f); paddingRight(12f); paddingBottom(12f) }
-                vif({ ctx.toggle }) { val c = this; c.renderPickerResults(ctx) }
-                vif({ !ctx.toggle }) { val c = this; c.renderPickerResults(ctx) }
-            }
+            // 已选段 + 搜索结果段（由文件级扩展统一构建；此处调用有正确的 ViewContainer 接收器，）内可调用 renderPickerHits
+            renderPickerContent(ctx)
         }
     }
 }
 
-/** 渲染：当前已选对比股（可删除）+ 搜索结果（可加入）。两段都在同一 Scrollable。 */
-private fun ViewContainer<*, *>.renderPickerResults(ctx: StockPickerPage) {
-    val q = ctx.query.trim()
-    val pool = StockData.getQuotes().filter { !it.isIndex }
-    val hits = if (q.isBlank()) emptyList()
-               else pool.filter { it.code.contains(q) || it.name.contains(q) }.take(40)
-
-    // 当前已选段
-    Text {
-        attr {
-            text("已选 ${ctx.picked.size} 只（点「×」删除）")
-            fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginBottom(8f); marginLeft(4f)
-        }
-    }
-    if (ctx.picked.isEmpty()) {
+/** 选股页主体列表：上方「已选」固定，下方「搜索结果」flex 滚动（键盘撑起时仍可见）。 */
+private fun ViewContainer<*, *>.renderPickerContent(ctx: StockPickerPage) {
+    // 已选段（固定，不滚动；键盘弹起时仍可见）
+    View {
+        attr { paddingLeft(12f); paddingRight(12f); paddingBottom(8f) }
         Text {
             attr {
-                text("尚未选股，请在下方搜索添加。"); fontSize(UserSettings.fs(13f)); color(Color(0xFFBBBBBB))
-                marginBottom(12f); marginLeft(4f)
+                text("已选 ${ctx.picked.size} 只（点「×」删除）")
+                fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginBottom(8f); marginLeft(4f)
             }
         }
-    } else {
-        ctx.picked.forEachIndexed { idx, code ->
-            val st = StockData.findByCode(code)
-            View {
-                attr {
-                    backgroundColor(Color.WHITE); borderRadius(8f); padding(10f); marginBottom(6f)
-                    flexDirectionRow(); alignItemsCenter()
-                }
-                Text { attr { text(st.name); fontSize(UserSettings.fs(14f)); color(Color(0xFF222222)); flex(1f) } }
-                Text { attr { text(st.code); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)) } }
-                Text {
-                    attr {
-                        text(formatPrice(st.price) + "  " + formatPercent(st.changePercent))
-                        fontSize(UserSettings.fs(12f)); color(StockColor.text(st.changePercent))
-                        marginLeft(8f); marginRight(8f)
-                    }
-                }
-                View {
-                    attr {
-                        paddingLeft(10f); paddingRight(10f); height(26f); borderRadius(13f)
-                        justifyContentCenter(); alignItemsCenter(); backgroundColor(Color(0xFFF2F3F5))
-                    }
-                    event { click { ctx.removeAt(idx) } }
-                    Text { attr { text("×"); fontSize(16f); color(Color(0xFF666666)); fontWeightSemiBold() } }
-                }
-            }
-        }
-    }
-
-    // 搜索结果段
-    if (q.isNotBlank()) {
-        Text {
-            attr {
-                text("搜索结果（点「＋」加入对比）")
-                fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginTop(8f); marginBottom(8f); marginLeft(4f)
-            }
-        }
-        if (hits.isEmpty()) {
+        if (ctx.picked.isEmpty()) {
             Text {
                 attr {
-                    text("无匹配股票"); fontSize(UserSettings.fs(13f)); color(Color(0xFFBBBBBB)); marginLeft(4f)
+                    text("尚未选股。"); fontSize(UserSettings.fs(13f)); color(Color(0xFFBBBBBB)); marginLeft(4f)
                 }
             }
         } else {
-            hits.forEach { st ->
+            ctx.picked.forEachIndexed { idx, code ->
+                val st = StockData.findByCode(code)
                 View {
                     attr {
                         backgroundColor(Color.WHITE); borderRadius(8f); padding(10f); marginBottom(6f)
                         flexDirectionRow(); alignItemsCenter()
                     }
-                    event { click { ctx.addStock(st.code) } }
                     Text { attr { text(st.name); fontSize(UserSettings.fs(14f)); color(Color(0xFF222222)); flex(1f) } }
                     Text { attr { text(st.code); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)) } }
                     Text {
@@ -212,8 +161,68 @@ private fun ViewContainer<*, *>.renderPickerResults(ctx: StockPickerPage) {
                             paddingLeft(10f); paddingRight(10f); height(26f); borderRadius(13f)
                             justifyContentCenter(); alignItemsCenter(); backgroundColor(Color(0xFFF2F3F5))
                         }
-                        Text { attr { text("＋"); fontSize(16f); color(Color(0xFF666666)); fontWeightSemiBold() } }
+                        event { click { ctx.removeAt(idx) } }
+                        Text { attr { text("×"); fontSize(16f); color(Color(0xFF666666)); fontWeightSemiBold() } }
                     }
+                }
+            }
+        }
+    }
+
+    // 搜索结果段（flex 1 滚动，键盘弹起时仍占余下空间；查询空时不显示）
+    if (ctx.query.isNotBlank()) {
+        Scroller {
+            attr { flex(1f); flexDirectionColumn(); paddingLeft(12f); paddingRight(12f); paddingBottom(12f) }
+            vif({ ctx.toggle }) { val c = this; c.renderPickerHits(ctx) }
+            vif({ !ctx.toggle }) { val c = this; c.renderPickerHits(ctx) }
+        }
+    } else {
+        // 查询空：占满剩余空间但内容为空，避免键盘抬起时整页被压缩到看不见
+        View { attr { flex(1f) } }
+    }
+}
+
+/** 渲染搜索结果列表（从 query 过滤的命中股）。 */
+private fun ViewContainer<*, *>.renderPickerHits(ctx: StockPickerPage) {
+    val q = ctx.query.trim()
+    val pool = StockData.getQuotes().filter { !it.isIndex }
+    val hits = if (q.isBlank()) emptyList()
+               else pool.filter { it.code.contains(q) || it.name.contains(q) }.take(40)
+    Text {
+        attr {
+            text("搜索结果（点「＋」加入对比）")
+            fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginTop(4f); marginBottom(8f); marginLeft(4f)
+        }
+    }
+    if (hits.isEmpty()) {
+        Text {
+            attr {
+                text("无匹配股票"); fontSize(UserSettings.fs(13f)); color(Color(0xFFBBBBBB)); marginLeft(4f)
+            }
+        }
+    } else {
+        hits.forEach { st ->
+            View {
+                attr {
+                    backgroundColor(Color.WHITE); borderRadius(8f); padding(10f); marginBottom(6f)
+                    flexDirectionRow(); alignItemsCenter()
+                }
+                event { click { ctx.addStock(st.code) } }
+                Text { attr { text(st.name); fontSize(UserSettings.fs(14f)); color(Color(0xFF222222)); flex(1f) } }
+                Text { attr { text(st.code); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)) } }
+                Text {
+                    attr {
+                        text(formatPrice(st.price) + "  " + formatPercent(st.changePercent))
+                        fontSize(UserSettings.fs(12f)); color(StockColor.text(st.changePercent))
+                        marginLeft(8f); marginRight(8f)
+                    }
+                }
+                View {
+                    attr {
+                        paddingLeft(10f); paddingRight(10f); height(26f); borderRadius(13f)
+                        justifyContentCenter(); alignItemsCenter(); backgroundColor(Color(0xFFF2F3F5))
+                    }
+                    Text { attr { text("＋"); fontSize(16f); color(Color(0xFF666666)); fontWeightSemiBold() } }
                 }
             }
         }
