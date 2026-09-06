@@ -29,9 +29,9 @@ internal object UserSettings {
 
     // 可选主题色（外观页色板用）
     val THEME_PALETTE = listOf(
-        0xFF23D3FD, // 青蓝（默认）
+        0xFFFF5A5F, // 红（默认）
+        0xFF23D3FD, // 青蓝
         0xFFAD37FE, // 紫
-        0xFFFF5A5F, // 红
         0xFF1ABE5B, // 绿
         0xFFFF8C00, // 橙
         0xFF222222  // 墨黑
@@ -39,7 +39,7 @@ internal object UserSettings {
 
     // ===== 内存当前值（单一真相源）=====
     var expand: MutableSet<String> = mutableSetOf(EXPAND_TREND, EXPAND_AI, EXPAND_BRIEF)
-    var themeColor: Long = 0xFF23D3FD
+    var themeColor: Long = 0xFFFF5A5F
     var fontScale: Float = 1.0f
     var darkMode: Boolean = false
     /** 涨跌配色：0=A股红涨绿跌（默认）；1=欧美红跌绿涨。影响所有涨跌红/绿标注（含 K线蜡烛） */
