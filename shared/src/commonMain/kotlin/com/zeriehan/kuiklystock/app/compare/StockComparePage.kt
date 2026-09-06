@@ -90,13 +90,13 @@ internal class StockComparePage : BasePager() {
     }
 }
 
-/** 上区实现（阶段 #98/#99 过渡）：当前对比股横向分页卡片（名+价紧凑行 + 占主体高的走势区）。
- *  走势区已给足卡片主体高度（卡片 240，走势 flex 占满），接入真走势后可完整显示。 */
+/** 上区实现（阶段 #98/#99 过渡）：当前对比股横向分页卡片（名+价紧凑行 + 紧凑走势区）。
+ *  走势区高度对标自选展开迷你图(KRMiniTimeSharing 122 高)，紧凑不占大块。 */
 private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
     val stocks = ctx.compareCodes.map { StockData.findByCode(it) }
     View {
         attr {
-            height(296f)  // 卡片 240 + 标题行 + 内边距；上区约占屏高 2/5，走势占每卡主体
+            height(206f)  // 卡片 170(名24+间距+走势122) + 标题行 + 内边距；上区紧凑, 走势与自选展开同尺寸
             flexDirectionColumn(); paddingTop(6f); paddingLeft(10f); paddingRight(10f); paddingBottom(2f)
         }
         // 页标题行 + 分页圆点
@@ -130,21 +130,21 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
             stocks.forEach { st ->
                 View {
                     attr {
-                        width(ctx.pagerData.pageViewWidth - 20f); height(240f); marginRight(10f)
-                        padding(12f); borderRadius(10f); flexDirectionColumn()
+                        width(ctx.pagerData.pageViewWidth - 20f); height(170f); marginRight(10f)
+                        padding(10f); borderRadius(10f); flexDirectionColumn()
                         backgroundColor(Color.WHITE)
                     }
-                    // 名 + code + 涨跌（紧凑单行）
+                    // 名 + code + 价+涨跌（紧凑单行）
                     View { attr { flexDirectionRow(); alignItemsCenter() }
                         Text { attr { text(st.name); fontSize(UserSettings.fs(15f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
                         Text { attr { text(st.code); fontSize(UserSettings.fs(11f)); color(Color(0xFF999999)); marginLeft(6f) } }
                         View { attr { flex(1f) } }
                         Text { attr { text(formatPrice(st.price) + "  " + formatPercent(st.changePercent)); fontSize(UserSettings.fs(14f)); fontWeightSemisolid(); color(StockColor.text(st.changePercent)) } }
                     }
-                    // 迷你走势占位框：占卡片主体高度，接入真走势后能显示全（阶段 #99）
+                    // 紧凑走势区：对标自选展开迷你图尺寸（~122 高），阶段 #99 接入真图
                     View {
                         attr {
-                            flex(1f); marginTop(10f); borderRadius(8f)
+                            height(122f); marginTop(8f); borderRadius(6f)
                             backgroundColor(Color(0xFFF7F8FA)); justifyContentCenter(); alignItemsCenter()
                         }
                         Text { attr { text("走势图（待接入）"); fontSize(UserSettings.fs(12f)); color(Color(0xFFBBBBBB)) } }
@@ -154,7 +154,7 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
             // 最右「+」页：继续添加对比股（阶段 #99 接选股）
             View {
                 attr {
-                    width(60f); height(240f); borderRadius(10f)
+                    width(60f); height(170f); borderRadius(10f)
                     justifyContentCenter(); alignItemsCenter()
                     backgroundColor(Color.WHITE)
                 }
