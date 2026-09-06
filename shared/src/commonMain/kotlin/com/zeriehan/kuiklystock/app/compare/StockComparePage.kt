@@ -171,10 +171,15 @@ internal class StockComparePage : BasePager() {
     internal fun sendCompareAsk() {
         val q = cmpInput.trim()
         if (q.isBlank() || cmpWaiting) return
-        val userMsg = CompareChatMsg(role = "user", text = q)
-        chatMessages = chatMessages + userMsg
         cmpInput = ""
         cmpInputRef.view?.setText("")
+        sendCompareQuestion(q)
+    }
+
+    /** 发送一条对比问题并请求 AI（引导 chips / 手动输入共用；cmpWaiting 时忽略）。 */
+    internal fun sendCompareQuestion(q: String) {
+        if (q.isBlank() || cmpWaiting) return
+        chatMessages = chatMessages + CompareChatMsg(role = "user", text = q)
         chatToggle = !chatToggle
         cmpWaiting = true
         val prompt = buildComparePrompt(q)
@@ -372,10 +377,27 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
         View {
             attr { flex(1f); borderRadius(10f); backgroundColor(Color.WHITE); padding(10f); marginBottom(8f) }
             if (ctx.chatMessages.isEmpty()) {
+                // 首条消息前：引导提示（只提示一次，发过就不再显示）
+                val names = ctx.compareCodes.take(2).map { StockData.findByCode(it).name }
+                val whoText = if (names.size >= 2) "${names[0]} 和 ${names[1]} 谁更值得关注？" else "当前对比股谁更值得关注？"
                 Text {
                     attr {
-                        text("对比 AI 聊天：例如问「这两只谁更值得短期持有？」\n发问后基于当前对比股的实时价 / K 线进行结构化对比解读。")
+                        text("对比 AI：会综合几只股票的实时价与近期走势给出横向对比、优劣势与结论。点下面问题开始：")
                         fontSize(UserSettings.fs(12f)); color(Color(0xFF999999))
+                    }
+                }
+                View {
+                    attr { flexDirectionColumn() }
+                    listOf(whoText, "帮我挑一只更稳的", "谁短线更强？").forEach { q ->
+                        View {
+                            attr {
+                                marginTop(6f); paddingLeft(12f); paddingRight(12f); height(34f)
+                                borderRadius(17f); justifyContentCenter()
+                                backgroundColor(Color(0xFFFFF3E0))
+                            }
+                            event { click { ctx.sendCompareQuestion(q) } }
+                            Text { attr { text(q); fontSize(UserSettings.fs(13f)); color(Color(0xFF9A6B00)) } }
+                        }
                     }
                 }
             } else {
