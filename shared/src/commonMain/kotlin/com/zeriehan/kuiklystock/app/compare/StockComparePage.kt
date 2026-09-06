@@ -106,12 +106,15 @@ internal class StockComparePage : BasePager() {
         }
         compareCodes = newCodes
         comparePeriods = newCodes.associateWith { "intraday" }
-        // 对新列表里没拉过的 code 补拉分时/K线
+        // 对新列表里没拉过的 code 补拉分时 + 各周期K线（保证切 日/周/月/年K 都有数据，迷你图正确变换）
         newCodes.forEach { code ->
             val st = StockData.findByCode(code)
             if (!st.isIndex) {
                 StockData.loadTrends(st) { uiToggle = !uiToggle }
                 StockData.loadKline(st, "日", 80) { uiToggle = !uiToggle }
+                StockData.loadKline(st, "周", 60) { uiToggle = !uiToggle }
+                StockData.loadKline(st, "月", 60) { uiToggle = !uiToggle }
+                StockData.loadKline(st, "年", 60) { uiToggle = !uiToggle }
             }
         }
         ComparePicker.clear()

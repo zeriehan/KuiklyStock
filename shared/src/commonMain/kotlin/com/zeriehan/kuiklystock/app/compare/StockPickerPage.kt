@@ -49,7 +49,7 @@ internal class StockPickerPage : BasePager() {
     internal var chipsExpanded: Boolean by observable(false)
     internal lateinit var inputRef: ViewRef<InputView>
 
-    internal val RANK_TABS = listOf("涨幅榜", "跌幅榜", "换手榜", "振幅榜")
+    internal val RANK_TABS = listOf("涨幅榜", "跌幅榜", "换手榜", "振幅榜", "全部")
 
     override fun viewDidLoad() {
         super.viewDidLoad()
@@ -66,11 +66,11 @@ internal class StockPickerPage : BasePager() {
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).closePage()
     }
 
-    /** 切榜单 Tab */
+    /** 切榜单 Tab；"全部"(index4) 无需真实榜拉取(展示全池)。 */
     internal fun selectRank(i: Int) {
-        if (i == rankTab) return
+        if (i == rankTab && i != 4) return
         rankTab = i
-        if (!StockData.hasRank(i)) StockData.loadRank(i) { toggle = !toggle }
+        if (i != 4 && !StockData.hasRank(i)) StockData.loadRank(i) { toggle = !toggle }
         toggle = !toggle
     }
 
@@ -160,7 +160,7 @@ private fun ViewContainer<*, *>.renderPickerSearch(ctx: StockPickerPage) {
     }
 }
 
-/** 榜单 Tab 栏（静态；选中态 attr 现读 ctx.rankTab 即时变色，无需整体重建）。 */
+/** 榜单 Tab 栏（静态；选中态 attr 现读 ctx.rankTab 即时变色；搜索中高亮"全部"）。 */
 private fun ViewContainer<*, *>.renderPickerRankTabs(ctx: StockPickerPage) {
     View {
         attr {
@@ -168,19 +168,21 @@ private fun ViewContainer<*, *>.renderPickerRankTabs(ctx: StockPickerPage) {
             backgroundColor(Color.WHITE); paddingLeft(6f); paddingRight(6f)
         }
         ctx.RANK_TABS.forEachIndexed { i, label ->
+            val searching = ctx.query.isNotBlank()
+            val active = if (searching) (i == 4) else (ctx.rankTab == i)  // 搜索中默认高亮"全部"
             View {
                 attr { flex(1f); height(44f); flexDirectionColumn(); alignItemsCenter(); justifyContentCenter() }
                 event { click { ctx.selectRank(i) } }
                 Text {
                     attr {
                         text(label); fontSize(UserSettings.fs(13f)); fontWeightSemiBold()
-                        color(if (ctx.rankTab == i) Color(UserSettings.themeColor) else Color(0xFF666666))
+                        color(if (active) Color(UserSettings.themeColor) else Color(0xFF666666))
                     }
                 }
                 View {
                     attr {
                         width(24f); height(2.5f); marginTop(3f); borderRadius(1.25f)
-                        backgroundColor(if (ctx.rankTab == i) Color(UserSettings.themeColor) else Color(0))
+                        backgroundColor(if (active) Color(UserSettings.themeColor) else Color(0))
                     }
                 }
             }
@@ -247,12 +249,20 @@ private fun ViewContainer<*, *>.renderPickerSelectedChips(ctx: StockPickerPage) 
     }
 }
 
-/** 榜单行列表：query 空按当前 rankTab 取榜/排序展示；query 非空跨整个股票池搜（不受当前榜限制），保证"中国平安"等非当前榜股也能被搜到。 */
+/** 榜单行列表：
+ *  - query 非空 → 跨整个股票池搜（不受当前榜限制），且此时 Tab 高亮切到"全部"(index4)。
+ *  - query 空 → 按当前 rankTab：index4=全部(全池,不排序)；0~3=涨幅/跌幅/换手/振幅(真实榜 rankOf 或本地排序)。
+ */
 private fun ViewContainer<*, *>.renderPickerRankList(ctx: StockPickerPage) {
     val pool = StockData.getQuotes().filter { !it.isIndex }
     val q = ctx.query.trim()
-    val shown: List<Stock> = if (q.isEmpty()) {
-        // 无搜索：按当前榜展示
+    val showAllTab = q.isNotEmpty() || ctx.rankTab == 4  // 搜索时视为切到"全部"
+    val shown: List<Stock> = if (showAllTab) {
+        // 全部：有搜索则跨全池过滤；否则全池（不排序，保持池顺序接近自然浏览）
+        if (q.isEmpty()) pool
+        else pool.filter { it.name.contains(q, ignoreCase = true) || it.code.contains(q, ignoreCase = true) }
+    } else {
+        // 具体榜单 0~3
         StockData.rankOf(ctx.rankTab) ?: when (ctx.rankTab) {
             0 -> pool.sortedByDescending { it.changePercent }
             1 -> pool.sortedBy { it.changePercent }
@@ -260,9 +270,6 @@ private fun ViewContainer<*, *>.renderPickerRankList(ctx: StockPickerPage) {
             3 -> pool.sortedByDescending { if (it.price > 0f) (it.high - it.low) / it.price else 0f }
             else -> pool
         }
-    } else {
-        // 有搜索：跨全池按名/码匹配（不限当前榜）—— 修"B 搜索功能不全"：中国平安不在涨幅榜也能搜到
-        pool.filter { it.name.contains(q, ignoreCase = true) || it.code.contains(q, ignoreCase = true) }
     }
     if (shown.isEmpty()) {
         Text {

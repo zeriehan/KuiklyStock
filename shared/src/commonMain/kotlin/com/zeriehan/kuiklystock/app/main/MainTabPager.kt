@@ -677,11 +677,12 @@ internal class MainTabPager : BasePager(), StockNavigator {
         }
     }
 
-    /** 切换个股子榜（涨幅/跌幅/换手率/振幅） */
+    /** 切换个股子榜（涨幅/跌幅/换手率/振幅/全部）。「全部」(index4) 无需真实榜拉取。 */
     internal fun selectRankTab(i: Int) {
-        if (i == stockRankTab) return
+        if (i == stockRankTab && i != 4) return
         stockRankTab = i
         rankToggle = !rankToggle
+        if (i == 4) return
         if (StockData.hasRank(i)) return
         mktLoading = true
         StockData.loadRank(i) { mktLoading = false } // 切换即拉对应真实榜单
@@ -1577,15 +1578,19 @@ private fun ViewContainer<*, *>.renderRankArea(ctx: MainTabPager) {
 }
 
 /** 个股子榜 Tab 栏（普通 View，非 Scroller：横向 Scroller 会吞掉子 View 的 click，导致切换无反应）
- *  与顶层「大盘/板块/个股」Tab 栏同款：flex(1f) 等分 + 蓝色文字 + 蓝色下划线指示器。 */
+ *  与顶层「大盘/板块/个股」Tab 栏同款：flex(1f) 等分 + 蓝色文字 + 蓝色下划线指示器。
+ *  含「全部」Tab(index4)：搜索时高亮切到「全部」。 */
 private fun ViewContainer<*, *>.renderRankTabs(ctx: MainTabPager) {
-    val tabs = listOf("涨幅榜", "跌幅榜", "换手率", "振幅")
+    val tabs = listOf("涨幅榜", "跌幅榜", "换手率", "振幅", "全部")
     View {
         attr {
             flexDirectionRow(); height(40f); alignItemsCenter()
             backgroundColor(Color.WHITE); border(Border(0.5f, BorderStyle.SOLID, Color(0xFFEEEEEE)))
         }
         tabs.forEachIndexed { i, title ->
+            // 搜索中一律高亮「全部」；否则高亮当前 stockRankTab
+            val searching = ctx.stockQuery.isNotBlank()
+            val on = if (searching) (i == 4) else (ctx.stockRankTab == i)
             View {
                 attr {
                     flex(1f); height(40f); flexDirectionColumn(); alignItemsCenter(); justifyContentCenter()
@@ -1595,15 +1600,15 @@ private fun ViewContainer<*, *>.renderRankTabs(ctx: MainTabPager) {
                     attr {
                         text(title)
                         fontSize(ctx.fs(13f))
-                        // 响应式直接读 stockRankTab，选中态随其变化即时刷新
-                        color(if (ctx.stockRankTab == i) Color(ctx.themeColor) else Color(0xFF666666))
+                        // 响应式直接读 stockRankTab/stockQuery，选中态随其变化即时刷新
+                        color(if (on) Color(ctx.themeColor) else Color(0xFF666666))
                         fontWeightSemiBold()
                     }
                 }
                 View {
                     attr {
                         width(20f); height(2.5f); marginTop(4f); borderRadius(1.25f)
-                        backgroundColor(if (ctx.stockRankTab == i) Color(ctx.themeColor) else Color(0))
+                        backgroundColor(if (on) Color(ctx.themeColor) else Color(0))
                     }
                 }
             }
@@ -1613,13 +1618,17 @@ private fun ViewContainer<*, *>.renderRankTabs(ctx: MainTabPager) {
 
 /** 个股榜单：优先显示新浪拉到的真实有序榜；未拉到（首帧/离线）则按当前池排序兜底 */
 private fun ViewContainer<*, *>.renderRankList(ctx: MainTabPager) {
-    val real = StockData.rankOf(ctx.stockRankTab)
-    val stocks: List<Stock>
-    if (real != null) {
-        stocks = real
+    val pool = ctx.visibleQuotes().filter { !it.isIndex }
+    // 搜索中 或 选「全部」(index4) → 展示全池；否则按真实榜/本地排序展示具体榜
+    val q = ctx.stockQuery.trim()
+    val searching = q.isNotEmpty()
+    val showAll = searching || ctx.stockRankTab == 4
+    val stocks: List<Stock> = if (showAll) {
+        pool
     } else {
-        val pool = ctx.visibleQuotes().filter { !it.isIndex }
-        stocks = when (ctx.stockRankTab) {
+        val real = StockData.rankOf(ctx.stockRankTab)
+        if (real != null) real
+        else when (ctx.stockRankTab) {
             0 -> pool.sortedByDescending { it.changePercent }                       // 涨幅榜
             1 -> pool.sortedBy { it.changePercent }                                 // 跌幅榜
             2 -> pool.sortedByDescending { it.volume }                              // 换手率（以成交量代理）
@@ -1627,14 +1636,14 @@ private fun ViewContainer<*, *>.renderRankList(ctx: MainTabPager) {
             else -> pool
         }
     }
-    // 个股搜索：按名称或代码实时过滤（空=不过滤）
-    val q = ctx.stockQuery.trim()
-    val shown = if (q.isEmpty()) stocks
-        else stocks.filter { it.name.contains(q, ignoreCase = true) || it.code.contains(q, ignoreCase = true) }
+    // 个股搜索：按名称或代码实时过滤（空=不过滤）；搜索时已切「全部」池
+    val shown = if (searching)
+        stocks.filter { it.name.contains(q, ignoreCase = true) || it.code.contains(q, ignoreCase = true) }
+    else stocks
     if (shown.isEmpty()) {
         Text {
             attr {
-                text(if (q.isEmpty()) "暂无个股数据" else "没有匹配「$q」的个股")
+                text(if (searching) "没有匹配「$q」的个股" else "暂无个股数据")
                 fontSize(ctx.fs(13f)); color(Color(0xFF999999)); marginTop(16f); marginLeft(16f)
             }
         }
