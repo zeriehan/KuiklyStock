@@ -186,49 +186,52 @@ private fun ViewContainer<*, *>.renderPickerContent(ctx: StockPickerPage) {
         }
     }
 
-    // 搜索结果段（flex 1 滚动；加 minHeight(160f) 保键盘弹起时仍有可见区域，否则可能被压扁不可见）
-    if (ctx.query.isNotBlank()) {
-        Scroller {
-            attr {
-                flex(1f); minHeight(160f)
-                flexDirectionColumn(); paddingLeft(12f); paddingRight(12f); paddingBottom(12f)
-            }
-            vif({ ctx.toggle }) { val c = this; c.renderPickerHits(ctx) }
-            vif({ !ctx.toggle }) { val c = this; c.renderPickerHits(ctx) }
+    // 搜索结果段（始终显示候选池：query 非空走过滤，query 空走默认热门前60只；minHeight 保键盘弹起仍可见）
+    Scroller {
+        attr {
+            flex(1f); minHeight(160f)
+            flexDirectionColumn(); paddingLeft(12f); paddingRight(12f); paddingBottom(12f)
         }
-    } else {
-        // 查询空：占满剩余空间但内容为空，避免键盘抬起时整页被压缩到看不见
-        View { attr { flex(1f); minHeight(120f) } }
+        vif({ ctx.toggle }) { val c = this; c.renderPickerHits(ctx) }
+        vif({ !ctx.toggle }) { val c = this; c.renderPickerHits(ctx) }
     }
 }
 
-/** 渲染搜索结果列表（从 query 过滤的命中股）。 */
+/** 渲染搜索结果/候选列表：query 空→热门前60只；query 非空→过滤。点整行 / 点 ＋ 均加入。 */
 private fun ViewContainer<*, *>.renderPickerHits(ctx: StockPickerPage) {
     val q = ctx.query.trim()
     val pool = StockData.getQuotes().filter { !it.isIndex }
-    val hits = if (q.isBlank()) emptyList()
+    val hits = if (q.isBlank()) pool.take(60)
                else pool.filter { it.code.contains(q) || it.name.contains(q) }.take(40)
     Text {
         attr {
-            text("搜索结果（点「＋」加入对比）")
+            text(if (q.isBlank()) "热门候选（点「＋」或整行加入对比）" else "搜索结果（点「＋」或整行加入对比）")
             fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginTop(4f); marginBottom(8f); marginLeft(4f)
         }
     }
     if (hits.isEmpty()) {
         Text {
             attr {
-                text("无匹配股票"); fontSize(UserSettings.fs(13f)); color(Color(0xFFBBBBBB)); marginLeft(4f)
+                text("无匹配股票，换个关键词试试"); fontSize(UserSettings.fs(13f)); color(Color(0xFFBBBBBB)); marginLeft(4f)
             }
         }
     } else {
         hits.forEach { st ->
+            // 已选过的股在候选中显示「已加」灰态（不再可点＋，避免重复）
+            val alreadyAdded = ctx.picked.contains(st.code)
             View {
                 attr {
-                    backgroundColor(Color.WHITE); borderRadius(8f); padding(10f); marginBottom(6f)
-                    flexDirectionRow(); alignItemsCenter()
+                    backgroundColor(if (alreadyAdded) Color(0xFFF5F5F5) else Color.WHITE); borderRadius(8f)
+                    padding(10f); marginBottom(6f); flexDirectionRow(); alignItemsCenter()
                 }
-                event { click { ctx.addStock(st.code) } }
-                Text { attr { text(st.name); fontSize(UserSettings.fs(14f)); color(Color(0xFF222222)); flex(1f) } }
+                event { if (!alreadyAdded) ctx.addStock(st.code) }
+                Text {
+                    attr {
+                        text(st.name); fontSize(UserSettings.fs(14f))
+                        color(if (alreadyAdded) Color(0xFFBBBBBB) else Color(0xFF222222))
+                        flex(1f)
+                    }
+                }
                 Text { attr { text(st.code); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)) } }
                 Text {
                     attr {
@@ -237,12 +240,21 @@ private fun ViewContainer<*, *>.renderPickerHits(ctx: StockPickerPage) {
                         marginLeft(8f); marginRight(8f)
                     }
                 }
+                // 「＋加入」按钮（主题色醒目，已加则显示「✓ 已加」灰底）
                 View {
                     attr {
-                        paddingLeft(10f); paddingRight(10f); height(26f); borderRadius(13f)
-                        justifyContentCenter(); alignItemsCenter(); backgroundColor(Color(0xFFF2F3F5))
+                        paddingLeft(12f); paddingRight(12f); height(28f); borderRadius(14f); marginLeft(6f)
+                        justifyContentCenter(); alignItemsCenter()
+                        backgroundColor(if (alreadyAdded) Color(0xFFEEEEEE) else Color(UserSettings.themeColor))
                     }
-                    Text { attr { text("＋"); fontSize(16f); color(Color(0xFF666666)); fontWeightSemiBold() } }
+                    Text {
+                        attr {
+                            text(if (alreadyAdded) "✓ 已加" else "＋ 加入")
+                            fontSize(12f)
+                            color(if (alreadyAdded) Color(0xFF999999) else Color.WHITE)
+                            fontWeightSemiBold()
+                        }
+                    }
                 }
             }
         }
