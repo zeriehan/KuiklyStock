@@ -79,6 +79,39 @@ internal class StockComparePage : BasePager() {
         uiToggle = !uiToggle
     }
 
+    /** 打开选股页：写单例初始 codes + 替换意图，openPage StockPicker。 */
+    internal fun openComparePicker(replaceIndex: Int) {
+        ComparePicker.initialCodes = compareCodes.toList()
+        ComparePicker.pendingReplaceIndex = replaceIndex
+        val d = JSONObject().put("mode", "compare")
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockPicker", d)
+    }
+
+    /** 从选股页返回时手动应用新列表：读单例 pendingCodes 应用。Kuikly 暂无可靠的"子页 close → 父页自动 resume"，提供手动按钮兜底。 */
+    internal fun applyPendingPicker() {
+        val newCodes = ComparePicker.pendingCodes ?: run {
+            bridgeModule.toast("暂无新的选股结果")
+            return
+        }
+        if (newCodes.isEmpty()) {
+            bridgeModule.toast("对比股列表为空")
+            return
+        }
+        compareCodes = newCodes
+        comparePeriods = newCodes.associateWith { "intraday" }
+        // 对新列表里没拉过的 code 补拉分时/K线
+        newCodes.forEach { code ->
+            val st = StockData.findByCode(code)
+            if (!st.isIndex) {
+                StockData.loadTrends(st) { uiToggle = !uiToggle }
+                StockData.loadKline(st, "日", 80) { uiToggle = !uiToggle }
+            }
+        }
+        ComparePicker.clear()
+        uiToggle = !uiToggle
+        bridgeModule.toast("已更新对比股")
+    }
+
     /** 发送一条对比问题：构造 prompt（当前对比股 + 实时价/K线摘要 + 用户问题），bridge 调 GLM，
      *  回填到消息列表；不等/失败则本地兜底。 */
     internal fun sendCompareAsk() {
@@ -140,6 +173,25 @@ internal class StockComparePage : BasePager() {
                     attr { text("股票对比"); fontSize(17f); color(Color(0xFF222222)); fontWeightSemiBold(); marginLeft(8f) }
                 }
                 View { attr { flex(1f) } }
+                // 「应用选股」：选股页返回后读单例应用新列表
+                View {
+                    attr {
+                        paddingLeft(10f); paddingRight(10f); height(30f); borderRadius(15f); marginRight(6f)
+                        justifyContentCenter(); alignItemsCenter(); backgroundColor(Color(0xFFF2F3F5))
+                    }
+                    event { click { ctx.applyPendingPicker() } }
+                    Text { attr { text("应用选股"); fontSize(13f); color(Color(0xFF666666)) } }
+                }
+                // 「设置对比股」：跳选股页
+                View {
+                    attr {
+                        paddingLeft(10f); paddingRight(10f); height(30f); borderRadius(15f)
+                        justifyContentCenter(); alignItemsCenter()
+                        backgroundColor(Color(UserSettings.themeColor))
+                    }
+                    event { click { ctx.openComparePicker(-1) } }
+                    Text { attr { text("设置"); fontSize(13f); color(Color.WHITE); fontWeightSemiBold() } }
+                }
             }
 
             // ===== 上区（约 2/5）：对比股票轮播 =====
@@ -196,7 +248,7 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
                     ctx.currentPage = (p.offsetX / vw + 0.5f).toInt()
                 }
             }
-            stocks.forEach { st ->
+            stocks.forEachIndexed { idx, st ->
                 val code = st.code
                 val period = ctx.comparePeriods[code] ?: "intraday"
                 View {
@@ -205,10 +257,13 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
                         padding(10f); borderRadius(10f); flexDirectionColumn()
                         backgroundColor(Color.WHITE)
                     }
-                    // 名 + code + 价+涨跌（紧凑单行）
-                    View { attr { flexDirectionRow(); alignItemsCenter() }
+                    // 名 + code + 价+涨跌（紧凑单行；点名字跳选股页）
+                    View {
+                        attr { flexDirectionRow(); alignItemsCenter() }
+                        event { click { ctx.openComparePicker(idx) } }
                         Text { attr { text(st.name); fontSize(UserSettings.fs(15f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
                         Text { attr { text(st.code); fontSize(UserSettings.fs(11f)); color(Color(0xFF999999)); marginLeft(6f) } }
+                        Text { attr { text("  ✎"); fontSize(UserSettings.fs(11f)); color(Color(0xFFBBBBBB)); marginLeft(2f) } }
                         View { attr { flex(1f) } }
                         Text { attr { text(formatPrice(st.price) + "  " + formatPercent(st.changePercent)); fontSize(UserSettings.fs(14f)); fontWeightSemisolid(); color(StockColor.text(st.changePercent)) } }
                     }
@@ -233,13 +288,14 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
                     }
                 }
             }
-            // 最右「+」页：继续添加对比股（阶段 #99 接选股）
+            // 最右「+」页：点击跳选股页追加新股票
             View {
                 attr {
                     width(60f); height(170f); borderRadius(10f)
                     justifyContentCenter(); alignItemsCenter()
                     backgroundColor(Color.WHITE)
                 }
+                event { click { ctx.openComparePicker(-1) } }
                 Text { attr { text("＋"); fontSize(30f); color(Color(0xFFBBBBBB)) } }
             }
         }
