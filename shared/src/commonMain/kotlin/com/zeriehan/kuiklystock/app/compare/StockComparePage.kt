@@ -202,13 +202,29 @@ internal class StockComparePage : BasePager() {
             sb.append("   实时价：${formatPrice(st.price)}  涨跌：${formatPercent(st.changePercent)}\n")
             val bars = StockData.getKLine(st, "日", 20)
             if (bars.isNotEmpty()) {
-                sb.append("   近 ${bars.size} 日收盘：${bars.takeLast(20).joinToString(", ") { formatPrice(it.close) }}\n")
+                val closes = bars.map { it.close }
+                val periodChg = if (closes.size >= 2 && closes.first() > 0f)
+                    (closes.last() - closes.first()) / closes.first() * 100f else 0f
+                sb.append("   近 ${bars.size} 日涨跌幅：${signChg(periodChg)}%；近期收盘：${closes.takeLast(20).joinToString(", ") { formatPrice(it) }}\n")
+                val hi = bars.maxOfOrNull { it.high } ?: 0f
+                val lo = bars.minOfOrNull { it.low } ?: 0f
+                sb.append("   近 ${bars.size} 日区间：高 ${formatPrice(hi)} / 低 ${formatPrice(lo)}\n")
             }
             sb.append("\n")
         }
         sb.append("【用户问题】\n$question\n\n")
         sb.append("请基于上述数据给出对比分析、优势/风险对比、给出明确结论建议。")
         return sb.toString()
+    }
+
+    /** 涨跌幅带符号文案（正/负/0），KMP 安全两位小数 */
+    private fun signChg(v: Float): String {
+        if (!v.isFinite()) return "--"
+        val sign = if (v > 0f) "+" else if (v < 0f) "-" else ""
+        val abs = kotlin.math.abs(v)
+        val i = abs.toInt()
+        val d = ((abs - i) * 100).toInt().coerceIn(0, 99)
+        return sign + i + "." + (if (d < 10) "0$d" else d.toString())
     }
 
     override fun body(): ViewBuilder {
