@@ -395,6 +395,7 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
                     attr {
                         flex(1f); height(36f)
                         fontSize(UserSettings.fs(13f))
+                        color(Color(0xFF222222))  // 缺色会导致文字不可见（Kuikly 隐性坑）
                         placeholder(if (ctx.cmpInput.isBlank()) "问问对比分析…" else "")
                         placeholderColor(Color(0xFF999999))
                     }
