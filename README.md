@@ -308,7 +308,7 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
 | KRChatMiniChart | ✅ AI 回复内嵌迷你走势图，点按吸附十字光标 → onAsk 追问；头部分时/日/周/月/年K 可切 |
 | AiVerdict | ✅ AI 结论「风险+买卖」双徽章(详情页+聊天气泡共用)；parseAiVerdict/renderAiVerdictBadges/verdictBadge |
 | KRChatBubble | 🔶 气泡仍在 ChatPage 内联(用户/ AI/富文本/迷你图/徽章/多选/长按)，独立成组件是已知待办 |
-| StockComparePage / StockPickerPage | ✅ AI Tab 顶入口→对比页：上区横滑对比股(每页紧凑名+价+真迷你走势可切分时/日K) + 下区对比AI聊天(实时价+近20日收盘喂模型的定制prompt) + 顶部「设置/应用选股」独立选股页换股/加股(单例回传) |
+| StockComparePage / StockPickerPage | ✅ AI Tab 顶入口→对比页：上区横滑对比股(每页紧凑名+价+真迷你走势可切分时/日K/周K/月K/年K) + 下区对比AI聊天(实时价+近20日收盘喂模型的定制prompt) + 顶部「设置/应用选股」独立选股页换股/加股(`initialCodes` 走 pageData 传, `pendingCodes` 单例回传) |
 
 ### 9/6 增量（9/5-9/6 新增，9/4 快照未含）
 - **AI 量化结论→醒目双徽章**：详情页 AI 卡顶部 + AI 聊天气泡下方渲染「操作建议+操作风险」彩色徽章，结论量化成"买入/持有/卖出 + 低/中/高风险"，金融产品感(commit 见 亮点与创新 第五节)。
@@ -321,11 +321,12 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
 - **详情页「基本面·F10」卡**(Task01 延伸)：东财 F10 数据(公司概况+最新业绩)经宿主桥 `fetchFinance` 接入；模块芯片「基本面」开关可独立控制显示；卡片底部「让 AI 解读这家公司 →」一键跳聊天带财务摘要追问(共享 StockData 全局 financeCache)。
 - **迷你展开卡第 4 页「基本面」**：「我的→个性化→迷你卡片」新增开关；行情/自选展开卡可横滑第4页看财务摘要(净利/营收/EPS/ROE + 截断简介, 简介超长省略号)。
 - **AI 解读基本面**：基本面卡底部「让 AI 解读这家公司」→ 把 F10 关键摘要拼中文追问→ openPage Chat 自动 ask；与详情页共用 StockData 全局 F10 缓存。
-- **AI Tab 顶「股票对比」入口 + 对比页**(Task01 延伸)：上 2/5 股票横滑对比(每页紧凑卡:名+实时价+真迷你走势可切分时/日K，复用自选展开同款 KRMiniTimeSharing 与 KRTrendChart) + 下 3/5 对比 AI 聊天(KRMarkdown 富文本渲染，针对当前对比股列表定制 prompt 含实时价+近20日收盘) + 顶部「设置/应用选股」独立选股页换股加股(Kuikly 无可靠子页 close→父页回调，故单例回传+手动应用)。详见 `亮点与创新.md` 第九节。
+- **AI Tab 顶「股票对比」入口 + 对比页**(Task01 延伸)：上 2/5 股票横滑对比(每页紧凑卡:名+实时价+真迷你走势可切分时/日K/周K/月K/年K，复用自选展开同款 KRMiniTimeSharing 与 KRTrendChart) + 下 3/5 对比 AI 聊天(KRMarkdown 富文本渲染，针对当前对比股列表定制 prompt 含实时价+近20日收盘) + 顶部「设置/应用选股」独立选股页换股加股(`initialCodes` 用 pageData 直接传, `pendingCodes` 单例回传, Kuikly 暂无可靠的子页 close→父页自动回调)。详见 `亮点与创新.md` 第九节。
 - **Mock 兜底增强**：个股聊天 Mock 也补【AI观点】徽章行；兜底文案改准确(不再误导"未配置key")。
 - **多端(加分)已探明放弃**：H5 在 Kuikly 2.7.0+Kotlin2.1.21 无 web 内核(core-render-web 仅到 2.4.0-2.0.21)；鸿蒙需 DevEco+ArkTS 桥重写；iOS 需 Mac。Windows 单机无法"真机跑通"多端,故不做。
 - **对比页周期扩周/月/年K + 体验打磨**：迷你走势 chips 加 周K/月K/年K（viewDidLoad 补拉对应数据，用 KRTrendChart 收盘价趋势）；KRMiniTimeSharing 十字光标底部时间截断修正（baseline `h-14`）；对比页输入栏键盘顶起（keyboardH+Spacer 对标 ChatPage）；选股页搜索结果键盘抬起可见（`renderPickerContent` 重构已选固定+结果 flex Scroller）。
 - **对比页迷你卡股票名→跳个股详情（红下划线）**：股票名改 `RichText+Span`（主题色+`textDecorationUnderLine`+click→openPage StockDetail），完全模仿聊天的提及股卡片样式。编辑改走顶部「设置」独立选股页。
+- **Kuikly Input 隐性坑 + 选股页改造**：所有 `Input` 控件 attr 必须显式 `color(0xFF222222)`，否则键入文字透明不可见（漏过会导致整页输入形同虚设）—— 全项目 Input 审计补齐（选股页搜索框、对比页聊天框）。选股页候选池**始终可见**（query 空时显示热门前 60 只，每行红色「＋加入」+ 整行也可点 + 已加入变灰底「✓ 已加」）；`initialCodes` 改用 `pageData` 直接传（不依赖单例跨页，根除丢值）；`renderPickerContent` 重构（已选段固定 + 结果 Scroller `minHeight` 防键盘压扁）；KRMiniTimeSharing 加"昨收 xx"标签消除灰色基准线误解。
 
 ### Task02 关键实现速览（供演示/续做）
 - **富文本**：KRMarkdown 解析 Markdown→块+行内 token；渲染用 Kuikly `RichText+Span`(跨行/自动换行/行内 click)，块=标题/段落/列表/引用/代码；股票名→主题色可点跳详情。字号走 `UserSettings.fs`。
