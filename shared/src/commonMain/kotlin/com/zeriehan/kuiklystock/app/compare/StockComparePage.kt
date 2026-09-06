@@ -65,16 +65,9 @@ internal class StockComparePage : BasePager() {
 
     override fun viewDidLoad() {
         super.viewDidLoad()
-        val raw = pageData.params.optString("stocks")
-        val list = if (raw.isNotBlank()) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
-        if (list.isNotEmpty()) {
-            // 从选股页「完成」重开进来：直接用新列表并持久化
-            compareCodes = list
-            saveCompare()
-        } else {
-            // 正常/重进：恢复上次持久化的对比股（用户设置过的要记住，不重置默认）
-            compareCodes = loadSavedCompare()
-        }
+        // 对比股以持久化为唯一真相源：优先读上次保存的对比股（用户在选股页设好 + 应用选股后已落盘），
+        // 无记录时 loadSavedCompare 内部兜底为默认 茅台/五粮液。入口 openCompare 已不再传默认 stocks 覆盖它。
+        compareCodes = loadSavedCompare()
         // 每只股默认迷你走势周期为「分时」
         comparePeriods = compareCodes.associateWith { "intraday" }
         // 拉各股真实行情/分时/K线(各周期)，保证对比数据真

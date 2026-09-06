@@ -606,8 +606,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
 
     /** 打开「股票对比」页（上区股票轮播对比 + 下区对比 AI 聊天） */
     internal fun openCompare() {
+        // 不传 stocks：对比页从持久化读取上次设置的对比股（唯一真相源），首次为空则内部用默认
         val d = JSONObject()
-        d.put("stocks", listOf("600519", "000858").joinToString(",")) // 默认对比：茅台 / 五粮液
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockCompare", d)
     }
 
