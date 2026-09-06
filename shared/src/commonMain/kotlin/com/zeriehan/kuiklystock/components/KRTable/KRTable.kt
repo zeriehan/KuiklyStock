@@ -12,6 +12,7 @@ import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.compose.Button
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.*
+import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.zeriehan.kuiklystock.components.KRStockBadge.KRStockBadge
 import com.zeriehan.kuiklystock.components.KRMiniTimeSharing.KRMiniTimeSharing
 import com.zeriehan.kuiklystock.core.Stock
@@ -48,6 +49,83 @@ private fun ViewContainer<*, *>.briefCell(label: String, value: String) {
     }
 }
 
+/** 迷你卡第4页：基本面(F10) 财务摘要。数据在 StockData.getFinance(code)；无则占位。长文本截断省略。 */
+private fun ViewContainer<*, *>.renderFinanceMiniPage(ctx: KRStockList, stock: Stock) {
+    val ft = StockData.getFinance(stock.code)
+    View {
+        attr { flex(1f); flexDirectionColumn() }
+        if (ft.isBlank()) {
+            Text { attr { text("暂无基本面数据"); fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)) } }
+        } else {
+            val root = try { JSONObject(ft) } catch (e: Throwable) { return@View }
+            val company = root.optJSONObject("company")
+            val earn = root.optJSONObject("earnings")
+            Text {
+                attr {
+                    text("基本面 · " + (earn?.optString("reportType") ?: "最新业绩"))
+                    fontSize(UserSettings.fs(13f)); fontWeightSemiBold(); color(Color(0xFF222222))
+                }
+            }
+            if (company != null && company.optString("profile").isNotBlank()) {
+                Text {
+                    attr {
+                        // 简介过长截断 + 省略号，避免迷你卡超高
+                        text(clampText(company.optString("profile"), 40))
+                        fontSize(UserSettings.fs(11f)); color(Color(0xFF888888)); marginTop(6f); lines(2)
+                    }
+                }
+            }
+            View {
+                attr { flexDirectionRow(); marginTop(8f) }
+                if (earn != null) {
+                    val np = earn.optLong("netProfit", 0)
+                    if (np != 0L) {
+                        briefCell("归母净利", miniMoney(np) + miniYoy(earn.optDouble("profitYoy", 0.0)))
+                        briefCell("EPS", miniNum(earn.optDouble("eps", 0.0)))
+                    }
+                    val rv = earn.optLong("revenue", 0)
+                    if (rv != 0L) {
+                        briefCell("营收", miniMoney(rv) + miniYoy(earn.optDouble("revYoy", 0.0)))
+                        briefCell("ROE", miniNum(earn.optDouble("roe", 0.0)))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 截断到 maxLen 字符，超出加省略号 */
+private fun clampText(s: String, maxLen: Int): String =
+    if (s.length > maxLen) s.take(maxLen) + "…" else s
+
+/** 大额资金(元) → "x.x亿" 精简版（迷你卡空间小，不加空格） */
+private fun miniMoney(v: Long): String = when {
+    v <= 0L -> "--"
+    v >= 100_000_000L -> mini1(v / 100_000_000.0) + "亿"
+    else -> mini1(v / 10_000.0) + "万"
+}
+
+/** 涨跌幅短标：>0 加 +；0 → ""（避免迷你卡挤） */
+private fun miniYoy(v: Double): String = when {
+    v == 0.0 -> ""
+    v > 0 -> " +" + miniNum(v) + "%"
+    else -> " " + miniNum(v) + "%"
+}
+
+private fun miniNum(v: Double): String = if (v == 0.0) "--" else mini2(v)
+private fun mini1(v: Double): String {
+    if (!v.isFinite()) return "--"
+    val r = kotlin.math.round(v * 10.0) / 10.0
+    return if (r == r.toLong().toDouble()) r.toLong().toString() else r.toString()
+}
+private fun mini2(v: Double): String {
+    if (!v.isFinite()) return "0.00"
+    val sign = if (v < 0) "-" else ""
+    val abs = kotlin.math.abs(v); val intPart = abs.toInt()
+    val dec = ((abs - intPart) * 100).toInt().coerceIn(0, 99)
+    return sign + intPart + "." + (if (dec < 10) "0$dec" else dec.toString())
+}
+
 internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
 
     var stocks: List<Stock> by observable(emptyList())
@@ -66,6 +144,12 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
     private var trendToggle: Boolean by observable(false)
     private fun loadTrendsFor(stock: Stock) {
         StockData.loadTrends(stock) { trendToggle = !trendToggle }
+    }
+
+    /** 展开某行时按需拉取基本面(F10, 迷你卡第4页用)。到达后翻转 financeToggle 让页面重读缓存。 */
+    private var financeToggle: Boolean by observable(false)
+    private fun loadFinanceFor(stock: Stock) {
+        StockData.loadFinance(stock) { financeToggle = !financeToggle }
     }
 
     /** 展开某行时按需拉取 AI 分析（首次自动；force=true 用于「重试」按钮强制刷新）。
@@ -224,6 +308,17 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                                     }
                                                 }
                                             }
+                                            // ===== Page 4：基本面(F10 财务摘要) =====
+                                            3 -> View {
+                                                attr {
+                                                    width(pageW); height(150f); flexDirectionColumn()
+                                                    padding(14f); backgroundColor(Color(0xFFF7F8FA))
+                                                }
+                                                // vif 包 financeToggle: 数据异步到达翻转后重读 StockData.getFinance 缓存
+                                                vif({ ctx.financeToggle }) {
+                                                    renderFinanceMiniPage(ctx, stock)
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -286,7 +381,7 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                             click {
                                 val willExpand = ctx.expandedIndex != index
                                 ctx.expandedIndex = if (willExpand) index else -1
-                                if (willExpand) { ctx.loadAI(index, stock); ctx.currentPage = 0; ctx.loadTrendsFor(stock) }
+                                if (willExpand) { ctx.loadAI(index, stock); ctx.currentPage = 0; ctx.loadTrendsFor(stock); ctx.loadFinanceFor(stock) }
                                 ctx.onRowClick?.invoke(stock)
                             }
                             longPress { p ->

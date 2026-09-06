@@ -29,6 +29,7 @@ internal class ExpandSettingsPage : BasePager() {
     internal var trendOn: Boolean by observable(true)
     internal var aiOn: Boolean by observable(true)
     internal var briefOn: Boolean by observable(true)
+    internal var financeOn: Boolean by observable(true)
     /** vif 翻转触发器：viewDidLoad 载好初始状态后翻转，强制列表重建 */
     internal var uiToggle: Boolean by observable(false)
 
@@ -41,6 +42,7 @@ internal class ExpandSettingsPage : BasePager() {
         trendOn = UserSettings.expand.contains(UserSettings.EXPAND_TREND)
         aiOn = UserSettings.expand.contains(UserSettings.EXPAND_AI)
         briefOn = UserSettings.expand.contains(UserSettings.EXPAND_BRIEF)
+        financeOn = UserSettings.expand.contains(UserSettings.EXPAND_FINANCE)
         uiToggle = !uiToggle
     }
 
@@ -104,7 +106,7 @@ private fun ViewContainer<*, *>.renderExpandList(ctx: ExpandSettingsPage, conten
         }
         Text {
             attr {
-                text("在行情、自选列表里点开一只股票，会向上展开一个迷你卡片。下面三个组件可以自由开关，关掉后展开卡片里就不再显示它。")
+                text("在行情、自选列表里点开一只股票，会向上展开一个迷你卡片。下面四个组件可以自由开关，关掉后展开卡片里就不再显示它。")
                 fontSize(UserSettings.fs(14f)); color(Color(0xFF222222))
             }
         }
@@ -121,6 +123,10 @@ private fun ViewContainer<*, *>.renderExpandList(ctx: ExpandSettingsPage, conten
     renderCompRow(
         contentW, "简况", "行业、总市值、市盈率、换手率等基础资料",
         { ctx.briefOn }, { v -> ctx.briefOn = v; ctx.toggle(UserSettings.EXPAND_BRIEF, v) }
+    )
+    renderCompRow(
+        contentW, "基本面", "公司概况与最新业绩（净利/营收/EPS/ROE），与详情页共用同一份数据",
+        { ctx.financeOn }, { v -> ctx.financeOn = v; ctx.toggle(UserSettings.EXPAND_FINANCE, v) }
     )
 
     View { attr { height(20f) } }
