@@ -29,7 +29,7 @@ import com.zeriehan.kuiklystock.core.UserSettings
 @Page("Appearance", supportInLocal = true)
 internal class AppearancePage : BasePager() {
 
-    internal var selTheme: Long by observable(0xFF23D3FD)
+    internal var selTheme: Long by observable(UserSettings.themeColor)
     /** 0=标准 1=大 2=特大 */
     internal var selFont: Int by observable(0)
     internal var darkOn: Boolean by observable(false)

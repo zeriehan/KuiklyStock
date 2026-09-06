@@ -65,7 +65,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
     /** vif 翻转触发器：「我的」页的隐藏股票入口行据其翻转重建（数量/天数的实时同步） */
     internal var mineToggle: Boolean by observable(false)
     /** 主题强调色（observable 镜像 UserSettings.themeColor）：所有主题色 attr 闭包读它即随个性化重绘 */
-    internal var themeColor: Long by observable(0xFF23D3FD)
+    internal var themeColor: Long by observable(UserSettings.themeColor)
     /** 深色模式（observable 镜像 UserSettings.darkMode）：页面底色等读它即随个性化重绘 */
     internal var darkOn: Boolean by observable(false)
     /** 字体缩放镜像（observable）：所有字号经 ctx.fs() 读取，字号一变即触发依赖闭包重绘 */
