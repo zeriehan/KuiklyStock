@@ -246,6 +246,22 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         attr { flex(1f); flexDirectionColumn(); padding(12f) }
                         // 标题栏只渲染一次，避免 vif 双分支重建导致「最近对话」重复
                         renderRecentsHeader(ctx, contentW)
+                        // 「股票对比」入口：进入多股对比页（上区股票轮播 + 下区对比 AI 聊天）
+                        View {
+                            attr {
+                                flexDirectionRow(); alignItemsCenter()
+                                marginBottom(8f); borderRadius(10f); padding(10f)
+                                backgroundColor(Color(0xFFFFF4E0)); width(contentW)
+                            }
+                            event { click { ctx.openCompare() } }
+                            View { attr { width(20f); height(20f); borderRadius(4f); backgroundColor(Color(UserSettings.themeColor)); marginRight(8f); justifyContentCenter(); alignItemsCenter() }
+                                Text { attr { text("⇄"); fontSize(13f); color(Color.WHITE); fontWeightSemiBold() } }
+                            }
+                            Text { attr { text("股票对比"); fontSize(ctx.fs(15f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                            Text { attr { text("多股并排 · AI 对比解读"); fontSize(ctx.fs(12f)); color(Color(0xFF999999)); marginLeft(8f) } }
+                            View { attr { flex(1f) } }
+                            Text { attr { text("›"); fontSize(20f); color(Color(0xFFBBBBBB)) } }
+                        }
                         vif({ ctx.convToggle }) { val c = this; c.renderRecents(ctx, contentW) }
                         vif({ !ctx.convToggle }) { val c = this; c.renderRecents(ctx, contentW) }
                     }
@@ -586,6 +602,13 @@ internal class MainTabPager : BasePager(), StockNavigator {
         closeSheet()
         val d = JSONObject(); d.put("stockCode", stock.code)
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
+    }
+
+    /** 打开「股票对比」页（上区股票轮播对比 + 下区对比 AI 聊天） */
+    internal fun openCompare() {
+        val d = JSONObject()
+        d.put("stocks", listOf("600519", "000858").joinToString(",")) // 默认对比：茅台 / 五粮液
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockCompare", d)
     }
 
     /** 打开板块详情页（行情「板块」Tab 行点击） */
