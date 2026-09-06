@@ -7,6 +7,7 @@ import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.module.RouterModule
+import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.*
@@ -36,6 +37,10 @@ import com.zeriehan.kuiklystock.core.formatPrice
 @Page("StockCompare", supportInLocal = true)
 internal class StockComparePage : BasePager() {
 
+    companion object {
+        const val KEY_COMPARE = "kb_compare_codes"
+    }
+
     /** 当前参与对比的股票 code 列表（有序） */
     internal var compareCodes: List<String> by observable(emptyList())
     /** vif 翻转触发器：代码列表变化后强制内容区重建 */
@@ -62,7 +67,9 @@ internal class StockComparePage : BasePager() {
         super.viewDidLoad()
         val raw = pageData.params.optString("stocks")
         val list = if (raw.isNotBlank()) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
-        compareCodes = if (list.isNotEmpty()) list else listOf("600519", "000858")
+        compareCodes = if (list.isNotEmpty()) list
+        // 未由 pageData 指定时，恢复上次持久化的对比股（用户设置过的要记住，重进不重置）
+        else loadSavedCompare()
         // 每只股默认迷你走势周期为「分时」
         comparePeriods = compareCodes.associateWith { "intraday" }
         // 拉各股真实行情/分时/K线(各周期)，保证对比数据真
@@ -86,6 +93,19 @@ internal class StockComparePage : BasePager() {
         uiToggle = !uiToggle
     }
 
+    /** 持久化对比股列表（SharedPreferences），用户设置后重进仍保留。 */
+    private fun saveCompare() {
+        acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
+            .setItem(KEY_COMPARE, compareCodes.joinToString(","))
+    }
+
+    /** 读取上次持久化的对比股；无则默认 茅台/五粮液。 */
+    private fun loadSavedCompare(): List<String> {
+        val raw = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME).getItem(KEY_COMPARE)
+        val list = if (raw != null) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
+        return if (list.isNotEmpty()) list else listOf("600519", "000858")
+    }
+
     /** 打开选股页：通过 pageData 把当前对比 codes 直接传给 picker，不依赖单例（避免单例残留/丢值的隐患）。 */
     internal fun openComparePicker(replaceIndex: Int) {
         ComparePicker.pendingReplaceIndex = replaceIndex
@@ -106,6 +126,7 @@ internal class StockComparePage : BasePager() {
         }
         compareCodes = newCodes
         comparePeriods = newCodes.associateWith { "intraday" }
+        saveCompare()  // 持久化，重进对比页仍保留用户选的对比股
         // 对新列表里没拉过的 code 补拉分时 + 各周期K线（保证切 日/周/月/年K 都有数据，迷你图正确变换）
         newCodes.forEach { code ->
             val st = StockData.findByCode(code)

@@ -1588,9 +1588,6 @@ private fun ViewContainer<*, *>.renderRankTabs(ctx: MainTabPager) {
             backgroundColor(Color.WHITE); border(Border(0.5f, BorderStyle.SOLID, Color(0xFFEEEEEE)))
         }
         tabs.forEachIndexed { i, title ->
-            // 搜索中一律高亮「全部」；否则高亮当前 stockRankTab
-            val searching = ctx.stockQuery.isNotBlank()
-            val on = if (searching) (i == 4) else (ctx.stockRankTab == i)
             View {
                 attr {
                     flex(1f); height(40f); flexDirectionColumn(); alignItemsCenter(); justifyContentCenter()
@@ -1600,7 +1597,8 @@ private fun ViewContainer<*, *>.renderRankTabs(ctx: MainTabPager) {
                     attr {
                         text(title)
                         fontSize(ctx.fs(13f))
-                        // 响应式直接读 stockRankTab/stockQuery，选中态随其变化即时刷新
+                        // 响应式现读 stockRankTab/stockQuery，切 Tab/搜索时即时变色（勿提成局部 val，否则不随 observable 重跑）
+                        val on = if (ctx.stockQuery.isNotBlank()) (i == 4) else (ctx.stockRankTab == i)
                         color(if (on) Color(ctx.themeColor) else Color(0xFF666666))
                         fontWeightSemiBold()
                     }
@@ -1608,6 +1606,7 @@ private fun ViewContainer<*, *>.renderRankTabs(ctx: MainTabPager) {
                 View {
                     attr {
                         width(20f); height(2.5f); marginTop(4f); borderRadius(1.25f)
+                        val on = if (ctx.stockQuery.isNotBlank()) (i == 4) else (ctx.stockRankTab == i)
                         backgroundColor(if (on) Color(ctx.themeColor) else Color(0))
                     }
                 }

@@ -160,7 +160,7 @@ private fun ViewContainer<*, *>.renderPickerSearch(ctx: StockPickerPage) {
     }
 }
 
-/** 榜单 Tab 栏（静态；选中态 attr 现读 ctx.rankTab 即时变色；搜索中高亮"全部"）。 */
+/** 榜单 Tab 栏（静态；选中态在各自 attr 闭包内现读 ctx.rankTab/ctx.query，即时随切换移动；搜索中高亮"全部"）。 */
 private fun ViewContainer<*, *>.renderPickerRankTabs(ctx: StockPickerPage) {
     View {
         attr {
@@ -168,20 +168,22 @@ private fun ViewContainer<*, *>.renderPickerRankTabs(ctx: StockPickerPage) {
             backgroundColor(Color.WHITE); paddingLeft(6f); paddingRight(6f)
         }
         ctx.RANK_TABS.forEachIndexed { i, label ->
-            val searching = ctx.query.isNotBlank()
-            val active = if (searching) (i == 4) else (ctx.rankTab == i)  // 搜索中默认高亮"全部"
             View {
                 attr { flex(1f); height(44f); flexDirectionColumn(); alignItemsCenter(); justifyContentCenter() }
                 event { click { ctx.selectRank(i) } }
                 Text {
                     attr {
                         text(label); fontSize(UserSettings.fs(13f)); fontWeightSemiBold()
+                        // ⚠️ 现读 observable(rankTab/query) 于 attr 闭包内，切 Tab/搜索时即时变色
+                        val active = if (ctx.query.isNotBlank()) (i == 4) else (ctx.rankTab == i)
                         color(if (active) Color(UserSettings.themeColor) else Color(0xFF666666))
                     }
                 }
                 View {
                     attr {
                         width(24f); height(2.5f); marginTop(3f); borderRadius(1.25f)
+                        // ⚠️ 横线背景也现读，切 Tab 时横线移动到位
+                        val active = if (ctx.query.isNotBlank()) (i == 4) else (ctx.rankTab == i)
                         backgroundColor(if (active) Color(UserSettings.themeColor) else Color(0))
                     }
                 }
