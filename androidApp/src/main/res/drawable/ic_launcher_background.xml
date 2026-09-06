@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M0,0 H108 V108 H0 Z" android:fillColor="#B71C1C" />
+    <!-- 5 根严格等差递增的实心红矩形 K 线阶梯: 每根底部逐级+2, 顶部逐级-2(更高) -->
+    <path android:fillColor="#E53935" android:pathData="M10,46 H20 V56 H10 Z" />
+    <path android:fillColor="#E53935" android:pathData="M26,44 H36 V58 H26 Z" />
+    <path android:fillColor="#E53935" android:pathData="M42,42 H52 V60 H42 Z" />
+    <path android:fillColor="#E53935" android:pathData="M58,40 H68 V62 H58 Z" />
+    <path android:fillColor="#E53935" android:pathData="M74,38 H84 V64 H74 Z" />
+</vector>
