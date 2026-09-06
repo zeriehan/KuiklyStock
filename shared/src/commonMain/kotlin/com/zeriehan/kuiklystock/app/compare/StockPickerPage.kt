@@ -110,7 +110,7 @@ internal class StockPickerPage : BasePager() {
                         backgroundColor(Color(UserSettings.themeColor))
                     }
                     event { click { ctx.finish() } }
-                    Text { attr { text("完成(${ctx.picked.size})"); fontSize(13f); color(Color.WHITE); fontWeightSemiBold() } }
+                    Text { attr { text("完成"); fontSize(13f); color(Color.WHITE); fontWeightSemiBold() } }
                 }
             }
 
