@@ -21,6 +21,7 @@ import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.UserSettings
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.formatPrice
+import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 
 /**
  * 「股票对比」页（#96）：多股并排对比 + AI 对比解读。
@@ -183,7 +184,9 @@ internal class StockComparePage : BasePager() {
         chatToggle = !chatToggle
         cmpWaiting = true
         val prompt = buildComparePrompt(q)
-        bridgeModule.llmAnalyze(prompt, stream = false, sid = "") { resp ->
+        // 走 AIJobCenter（常驻根页桥，同主聊天/GLMFlashClient）：对比页是 push 的子页面，
+        // 直接 bridgeModule.llmAnalyze(当前页桥) 在页面切走/返回/后台时会失效 → 回调空 → 误报"无key/限流"。
+        AIJobCenter.sendPrompt(prompt, stream = false, sid = "") { resp ->
             val text = resp?.optString("text").orEmpty()
             val reply = if (text.isBlank()) "（AI 未返回，可能是限流或无 Key。请稍后重试。）" else text
             chatMessages = chatMessages + CompareChatMsg(role = "assistant", text = reply)
