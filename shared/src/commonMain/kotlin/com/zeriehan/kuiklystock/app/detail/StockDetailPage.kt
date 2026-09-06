@@ -168,18 +168,15 @@ internal class StockDetailPage : BasePager() {
         }
     }
 
-    /** 拉一次个股基本面(F10)。幂等(仅首调)，指数/桥不可用/数据空 → financeText 留空(区块不显示) */
+    /** 拉一次个股基本面(F10) → financeText。走全局 StockData.loadFinance(幂等, 与迷你卡共用缓存)，
+     *  指数/桥不可用/数据空 → financeText 留空(区块不显示)。 */
     private fun requestFinance(stock: Stock) {
         if (financeRequested) return
         financeRequested = true
-        val bridge = Utils.currentBridgeModule()
-        val secid = StockData.secidOf(stock)
-        if (secid.isBlank()) return // 行情源不支持的个股(老三板等)，无 secid
         financeLoading = true
-        bridge.fetchFinance(secid) { resp ->
+        StockData.loadFinance(stock) {
             financeLoading = false
-            val f = resp?.optString("finance").orEmpty()
-            if (f.isNotBlank() && f != "null") financeText = f
+            financeText = StockData.getFinance(stock.code)
         }
     }
 
