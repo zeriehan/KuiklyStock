@@ -80,8 +80,8 @@ internal class StockComparePage : BasePager() {
             vif({ ctx.uiToggle }) { val c = this; c.renderCompareUpper(ctx) }
             vif({ !ctx.uiToggle }) { val c = this; c.renderCompareUpper(ctx) }
 
-            // 分隔
-            View { attr { height(8f); backgroundColor(Color(0xFFF2F3F5)) } }
+            // ===== 分隔（尽量薄，让上区股票与下区聊天贴近）=====
+            View { attr { height(4f); backgroundColor(Color(0xFFF2F3F5)) } }
 
             // ===== 下区（约 3/5）：对比 AI 聊天 =====
             vif({ ctx.uiToggle }) { val c = this; c.renderCompareChatPlaceholder(ctx) }
@@ -90,14 +90,14 @@ internal class StockComparePage : BasePager() {
     }
 }
 
-/** 上区占位实现（阶段 #98）：显示当前对比股为横向分页卡片（名 + 现价 + 涨跌幅 + 占位迷你走势框）。
- *  阶段 #99 将替换为可换股 / 可切周期的完整对比组件。 */
+/** 上区实现（阶段 #98/#99 过渡）：当前对比股横向分页卡片（名+价紧凑行 + 占主体高的走势区）。
+ *  走势区已给足卡片主体高度（卡片 240，走势 flex 占满），接入真走势后可完整显示。 */
 private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
     val stocks = ctx.compareCodes.map { StockData.findByCode(it) }
     View {
         attr {
-            height(190f)  // 顶部返回栏外，上区约占屏高（本骨架先固定，阶段内再按 2/5 由父布局给 flex）
-            flexDirectionColumn(); padding(10f)
+            height(296f)  // 卡片 240 + 标题行 + 内边距；上区约占屏高 2/5，走势占每卡主体
+            flexDirectionColumn(); paddingTop(6f); paddingLeft(10f); paddingRight(10f); paddingBottom(2f)
         }
         // 页标题行 + 分页圆点
         View {
@@ -130,25 +130,21 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
             stocks.forEach { st ->
                 View {
                     attr {
-                        width(ctx.pagerData.pageViewWidth - 20f); height(150f); marginRight(10f)
+                        width(ctx.pagerData.pageViewWidth - 20f); height(240f); marginRight(10f)
                         padding(12f); borderRadius(10f); flexDirectionColumn()
                         backgroundColor(Color.WHITE)
                     }
-                    // 名 + code
+                    // 名 + code + 涨跌（紧凑单行）
                     View { attr { flexDirectionRow(); alignItemsCenter() }
                         Text { attr { text(st.name); fontSize(UserSettings.fs(15f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
                         Text { attr { text(st.code); fontSize(UserSettings.fs(11f)); color(Color(0xFF999999)); marginLeft(6f) } }
                         View { attr { flex(1f) } }
-                        Text { attr { text(formatPercent(st.changePercent)); fontSize(UserSettings.fs(13f)); color(StockColor.text(st.changePercent)) } }
+                        Text { attr { text(formatPrice(st.price) + "  " + formatPercent(st.changePercent)); fontSize(UserSettings.fs(14f)); fontWeightSemisolid(); color(StockColor.text(st.changePercent)) } }
                     }
-                    // 现价
-                    View { attr { flexDirectionRow(); alignItemsCenter(); marginTop(6f) }
-                        Text { attr { text(formatPrice(st.price)); fontSize(UserSettings.fs(22f)); fontWeightSemiBold(); color(StockColor.text(st.changePercent)) } }
-                    }
-                    // 迷你走势占位框（阶段 #99 换成真迷你走势 + 周期切换）
+                    // 迷你走势占位框：占卡片主体高度，接入真走势后能显示全（阶段 #99）
                     View {
                         attr {
-                            flex(1f); marginTop(8f); borderRadius(6f)
+                            flex(1f); marginTop(10f); borderRadius(8f)
                             backgroundColor(Color(0xFFF7F8FA)); justifyContentCenter(); alignItemsCenter()
                         }
                         Text { attr { text("走势图（待接入）"); fontSize(UserSettings.fs(12f)); color(Color(0xFFBBBBBB)) } }
@@ -158,7 +154,7 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
             // 最右「+」页：继续添加对比股（阶段 #99 接选股）
             View {
                 attr {
-                    width(60f); height(150f); borderRadius(10f)
+                    width(60f); height(240f); borderRadius(10f)
                     justifyContentCenter(); alignItemsCenter()
                     backgroundColor(Color.WHITE)
                 }
@@ -171,7 +167,7 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
 /** 下区占位（阶段 #98）：对比 AI 聊天区，阶段 #100 接真实聊天。 */
 private fun ViewContainer<*, *>.renderCompareChatPlaceholder(ctx: StockComparePage) {
     View {
-        attr { flex(1f); padding(12f) }
+        attr { flex(1f); paddingLeft(10f); paddingRight(10f); paddingBottom(4f) }
         View {
             attr { flex(1f); borderRadius(10f); backgroundColor(Color.WHITE); justifyContentCenter(); alignItemsCenter() }
             Text { attr { text("对比 AI 聊天（待接入）"); fontSize(UserSettings.fs(14f)); color(Color(0xFF999999)) } }
