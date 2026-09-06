@@ -327,6 +327,8 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
 - **对比页周期扩周/月/年K + 体验打磨**：迷你走势 chips 加 周K/月K/年K（viewDidLoad 补拉对应数据，用 KRTrendChart 收盘价趋势）；KRMiniTimeSharing 十字光标底部时间截断修正（baseline `h-14`）；对比页输入栏键盘顶起（keyboardH+Spacer 对标 ChatPage）；迷你分时加"昨收 xx"标签消除灰色基准线误解。
 - **对比页迷你卡股票名→跳个股详情（红下划线）**：股票名改 `RichText+Span`（主题色+`textDecorationUnderLine`+click→openPage StockDetail），完全模仿聊天的提及股卡片样式。编辑改走顶部「设置」独立选股页。
 - **Kuikly Input 隐性坑 + 选股页按"复刻行情页"重写**：所有 `Input` 控件 attr 必须显式 `color(0xFF222222)`，否则键入文字透明不可见—— 全项目 Input 审计补齐（选股页搜索框、对比页聊天框）。选股页重写为**行情同构**布局：搜索框（静态不丢焦点）+ 榜单 Tab（涨幅/跌幅/换手/振幅，数据复用 `StockData.rankOf/getQuotes`）+ 顶部已加 chips（横滚×删）+ 榜单行（market 风格行尾「＋加入/✓移除」，点整行或按钮切换），榜单列表独立竖向滚动区。搜索框/Tab 移出 vif 重建区防输入丢焦点（参照行情页 renderRankArea）；`initialCodes` 用 `pageData` 直接传（不依赖单例跨页，根除丢值）。
+- **榜单加「全部」Tab + 搜索自动跳全部（选股页 + 行情个股榜）**：榜单 Tab 增至「涨幅/跌幅/换手/振幅/全部」，「全部」展示全池（与榜单同源）；搜索时高亮自动切到「全部」并跨全池过滤——修"某股不在当前榜就搜不到"的根本问题（如"中国平安"不在涨幅榜也能搜到）。已加对比 chips 支持折叠/展开（点标题行，节省纵向空间 + 醒目"N 只"胶囊）。
+- **对比页应用选股后迷你图正确变换**：`applyPendingPicker` 对新增股票补拉 周/月/年K（不只分时+日K），保证换股后迷你走势图读取新数据、切任意周期都有内容。
 
 ### Task02 关键实现速览（供演示/续做）
 - **富文本**：KRMarkdown 解析 Markdown→块+行内 token；渲染用 Kuikly `RichText+Span`(跨行/自动换行/行内 click)，块=标题/段落/列表/引用/代码；股票名→主题色可点跳详情。字号走 `UserSettings.fs`。
