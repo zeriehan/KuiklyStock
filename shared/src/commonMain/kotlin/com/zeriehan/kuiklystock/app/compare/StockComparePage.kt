@@ -9,6 +9,8 @@ import com.tencent.kuikly.core.module.RouterModule
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.*
 import com.zeriehan.kuiklystock.base.BasePager
+import com.zeriehan.kuiklystock.components.KRMiniTimeSharing.KRMiniTimeSharing
+import com.zeriehan.kuiklystock.components.KRTrendChart.KRTrendChart
 import com.zeriehan.kuiklystock.core.StockColor
 import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.UserSettings
@@ -36,12 +38,16 @@ internal class StockComparePage : BasePager() {
     internal var uiToggle: Boolean by observable(false)
     /** 上区横向当前页（圆点指示） */
     internal var currentPage: Int by observable(0)
+    /** 每只股票独立的迷你走势周期（"intraday" 分时 / "day" 日K），默认分时 */
+    internal var comparePeriods: Map<String, String> by observable(emptyMap())
 
     override fun viewDidLoad() {
         super.viewDidLoad()
         val raw = pageData.params.optString("stocks")
         val list = if (raw.isNotBlank()) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
         compareCodes = if (list.isNotEmpty()) list else listOf("600519", "000858")
+        // 每只股默认迷你走势周期为「分时」
+        comparePeriods = compareCodes.associateWith { "intraday" }
         // 拉各股真实行情/分时/K线，保证对比数据真
         compareCodes.forEach { code ->
             val st = StockData.findByCode(code)
@@ -50,6 +56,13 @@ internal class StockComparePage : BasePager() {
                 StockData.loadKline(st, "日", 80) { uiToggle = !uiToggle }
             }
         }
+        uiToggle = !uiToggle
+    }
+
+    /** 切换某股迷你走势周期（"intraday" 分时 / "day" 日K）。 */
+    internal fun setPeriod(code: String, period: String) {
+        comparePeriods = comparePeriods.toMutableMap().apply { put(code, period) }
+        // body 不随 observable 重跑，触发重建以交换图表组件（KRMiniTimeSharing ↔ KRTrendChart）
         uiToggle = !uiToggle
     }
 
@@ -128,6 +141,8 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
                 }
             }
             stocks.forEach { st ->
+                val code = st.code
+                val period = ctx.comparePeriods[code] ?: "intraday"
                 View {
                     attr {
                         width(ctx.pagerData.pageViewWidth - 20f); height(170f); marginRight(10f)
@@ -141,13 +156,24 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
                         View { attr { flex(1f) } }
                         Text { attr { text(formatPrice(st.price) + "  " + formatPercent(st.changePercent)); fontSize(UserSettings.fs(14f)); fontWeightSemisolid(); color(StockColor.text(st.changePercent)) } }
                     }
-                    // 紧凑走势区：对标自选展开迷你图尺寸（~122 高），阶段 #99 接入真图
-                    View {
-                        attr {
-                            height(122f); marginTop(8f); borderRadius(6f)
-                            backgroundColor(Color(0xFFF7F8FA)); justifyContentCenter(); alignItemsCenter()
+                    // 周期 chips（分时 / 日K）；对标自选展开迷你图尺寸的紧凑切换
+                    View { attr { flexDirectionRow(); marginTop(6f) }
+                        comparePeriodChip(ctx, code, "intraday", "分时", period)
+                        comparePeriodChip(ctx, code, "day", "日K", period)
+                    }
+                    // 紧凑迷你走势：分时用 KRMiniTimeSharing(自选展开同款)，日K用 KRTrendChart 收盘价趋势
+                    if (period == "intraday") {
+                        KRMiniTimeSharing {
+                            points = StockData.getIntraday(st)
+                            refPrice = StockData.intradayRefPrice(st)
+                            color = StockColor.of(st.changePercent)
                         }
-                        Text { attr { text("走势图（待接入）"); fontSize(UserSettings.fs(12f)); color(Color(0xFFBBBBBB)) } }
+                    } else {
+                        val closes = StockData.getKLine(st, "日", 60).map { it.close }
+                        KRTrendChart {
+                            points = closes
+                            chartHeight = 122f
+                        }
                     }
                 }
             }
@@ -171,6 +197,28 @@ private fun ViewContainer<*, *>.renderCompareChatPlaceholder(ctx: StockComparePa
         View {
             attr { flex(1f); borderRadius(10f); backgroundColor(Color.WHITE); justifyContentCenter(); alignItemsCenter() }
             Text { attr { text("对比 AI 聊天（待接入）"); fontSize(UserSettings.fs(14f)); color(Color(0xFF999999)) } }
+        }
+    }
+}
+
+/** 对比页迷你走势周期切换 chip（点选改 ctx.comparePeriods，attr 现读即时变色）。 */
+private fun ViewContainer<*, *>.comparePeriodChip(
+    ctx: StockComparePage, code: String, key: String, label: String, current: String
+) {
+    val on = current == key
+    View {
+        attr {
+            paddingLeft(8f); paddingRight(8f); height(22f); borderRadius(11f); marginRight(6f)
+            justifyContentCenter(); alignItemsCenter()
+            backgroundColor(if (on) Color(UserSettings.themeColor) else Color(0xFFF2F3F5))
+        }
+        event { click { ctx.setPeriod(code, key) } }
+        Text {
+            attr {
+                text(label)
+                fontSize(UserSettings.fs(11f))
+                color(if (on) Color.WHITE else Color(0xFF666666))
+            }
         }
     }
 }
