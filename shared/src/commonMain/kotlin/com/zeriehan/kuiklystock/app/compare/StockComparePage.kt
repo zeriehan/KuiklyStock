@@ -423,7 +423,7 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
                             attr { marginBottom(8f); flexDirectionRow(); justifyContentFlexEnd() }
                             View {
                                 attr {
-                                    backgroundColor(Color(0xFF23D3FD)); borderRadius(8f); padding(8f)
+                                    backgroundColor(Color(UserSettings.themeColor)); borderRadius(8f); padding(8f)
                                     // 限制最大宽度，避免长文本横铺；attr 现读 text
                                 }
                                 Text {
