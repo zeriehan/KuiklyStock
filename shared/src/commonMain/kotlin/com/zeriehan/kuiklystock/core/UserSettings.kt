@@ -26,6 +26,7 @@ internal object UserSettings {
     const val EXPAND_TREND = "trend"
     const val EXPAND_AI = "ai"
     const val EXPAND_BRIEF = "brief"
+    const val EXPAND_FINANCE = "finance"
 
     // 可选主题色（外观页色板用）
     val THEME_PALETTE = listOf(
@@ -38,7 +39,7 @@ internal object UserSettings {
     )
 
     // ===== 内存当前值（单一真相源）=====
-    var expand: MutableSet<String> = mutableSetOf(EXPAND_TREND, EXPAND_AI, EXPAND_BRIEF)
+    var expand: MutableSet<String> = mutableSetOf(EXPAND_TREND, EXPAND_AI, EXPAND_BRIEF, EXPAND_FINANCE)
     var themeColor: Long = 0xFFFF5A5F
     var fontScale: Float = 1.0f
     var darkMode: Boolean = false
@@ -105,12 +106,13 @@ internal object UserSettings {
     /** 依据涨跌幅返回该模式下的文字色（平用当前"中性黑"便于阅读数值） */
     fun trendDeep(v: Float): Long = if (v > 0f) upDeep() else if (v < 0f) downDeep() else 0xFF222222L
 
-    /** 展开组件对应的页码顺序（趋势=0 / AI=1 / 简况=2），按集合动态生成 */
+    /** 展开组件对应的页码顺序（趋势=0 / AI=1 / 简况=2 / 基本面=3），按集合动态生成 */
     fun expandPages(): List<Int> {
         val list = mutableListOf<Int>()
         if (expand.contains(EXPAND_TREND)) list.add(0)
         if (expand.contains(EXPAND_AI)) list.add(1)
         if (expand.contains(EXPAND_BRIEF)) list.add(2)
+        if (expand.contains(EXPAND_FINANCE)) list.add(3)
         return list
     }
 

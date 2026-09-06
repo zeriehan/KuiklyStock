@@ -203,6 +203,10 @@ object StockData {
     private val realTrends = mutableMapOf<String, List<TimeSharingPoint>>()
     // key: code → 真实分时的昨收(前收)基准；分时图基线/涨跌应以此为准，避免用可能过期的 stock.change
     private val trendPreClose = mutableMapOf<String, Float>()
+    // key: code → F10 基本面 JSON 字符串（宿主 fetchFinance 回传；命中则列表展开「基本面」页直接展示）
+    private val financeCache = mutableMapOf<String, String>()
+    // 已对某 code 发起过 fetchFinance（避免重复拉）
+    private val financeRequested = mutableSetOf<String>()
     /** 是否已真正接入过真实K线/分时（用于图源标注） */
     var realHistoryLoaded = false
         private set
@@ -454,6 +458,28 @@ object StockData {
                 }
             } catch (e: Throwable) {
                 // 解析/回写异常：丢弃真实数据，保持本地兜底
+            }
+            onDone?.invoke()
+        }
+    }
+
+    /** 取某 code 已缓存的基本面 JSON；未拉到/不支持 → "" */
+    fun getFinance(code: String): String = financeCache[code] ?: ""
+
+    /** 拉一次某股基本面(F10)并缓存。幂等(每 code 仅首拉)；指数/桥不可用/空 → 缓存留空不回调多次。
+     *  回调于主线程(桥回传)。列表展开卡与详情页共用此门面。 */
+    fun loadFinance(stock: Stock, onDone: (() -> Unit)? = null) {
+        if (stock.isIndex || stock.code in financeRequested) { onDone?.invoke(); return }
+        val b = bridge ?: run { onDone?.invoke(); return }
+        val secid = secidOf(stock)
+        if (secid.isBlank()) { onDone?.invoke(); return }
+        financeRequested.add(stock.code)
+        b.fetchFinance(secid) { resp ->
+            try {
+                val f = resp?.optString("finance").orEmpty()
+                if (f.isNotBlank() && f != "null") financeCache[stock.code] = f
+            } catch (e: Throwable) {
+                // 忽略
             }
             onDone?.invoke()
         }
