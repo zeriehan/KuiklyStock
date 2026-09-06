@@ -243,7 +243,7 @@ class QuotesPage : Pager() {   // 或继承 base/BasePager
 - 用 **Android Studio**（≥ 2024.2.1）+ Kuikly 插件（≥ 1.1.0），Gradle JDK 切到 **17**。
 - 打开 `KuiklyStock` 根目录，Run `androidApp`；启动入口为四 Tab 主框架 `MainTab`。
 - 需要真实 GLM 时：在 `local.properties` 写入 `GLM_API_KEY=你的key`（已 .gitignore）；不写则自动用离线 Mock，功能演示不受阻。
-- Windows 不做 iOS：`shared/build.gradle.kts` 的 iOS 相关配置保持注释即可。
+- Windows 不做 iOS 真机：`shared/build.gradle.kts` 已含 iOS target(iosX64 等)，但 Windows 无法编 iOS App(需 Mac+Xcode)，不跑 iOS 任务即可，不影响 Android 编译。
 - 命令行编译：`./gradlew --stop` 后 `./gradlew :shared:compileDebugKotlinAndroid`（判 UP-TO-DATE 加 `--rerun-tasks`）；宿主改动用 `:androidApp:compileDebugKotlin`。源码已可通过编译，无需再修脚手架报错。
 
 ---
@@ -262,14 +262,15 @@ class QuotesPage : Pager() {   // 或继承 base/BasePager
 
 ---
 
-## 附：截至 2026-09-04 的实际进度快照（接手 AI 先看这里）
+## 附：实际进度快照（接手 AI 先看这里）
 
-> 上文战略/排期/目录为 8/27 初版，以下为 9/4 实测状态，两者冲突以下文为准。
+> 上文战略/排期/目录为 8/27 初版，以下为实测状态，两者冲突以下文为准。
+> ⏱ 快照最后更新：**2026-09-06**（9/5-9/6 新增见「9/6 增量」小节；更早基线为 9/4）。
 
-### 当前进度
+### 当前进度（截至 9/6）
 - Task01（AI 行情原型）**已收官**：行情页(大盘/板块/个股)/自选/详情/板块详情/我的 全链路可演示，假数据与"待接入"空壳已清。
-- Task02（AI 股票问答）**核心已齐**（均在本地提交、未 push、待真机验证）：AI 回答 Markdown 富文本渲染、提及股横滚窄卡+真实分时、思考态三点动画、选取文字全屏原生选字、富文本字号跟随设置。
-- 源码 40 个 .kt（shared/commonMain 下），另有宿主 androidApp 层 KRBridgeModule（选字/行情桥）。
+- Task02（AI 股票问答）**已收官**：富文本、提及股卡、思考态、选字、量化徽章(详情页+聊天页)、选点问 K 线、开始选股、输入草稿全可演示。
+- 源码 40+ 个 .kt（shared/commonMain 下），另有宿主 androidApp 层 KRBridgeModule（选字/行情/GLM 桥）。
 - **运行验证**：用户只在 Android Studio Build→Rebuild→Run 真机验证；不要主动打 debug APK。
 
 ### 目录结构（9/4 实际）
@@ -295,7 +296,7 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
 - 宿主选字改动：`./gradlew :androidApp:compileDebugKotlin`（不打包 APK）。
 - git push 走 SSH（`GIT_SSH_COMMAND=...` + `git push git@github.com:zeriehan/KuiklyStock.git main`）；当前本地领先若干提交未推。
 
-### 组件状态（9/4，对照 7.3 表）
+### 组件状态（9/6，对照 7.3 表）
 | 组件 | 状态 |
 |------|------|
 | KRTable(KRStockList) | ✅ 行内展开 3 页轮播(分时/AI分析/简况) |
@@ -304,7 +305,19 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
 | KRKLineChart / KRMiniTimeSharing | ✅ 详情页 K线 / 行内分时 |
 | KRStockCard | ✅ AI 提及股**横滚窄卡** |
 | KRMarkdown | ✅ 解析器(core)+渲染器(components)，基于 Kuikly 原生 RichText |
-| KRChatBubble | ⬜ 空目录占位，气泡已在 ChatPage 内联实现，未独立成组件 |
+| KRChatMiniChart | ✅ AI 回复内嵌迷你走势图，点按吸附十字光标 → onAsk 追问；头部分时/日/周/月/年K 可切 |
+| AiVerdict | ✅ AI 结论「风险+买卖」双徽章(详情页+聊天气泡共用)；parseAiVerdict/renderAiVerdictBadges/verdictBadge |
+| KRChatBubble | 🔶 气泡仍在 ChatPage 内联(用户/ AI/富文本/迷你图/徽章/多选/长按)，独立成组件是已知待办 |
+
+### 9/6 增量（9/5-9/6 新增，9/4 快照未含）
+- **AI 量化结论→醒目双徽章**：详情页 AI 卡顶部 + AI 聊天气泡下方渲染「操作建议+操作风险」彩色徽章，结论量化成"买入/持有/卖出 + 低/中/高风险"，金融产品感(commit 见 亮点与创新 第五节)。
+- **选点问 K 线(图→AI 解读)**：详情主图/聊天内嵌迷你图点按十字光标 →「就这点问」→ 跳聊天自动带该点位追问。
+- **行情·个股页「开始选股」**：一键让 AI 做多风格选股(强势题材/低估值/趋势突破)。
+- **聊天输入草稿**：未发送内容退出重进不丢；输入框键盘随内容顶起(Spacer 方案)。
+- **默认主题色改红**：UserSettings 默认 青蓝→红 0xFFFF5A5F(色板首位)。
+- **App 图标**：红渐变+K线阶梯+Kuikly 蓝紫鸟(多档 PNG；注：华为 EMUI launcher 图标显示未最终确认,见诚实备注)。
+- **Mock 兜底增强**：个股聊天 Mock 也补【AI观点】徽章行；兜底文案改准确(不再误导"未配置key")。
+- **多端(加分)已探明放弃**：H5 在 Kuikly 2.7.0+Kotlin2.1.21 无 web 内核(core-render-web 仅到 2.4.0-2.0.21)；鸿蒙需 DevEco+ArkTS 桥重写；iOS 需 Mac。Windows 单机无法"真机跑通"多端,故不做。
 
 ### Task02 关键实现速览（供演示/续做）
 - **富文本**：KRMarkdown 解析 Markdown→块+行内 token；渲染用 Kuikly `RichText+Span`(跨行/自动换行/行内 click)，块=标题/段落/列表/引用/代码；股票名→主题色可点跳详情。字号走 `UserSettings.fs`。
@@ -318,3 +331,4 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
 - **北交所/新股历史日K**：当前免费行情源不提供，详情页该类股票显示诚实占位(分时与实时价真实)，不拿假波浪冒充。
 - **AI 回复延迟取决于 GLM 免费池**：free Flash 池高峰可能慢/限流(HTTP 1305 访问量过大)，代码会自动降级候选模型；整体 15s 超时兜底(超时回本地 Mock，不无限等)。演示/录制建议在 GLM 通畅时进行，避免频繁落到 Mock 造成结论与实时行情脱节。
 - **AI 回答为流式(SSE)逐字蹦出**，仅真实 GLM 走流式；Mock 为本地即时生成(无中间态)。
+- **App 图标(华为 EMUI)**：已配 红渐变+K线阶梯+蓝紫鸟 多档 mipmap PNG + android:label="KuiklyStock"，manifest/资源均正确(aapt 验证 icon 指向正常)；但华为 launcher(UniHome) 桌面仍显示默认拼图，疑似 launcher 图标缓存/机制问题，未最终确认——不影响 App 运行，交付时可说明"图标资源已配置、个别 ROM launcher 显示异常属系统行为"。
