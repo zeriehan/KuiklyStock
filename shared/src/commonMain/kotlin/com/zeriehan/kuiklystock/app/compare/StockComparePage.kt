@@ -4,12 +4,16 @@ import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.module.RouterModule
+import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.*
 import com.zeriehan.kuiklystock.base.BasePager
+import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.components.KRMiniTimeSharing.KRMiniTimeSharing
+import com.zeriehan.kuiklystock.components.KRMarkdown.renderMarkdown
 import com.zeriehan.kuiklystock.components.KRTrendChart.KRTrendChart
 import com.zeriehan.kuiklystock.core.StockColor
 import com.zeriehan.kuiklystock.core.StockData
@@ -40,6 +44,15 @@ internal class StockComparePage : BasePager() {
     internal var currentPage: Int by observable(0)
     /** 每只股票独立的迷你走势周期（"intraday" 分时 / "day" 日K），默认分时 */
     internal var comparePeriods: Map<String, String> by observable(emptyMap())
+    /** 下区对比聊天消息列表（内存，不持久化） */
+    internal var chatMessages: List<CompareChatMsg> by observable(emptyList())
+    /** 输入框文本 */
+    internal var cmpInput: String by observable("")
+    /** 是否正在等 AI 回复 */
+    internal var cmpWaiting: Boolean by observable(false)
+    /** 聊天区域 vif 重建触发器（消息变更/等待态变更时翻转以更新列表） */
+    internal var chatToggle: Boolean by observable(false)
+    internal lateinit var cmpInputRef: ViewRef<InputView>
 
     override fun viewDidLoad() {
         super.viewDidLoad()
@@ -64,6 +77,46 @@ internal class StockComparePage : BasePager() {
         comparePeriods = comparePeriods.toMutableMap().apply { put(code, period) }
         // body 不随 observable 重跑，触发重建以交换图表组件（KRMiniTimeSharing ↔ KRTrendChart）
         uiToggle = !uiToggle
+    }
+
+    /** 发送一条对比问题：构造 prompt（当前对比股 + 实时价/K线摘要 + 用户问题），bridge 调 GLM，
+     *  回填到消息列表；不等/失败则本地兜底。 */
+    internal fun sendCompareAsk() {
+        val q = cmpInput.trim()
+        if (q.isBlank() || cmpWaiting) return
+        val userMsg = CompareChatMsg(role = "user", text = q)
+        chatMessages = chatMessages + userMsg
+        cmpInput = ""
+        cmpInputRef.view?.setText("")
+        chatToggle = !chatToggle
+        cmpWaiting = true
+        val prompt = buildComparePrompt(q)
+        bridgeModule.llmAnalyze(prompt, stream = false, sid = "") { resp ->
+            val text = resp?.optString("text").orEmpty()
+            val reply = if (text.isBlank()) "（AI 未返回，可能是限流或无 Key。请稍后重试。）" else text
+            chatMessages = chatMessages + CompareChatMsg(role = "assistant", text = reply)
+            cmpWaiting = false
+            chatToggle = !chatToggle
+        }
+    }
+
+    /** 构造对比 prompt：列出当前对比股的名称/代码/实时价/涨跌/近 N 日 K 线摘要 + 用户问题 */
+    private fun buildComparePrompt(question: String): String {
+        val sb = StringBuilder("你是一名资深证券分析师。用户正在进行多股对比分析，请基于以下对比股数据专业、客观地回答用户问题。\n\n")
+        sb.append("【对比股数据】\n")
+        compareCodes.forEachIndexed { i, code ->
+            val st = StockData.findByCode(code)
+            sb.append("${i + 1}. ${st.name}($code)\n")
+            sb.append("   实时价：${formatPrice(st.price)}  涨跌：${formatPercent(st.changePercent)}\n")
+            val bars = StockData.getKLine(st, "日", 20)
+            if (bars.isNotEmpty()) {
+                sb.append("   近 ${bars.size} 日收盘：${bars.takeLast(20).joinToString(", ") { formatPrice(it.close) }}\n")
+            }
+            sb.append("\n")
+        }
+        sb.append("【用户问题】\n$question\n\n")
+        sb.append("请基于上述数据给出对比分析、优势/风险对比、给出明确结论建议。")
+        return sb.toString()
     }
 
     override fun body(): ViewBuilder {
@@ -96,12 +149,15 @@ internal class StockComparePage : BasePager() {
             // ===== 分隔（尽量薄，让上区股票与下区聊天贴近）=====
             View { attr { height(4f); backgroundColor(Color(0xFFF2F3F5)) } }
 
-            // ===== 下区（约 3/5）：对比 AI 聊天 =====
-            vif({ ctx.uiToggle }) { val c = this; c.renderCompareChatPlaceholder(ctx) }
-            vif({ !ctx.uiToggle }) { val c = this; c.renderCompareChatPlaceholder(ctx) }
+            // ===== 下区（约 3/5）：对比 AI 聊天（#100）=====
+            vif({ ctx.chatToggle }) { val c = this; c.renderCompareChat(ctx) }
+            vif({ !ctx.chatToggle }) { val c = this; c.renderCompareChat(ctx) }
         }
     }
 }
+
+/** 对比页聊天的消息（内存；user/assistant）。 */
+internal data class CompareChatMsg(val role: String, val text: String)
 
 /** 上区实现（阶段 #98/#99 过渡）：当前对比股横向分页卡片（名+价紧凑行 + 紧凑走势区）。
  *  走势区高度对标自选展开迷你图(KRMiniTimeSharing 122 高)，紧凑不占大块。 */
@@ -190,13 +246,97 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
     }
 }
 
-/** 下区占位（阶段 #98）：对比 AI 聊天区，阶段 #100 接真实聊天。 */
-private fun ViewContainer<*, *>.renderCompareChatPlaceholder(ctx: StockComparePage) {
+/** 下区：对比 AI 聊天。消息列表（user / assistant，assistant 走 Markdown 渲染）+ 输入栏 + 发送。 */
+private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
     View {
-        attr { flex(1f); paddingLeft(10f); paddingRight(10f); paddingBottom(4f) }
+        attr { flex(1f); paddingLeft(10f); paddingRight(10f); paddingTop(6f); paddingBottom(6f); flexDirectionColumn() }
+        // 消息列表
         View {
-            attr { flex(1f); borderRadius(10f); backgroundColor(Color.WHITE); justifyContentCenter(); alignItemsCenter() }
-            Text { attr { text("对比 AI 聊天（待接入）"); fontSize(UserSettings.fs(14f)); color(Color(0xFF999999)) } }
+            attr { flex(1f); borderRadius(10f); backgroundColor(Color.WHITE); padding(10f); marginBottom(8f) }
+            if (ctx.chatMessages.isEmpty()) {
+                Text {
+                    attr {
+                        text("对比 AI 聊天：例如问「这两只谁更值得短期持有？」\n发问后基于当前对比股的实时价 / K 线进行结构化对比解读。")
+                        fontSize(UserSettings.fs(12f)); color(Color(0xFF999999))
+                    }
+                }
+            } else {
+                ctx.chatMessages.forEach { msg ->
+                    if (msg.role == "user") {
+                        View {
+                            attr { marginBottom(8f); flexDirectionRow(); justifyContentFlexEnd() }
+                            View {
+                                attr {
+                                    backgroundColor(Color(0xFF23D3FD)); borderRadius(8f); padding(8f)
+                                    // 限制最大宽度，避免长文本横铺；attr 现读 text
+                                }
+                                Text {
+                                    attr {
+                                        text(msg.text); fontSize(UserSettings.fs(13f)); color(Color.WHITE)
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        View {
+                            attr { marginBottom(8f); backgroundColor(Color(0xFFF7F8FA)); borderRadius(8f); padding(8f) }
+                            // assistant: Markdown 渲染（复用聊天富文本）
+                            renderMarkdown(
+                                text = msg.text,
+                                contentW = ctx.pagerData.pageViewWidth - 60f,
+                                textColor = Color(0xFF222222),
+                                accent = Color(UserSettings.themeColor),
+                                onOpenStock = { code ->
+                                    val st = StockData.findByCode(code)
+                                    if (st.name.isNotEmpty() && st.name != code) {
+                                        val d = JSONObject().put("stockCode", code)
+                                        ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+                if (ctx.cmpWaiting) {
+                    Text { attr { text("AI 思考中…"); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)) } }
+                }
+            }
+        }
+        // 输入栏
+        View {
+            attr { flexDirectionRow(); alignItemsCenter(); height(40f) }
+            View {
+                attr {
+                    flex(1f); height(40f); paddingLeft(10f); paddingRight(10f); borderRadius(20f)
+                    backgroundColor(Color.WHITE); justifyContentCenter()
+                }
+                Input {
+                    ref { ctx.cmpInputRef = it }
+                    attr {
+                        flex(1f); height(36f)
+                        fontSize(UserSettings.fs(13f))
+                        placeholder(if (ctx.cmpInput.isBlank()) "问问对比分析…" else "")
+                        placeholderColor(Color(0xFF999999))
+                    }
+                    event {
+                        textDidChange { ctx.cmpInput = it.text }
+                    }
+                }
+            }
+            View {
+                attr {
+                    height(36f); paddingLeft(14f); paddingRight(14f); borderRadius(18f); marginLeft(8f)
+                    justifyContentCenter(); alignItemsCenter()
+                    backgroundColor(if (ctx.cmpWaiting || ctx.cmpInput.isBlank()) Color(0xFFCCCCCC) else Color(UserSettings.themeColor))
+                }
+                event { click { if (!ctx.cmpWaiting && ctx.cmpInput.isNotBlank()) ctx.sendCompareAsk() } }
+                Text {
+                    attr {
+                        text(if (ctx.cmpWaiting) "发送中…" else "发送")
+                        fontSize(UserSettings.fs(13f)); color(Color.WHITE); fontWeightSemiBold()
+                    }
+                }
+            }
         }
     }
 }
