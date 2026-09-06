@@ -67,9 +67,14 @@ internal class StockComparePage : BasePager() {
         super.viewDidLoad()
         val raw = pageData.params.optString("stocks")
         val list = if (raw.isNotBlank()) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
-        compareCodes = if (list.isNotEmpty()) list
-        // 未由 pageData 指定时，恢复上次持久化的对比股（用户设置过的要记住，重进不重置）
-        else loadSavedCompare()
+        if (list.isNotEmpty()) {
+            // 从选股页「完成」重开进来：直接用新列表并持久化
+            compareCodes = list
+            saveCompare()
+        } else {
+            // 正常/重进：恢复上次持久化的对比股（用户设置过的要记住，不重置默认）
+            compareCodes = loadSavedCompare()
+        }
         // 每只股默认迷你走势周期为「分时」
         comparePeriods = compareCodes.associateWith { "intraday" }
         // 拉各股真实行情/分时/K线(各周期)，保证对比数据真
@@ -204,7 +209,8 @@ internal class StockComparePage : BasePager() {
                     attr { text("股票对比"); fontSize(17f); color(Color(0xFF222222)); fontWeightSemiBold(); marginLeft(8f) }
                 }
                 View { attr { flex(1f) } }
-                // 「应用选股」：选股页返回后读单例应用新列表
+                // 「设置」：跳选股页；「应用选股」：从选股页回来后读单例/持久化应用新列表
+                // （Kuikly 无可靠"子页 close →父页自动 resume"，故设好后在对比页点一次「应用选股」生效并记住）
                 View {
                     attr {
                         paddingLeft(10f); paddingRight(10f); height(30f); borderRadius(15f); marginRight(6f)
@@ -213,7 +219,6 @@ internal class StockComparePage : BasePager() {
                     event { click { ctx.applyPendingPicker() } }
                     Text { attr { text("应用选股"); fontSize(13f); color(Color(0xFF666666)) } }
                 }
-                // 「设置对比股」：跳选股页
                 View {
                     attr {
                         paddingLeft(10f); paddingRight(10f); height(30f); borderRadius(15f)

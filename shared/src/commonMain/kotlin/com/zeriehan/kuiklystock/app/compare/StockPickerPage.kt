@@ -7,6 +7,7 @@ import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.module.RouterModule
+import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.*
 import com.zeriehan.kuiklystock.base.BasePager
@@ -60,10 +61,20 @@ internal class StockPickerPage : BasePager() {
         toggle = !toggle
     }
 
-    /** 完成：写回单例 + 关页 */
+    /** 完成：持久化对比股 + 写回单例 + 返回对比页（对比页恢复时读持久化自动生效，无需再手动应用） */
     internal fun finish() {
-        ComparePicker.pendingCodes = picked.toList()
+        val codes = picked.filter { it.isNotBlank() }
+        ComparePicker.pendingCodes = codes
+        persistCompare(codes)
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).closePage()
+    }
+
+    /** 持久化对比股列表到 SharedPreferences（对比页与重进都从它恢复）。 */
+    private fun persistCompare(codes: List<String>) {
+        try {
+            acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
+                .setItem("kb_compare_codes", codes.joinToString(","))
+        } catch (e: Throwable) { /* 持久化失败不阻断完成 */ }
     }
 
     /** 切榜单 Tab；"全部"(index4) 无需真实榜拉取(展示全池)。 */
