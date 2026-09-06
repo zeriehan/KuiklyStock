@@ -736,7 +736,48 @@ internal fun ViewContainer<*, *>.renderFinanceCard(ctx: StockDetailPage) {
         if (company == null && earn == null) {
             Text { attr { text("暂无基本面数据"); fontSize(13f); color(Color(0xFF999999)) } }
         }
+        // 「让 AI 解读基本面」：把 F10 关键财务摘要拼进追问，跳聊天页自动 ask（模型据此解读，无需额外改 LLM 链路）
+        if (company != null || earn != null) {
+            Button {
+                attr {
+                    size(210f, 36f); marginTop(12f); borderRadius(18f)
+                    backgroundColor(Color(UserSettings.themeColor))
+                    titleAttr { text("让 AI 解读这家公司 →"); fontSize(14f); color(Color.WHITE) }
+                }
+                event { click {
+                    ctx.askFinanceByAI(root)
+                } }
+            }
+        }
     }
+}
+
+/** 基于 F10 JSON 构造基本面追问并跳聊天页（Chat 收 stockCode+prompt 自动 ask）。 */
+internal fun StockDetailPage.askFinanceByAI(root: JSONObject) {
+    val st = liveStock ?: return
+    val c = st.code
+    if (c.isBlank()) { bridgeModule.toast("暂无股票"); return }
+    val sb = StringBuilder("请从基本面角度专业解读 ${st.name}($c) 这家公司的基本面是否健康，并给出看法：\n")
+    val company = root.optJSONObject("company")
+    if (company != null) {
+        val ind = company.optString("industry")
+        if (ind.isNotBlank()) sb.append("· 所属行业：$ind\n")
+        val emp = company.optLong("employees", 0)
+        if (emp > 0) sb.append("· 员工数：$emp 人\n")
+    }
+    val earn = root.optJSONObject("earnings")
+    if (earn != null) {
+        sb.append("· 报告期：${earn.optString("reportType")}(${earn.optString("reportDate")})\n")
+        earn.optLong("netProfit", 0).takeIf { it != 0L }?.let { sb.append("· 归母净利：$it 元(同比 ${twoDec(earn.optDouble("profitYoy", 0.0))}%)\n") }
+        earn.optLong("revenue", 0).takeIf { it != 0L }?.let { sb.append("· 营收：$it 元(同比 ${twoDec(earn.optDouble("revYoy", 0.0))}%)\n") }
+        earn.optDouble("eps", 0.0).takeIf { it != 0.0 }?.let { sb.append("· 每股收益 EPS：${twoDec(it)}\n") }
+        earn.optDouble("roe", 0.0).takeIf { it != 0.0 }?.let { sb.append("· ROE(加权)：${twoDec(it)}%\n") }
+    }
+    sb.append("\n请结合盈利质量、成长性、估值与风险，简明给出基本面结论。")
+    val data = JSONObject()
+    data.put("stockCode", c)
+    data.put("prompt", sb.toString())
+    acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Chat", data)
 }
 
 private fun signPct(v: Double): String = if (v == 0.0) "--" else (if (v > 0) "+" else "") + twoDec(v) + "%"
