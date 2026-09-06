@@ -87,6 +87,12 @@ internal class StockDetailPage : BasePager() {
     internal var liveStock: Stock? by observable(null)
     /** 真实日K 行情源未返回（北交所/超新股）：详情页日K 卡片诚实占位而非显示本地假波浪 */
     internal var klineMissing: Boolean by observable(false)
+    /** 基本面(F10)：公司概况+最新业绩的 JSON 字符串；空串=未拉到/不支持(指数等)，不显示区块 */
+    internal var financeText: String by observable("")
+    /** 基本面加载中 */
+    internal var financeLoading: Boolean by observable(false)
+    /** 已尝试过拉基本面(避免重复拉) */
+    private var financeRequested: Boolean = false
 
     /**
      * 执行一次 AI 分析。
@@ -156,6 +162,23 @@ internal class StockDetailPage : BasePager() {
                 }
                 StockData.loadKline(st, "日", 80) { klineMissing = StockData.isKlineMissing(st.code) }
             }
+            // 拉基本面(F10 公司概况+最新业绩)：仅非指数个股(指数无财务)，失败隐藏(不崩)
+            if (!st.isIndex) requestFinance(st)
+        }
+    }
+
+    /** 拉一次个股基本面(F10)。幂等(仅首调)，指数/桥不可用/数据空 → financeText 留空(区块不显示) */
+    private fun requestFinance(stock: Stock) {
+        if (financeRequested) return
+        financeRequested = true
+        val bridge = Utils.currentBridgeModule()
+        val secid = StockData.secidOf(stock)
+        if (secid.isBlank()) return // 行情源不支持的个股(老三板等)，无 secid
+        financeLoading = true
+        bridge.fetchFinance(secid) { resp ->
+            financeLoading = false
+            val f = resp?.optString("finance").orEmpty()
+            if (f.isNotBlank() && f != "null") financeText = f
         }
     }
 
@@ -591,6 +614,11 @@ internal class StockDetailPage : BasePager() {
                     }
                 }
 
+                // 基本面卡（F10 真实数据：公司概况 + 最新业绩报表；拉到才显示，失败/指数隐藏）
+                vif({ ctx.financeText.isNotBlank() }) {
+                    renderFinanceCard(ctx)
+                }
+
                 View { attr { height(16f) } }
             }
             } catch (e: Throwable) {
@@ -627,6 +655,94 @@ internal fun ViewContainer<*, *>.renderWatchButton(ctx: StockDetailPage, code: S
                 color(if (watched) Color(0xFFE58A00) else Color.WHITE)
             }
         }
+    }
+}
+
+/** 大额资金(元) → "x.x 亿"，不足亿 → "x 万"；0/异常 → "--"（KMP 安全） */
+private fun fmtMoney(v: Long): String = when {
+    v <= 0L -> "--"
+    v >= 100_000_000L -> trim1(v / 100_000_000.0) + " 亿"
+    else -> trim1(v / 10_000.0) + " 万"
+}
+
+/** Double → 最多 1 位小数（KMP 安全，不用 JVM 的 String.format） */
+private fun trim1(v: Double): String {
+    if (!v.isFinite()) return "--"
+    val r = kotlin.math.round(v * 10.0) / 10.0
+    return if (r == r.toLong().toDouble()) r.toLong().toString() else r.toString()
+}
+
+/** 详情页「基本面」卡（F10 真实：公司概况 + 最新业绩）。financeText 为宿主回传的 JSON 字符串；空串不调用本函数 */
+internal fun ViewContainer<*, *>.renderFinanceCard(ctx: StockDetailPage) {
+    val ft = ctx.financeText
+    if (ft.isBlank()) return
+    val root = try { JSONObject(ft) } catch (e: Throwable) { return }
+    val company = root.optJSONObject("company")
+    val earn = root.optJSONObject("earnings")
+    View {
+        attr { margin(12f); padding(12f); backgroundColor(Color.WHITE); borderRadius(12f) }
+        // 头部
+        View {
+            attr { flexDirectionRow(); alignItemsCenter() }
+            View { attr { width(18f); height(18f); borderRadius(9f); backgroundColor(Color(0xFFFCE4E4)); marginRight(6f) } }
+            Text { attr { text("基本面 · F10"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+            View { attr { flex(1f) } }
+            if (earn != null) Text {
+                attr { text(earn.optString("reportType", "")); fontSize(12f); color(Color(0xFF999999)) }
+            }
+        }
+        // 公司概况
+        if (company != null) {
+            company.optString("profile").takeIf { it.isNotBlank() }?.let { profile ->
+                Text {
+                    attr {
+                        text(if (profile.length > 90) profile.take(90) + "…" else profile)
+                        fontSize(12f); color(Color(0xFF666666)); lineHeight(18f); marginTop(8f)
+                        // 最多 3 行，超长省略号
+                    }
+                }
+            }
+            financeRow("董事长", company.optString("chairman"))
+            company.optString("manager").takeIf { it != company.optString("chairman") }?.let { financeRow("总经理", it) }
+            financeRow("所属行业", company.optString("industry"))
+            val emp = company.optLong("employees", 0)
+            if (emp > 0) financeRow("员工数", "$emp 人")
+        }
+        // 最新业绩
+        if (earn != null) {
+            View { attr { height(1f); backgroundColor(Color(0xFFF0F0F0)); marginTop(8f); marginBottom(4f) } }
+            earn.optLong("netProfit", 0).takeIf { it != 0L }?.let { financeRow("归母净利润", fmtMoney(it) + "  (" + signPct(earn.optDouble("profitYoy", 0.0)) + ")") }
+            earn.optLong("revenue", 0).takeIf { it != 0L }?.let { financeRow("营业收入", fmtMoney(it) + "  (" + signPct(earn.optDouble("revYoy", 0.0)) + ")") }
+            financeRow("每股收益 EPS", num(earn.optDouble("eps", 0.0)))
+            financeRow("ROE(加权)", signPct(earn.optDouble("roe", 0.0)))
+            financeRow("每股净资产", num(earn.optDouble("bps", 0.0)))
+            earn.optString("dividend").takeIf { it.isNotBlank() }?.let { financeRow("分红", it) }
+        }
+        if (company == null && earn == null) {
+            Text { attr { text("暂无基本面数据"); fontSize(13f); color(Color(0xFF999999)) } }
+        }
+    }
+}
+
+private fun signPct(v: Double): String = if (v == 0.0) "--" else (if (v > 0) "+" else "") + twoDec(v) + "%"
+private fun num(v: Double): String = if (v == 0.0) "--" else twoDec(v)
+
+/** Double → 保留 2 位小数（KMP 安全，不用 JVM 的 String.format） */
+private fun twoDec(v: Double): String {
+    if (!v.isFinite()) return "0.00"
+    val sign = if (v < 0) "-" else ""
+    val abs = kotlin.math.abs(v)
+    val intPart = abs.toInt()
+    val dec = ((abs - intPart) * 100).toInt().coerceIn(0, 99)
+    return sign + intPart + "." + (if (dec < 10) "0$dec" else dec.toString())
+}
+
+/** 卡片内一行：左标签 + 右值 */
+private fun ViewContainer<*, *>.financeRow(label: String, value: String) {
+    View {
+        attr { flexDirectionRow(); marginTop(7f) }
+        Text { attr { text(label); fontSize(12f); color(Color(0xFF999999)); flex(1f); marginRight(12f) } }
+        Text { attr { text(value); fontSize(13f); color(Color(0xFF222222)); textAlignRight() } }
     }
 }
 
