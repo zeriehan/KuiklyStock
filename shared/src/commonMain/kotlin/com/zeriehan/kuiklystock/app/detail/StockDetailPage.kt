@@ -48,7 +48,7 @@ internal class StockDetailPage : BasePager() {
      *    无对应数据源；芯片却照常提供，用户点开只能看到空卡——属于"宣传了不存在的功能"。
      *    已移除：与其展示空壳，不如只保留真正有内容的模块（必要时实现数据源后再加回）。
      */
-    private enum class DModule { AI, PROFILE, FINANCE, F10 }
+    internal enum class DModule { AI, PROFILE, FINANCE, F10 }
     private val moduleLabels = mapOf(
         DModule.AI to "AI分析",
         DModule.PROFILE to "简况",
@@ -56,7 +56,7 @@ internal class StockDetailPage : BasePager() {
         DModule.FINANCE to "盘口",
         DModule.F10 to "基本面",
     )
-    private var modules: List<DModule> by observable(
+    internal var modules: List<DModule> by observable(
         listOf(DModule.AI, DModule.PROFILE, DModule.FINANCE, DModule.F10)
     )
 
@@ -475,28 +475,14 @@ internal class StockDetailPage : BasePager() {
                 Scroller {
                     attr { flexDirectionRow(); height(52f); padding(12f); alignItemsCenter() }
                     ctx.moduleLabels.forEach { (m, label) ->
-                        // 「基本面」芯片仅在该股拉到 F10 数据时才出现（指数/失败不出现，无从开关）
-                        if (m == DModule.F10 && ctx.financeText.isBlank()) return@forEach
-                        View {
-                            attr {
-                                paddingLeft(12f); paddingRight(12f); height(28f); borderRadius(14f)
-                                marginRight(8f); justifyContentCenter(); alignItemsCenter()
-                                val on = ctx.modules.contains(m)
-                                backgroundColor(if (on) Color(UserSettings.themeColor) else Color.WHITE)
-                                border(if (on) Border(0f, BorderStyle.SOLID, Color(0)) else Border(1f, BorderStyle.SOLID, Color(0xFFDDDDDD)))
+                        // 「基本面」芯片仅在该股拉到 F10 数据(非空)时才出现；用 vif 包住让 financeText
+                        // 异步到达后能重建出现（body 级 return@forEach 只在构建时求值，不会随 financeText 出现）
+                        if (m == DModule.F10) {
+                            vif({ ctx.financeText.isNotBlank() }) {
+                                moduleChip(ctx, m, label)
                             }
-                            event { click {
-                                val on = ctx.modules.contains(m)
-                                ctx.modules = if (on) ctx.modules - m else ctx.modules + m
-                            } }
-                            Text {
-                                attr {
-                                    val on = ctx.modules.contains(m)
-                                    text(label + if (on) " ✓" else "")
-                                    fontSize(12f)
-                                    color(if (on) Color.WHITE else Color(0xFF666666))
-                                }
-                            }
+                        } else {
+                            moduleChip(ctx, m, label)
                         }
                     }
                 }
@@ -674,6 +660,31 @@ private fun trim1(v: Double): String {
     if (!v.isFinite()) return "--"
     val r = kotlin.math.round(v * 10.0) / 10.0
     return if (r == r.toLong().toDouble()) r.toLong().toString() else r.toString()
+}
+
+/** 单个模块芯片（点选增删模块）。文件级扩展：on 态在 attr/event 闭包内现读 ctx.modules 即时刷新 */
+internal fun ViewContainer<*, *>.moduleChip(ctx: StockDetailPage, m: StockDetailPage.DModule, label: String) {
+    View {
+        attr {
+            paddingLeft(12f); paddingRight(12f); height(28f); borderRadius(14f)
+            marginRight(8f); justifyContentCenter(); alignItemsCenter()
+            val on = ctx.modules.contains(m)
+            backgroundColor(if (on) Color(UserSettings.themeColor) else Color.WHITE)
+            border(if (on) Border(0f, BorderStyle.SOLID, Color(0)) else Border(1f, BorderStyle.SOLID, Color(0xFFDDDDDD)))
+        }
+        event { click {
+            val on = ctx.modules.contains(m)
+            ctx.modules = if (on) ctx.modules - m else ctx.modules + m
+        } }
+        Text {
+            attr {
+                val on = ctx.modules.contains(m)
+                text(label + if (on) " ✓" else "")
+                fontSize(12f)
+                color(if (on) Color.WHITE else Color(0xFF666666))
+            }
+        }
+    }
 }
 
 /** 详情页「基本面」卡（F10 真实：公司概况 + 最新业绩）。financeText 为宿主回传的 JSON 字符串；空串不调用本函数 */
