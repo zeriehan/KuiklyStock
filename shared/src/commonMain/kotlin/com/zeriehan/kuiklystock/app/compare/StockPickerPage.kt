@@ -106,12 +106,12 @@ internal class StockPickerPage : BasePager() {
                     margin(12f); height(40f); borderRadius(20f); paddingLeft(14f); paddingRight(14f)
                     backgroundColor(Color.WHITE); flexDirectionRow(); alignItemsCenter()
                 }
-                Input {
+                // 搜索输入：依赖 Input 原生渲染。⚠️ 必须显式设置 color()，否则原生输入框文字可能透明/白看不见。
+Input {
                     ref { ctx.inputRef = it }
                     attr {
                         flex(1f); height(36f); fontSize(UserSettings.fs(14f))
-                        // 双向同步：attr 现读 ctx.query 让 native 输入框与 observable 保持一致
-                        text(ctx.query)
+                        color(Color(0xFF222222))
                         placeholder(if (ctx.query.isBlank()) "搜索股票名/代码…" else "")
                         placeholderColor(Color(0xFF999999))
                     }
@@ -125,27 +125,25 @@ internal class StockPickerPage : BasePager() {
     }
 }
 
-/** 选股页主体列表：上方「已选」固定，下方「搜索结果」flex 滚动（键盘撑起时仍可见）。 */
+/** 选股页主体列表：上方「已选」固定（仅在 picked 非空时渲染，避免 0/空态矛盾），下方「搜索结果」flex 滚动。 */
 private fun ViewContainer<*, *>.renderPickerContent(ctx: StockPickerPage) {
     // 已选段（固定，不滚动；键盘弹起时仍可见）
-    View {
-        attr { paddingLeft(12f); paddingRight(12f); paddingBottom(8f) }
-        Text {
-            attr {
-                text("已选 ${ctx.picked.size} 只（点「×」删除）")
-                fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginBottom(8f); marginLeft(4f)
-            }
-        }
-        if (ctx.picked.isEmpty()) {
+    // ⚠️ 仅当 picked 真正非空时才渲染「已选 N 只 + 列表」；否则只显示一次空态提示。
+    // （防止 picked=2 个空字符串这种诡异中间态让标题说 2 只但 forEach 渲染异常。）
+    if (ctx.picked.isNotEmpty()) {
+        View {
+            attr { paddingLeft(12f); paddingRight(12f); paddingBottom(8f) }
             Text {
                 attr {
-                    text("尚未选股，请在搜索框输入股票名/代码后点「＋」加入对比。")
-                    fontSize(UserSettings.fs(13f)); color(Color(0xFFBBBBBB)); marginLeft(4f)
+                    text("已选 ${ctx.picked.size} 只（点「×」删除）")
+                    fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)); marginBottom(8f); marginLeft(4f)
                 }
             }
-        } else {
             ctx.picked.forEachIndexed { idx, code ->
+                if (code.isBlank()) return@forEachIndexed
                 val st = StockData.findByCode(code)
+                // 防御：findByCode 对未知 code 回退到上证指数，避免误显示。空名字也跳过。
+                if (st.code != code) return@forEachIndexed
                 View {
                     attr {
                         backgroundColor(Color.WHITE); borderRadius(8f); padding(10f); marginBottom(6f)
@@ -168,6 +166,17 @@ private fun ViewContainer<*, *>.renderPickerContent(ctx: StockPickerPage) {
                         event { click { ctx.removeAt(idx) } }
                         Text { attr { text("×"); fontSize(16f); color(Color(0xFF666666)); fontWeightSemiBold() } }
                     }
+                }
+            }
+        }
+    } else {
+        // picked 真正为空：显示一次性友好提示
+        View {
+            attr { paddingLeft(16f); paddingRight(16f); paddingTop(8f) }
+            Text {
+                attr {
+                    text("尚未选股，请在搜索框输入股票名/代码后点「＋」加入对比。")
+                    fontSize(UserSettings.fs(13f)); color(Color(0xFFBBBBBB)); marginLeft(4f)
                 }
             }
         }
