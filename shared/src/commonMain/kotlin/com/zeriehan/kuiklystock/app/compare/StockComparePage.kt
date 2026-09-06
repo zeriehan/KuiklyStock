@@ -86,11 +86,11 @@ internal class StockComparePage : BasePager() {
         uiToggle = !uiToggle
     }
 
-    /** 打开选股页：写单例初始 codes + 替换意图，openPage StockPicker。 */
+    /** 打开选股页：通过 pageData 把当前对比 codes 直接传给 picker，不依赖单例（避免单例残留/丢值的隐患）。 */
     internal fun openComparePicker(replaceIndex: Int) {
-        ComparePicker.initialCodes = compareCodes.toList()
         ComparePicker.pendingReplaceIndex = replaceIndex
-        val d = JSONObject().put("mode", "compare")
+        val d = JSONObject()
+        d.put("initialCodes", compareCodes.joinToString(","))
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockPicker", d)
     }
 

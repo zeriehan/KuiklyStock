@@ -42,7 +42,11 @@ internal class StockPickerPage : BasePager() {
 
     override fun viewDidLoad() {
         super.viewDidLoad()
-        picked = ComparePicker.initialCodes.toList()
+        // 从 pageData 读初始 codes（对比页 openPage 时传过来）。空则默认两支热门股（茅台/五粮液）让用户开页即有可选项。
+        val fromPageData = pageData.params.optString("initialCodes")
+        val seed = if (fromPageData.isNotBlank()) fromPageData.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                   else listOf("600519", "000858")
+        picked = seed
         toggle = !toggle
     }
 
@@ -182,16 +186,19 @@ private fun ViewContainer<*, *>.renderPickerContent(ctx: StockPickerPage) {
         }
     }
 
-    // 搜索结果段（flex 1 滚动，键盘弹起时仍占余下空间；查询空时不显示）
+    // 搜索结果段（flex 1 滚动；加 minHeight(160f) 保键盘弹起时仍有可见区域，否则可能被压扁不可见）
     if (ctx.query.isNotBlank()) {
         Scroller {
-            attr { flex(1f); flexDirectionColumn(); paddingLeft(12f); paddingRight(12f); paddingBottom(12f) }
+            attr {
+                flex(1f); minHeight(160f)
+                flexDirectionColumn(); paddingLeft(12f); paddingRight(12f); paddingBottom(12f)
+            }
             vif({ ctx.toggle }) { val c = this; c.renderPickerHits(ctx) }
             vif({ !ctx.toggle }) { val c = this; c.renderPickerHits(ctx) }
         }
     } else {
         // 查询空：占满剩余空间但内容为空，避免键盘抬起时整页被压缩到看不见
-        View { attr { flex(1f) } }
+        View { attr { flex(1f); minHeight(120f) } }
     }
 }
 
