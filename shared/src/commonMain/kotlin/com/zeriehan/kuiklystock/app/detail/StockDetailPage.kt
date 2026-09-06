@@ -142,6 +142,9 @@ internal class StockDetailPage : BasePager() {
     override fun viewDidLoad() {
         super.viewDidLoad()
         watchlistCodes = UserStockStore.loadWatchlist(acquireModule(SharedPreferencesModule.MODULE_NAME))
+        // ⚠️ 翻转 watchUIVersion：viewDidLoad 晚于 body 首次构建时，确保右上角「加自选」按钮
+        //    用加载好的 watchlistCodes 重建，避免已自选的股首进详情仍误显「加自选」。
+        watchUIVersion = !watchUIVersion
         curCode = pageData.params.optString("stockCode")
         liveStock = if (curCode.isNotBlank()) StockData.findByCode(curCode) else null
         // 行情(报价)刷新到达时，把顶栏/大字价同步到最新真实价，避免显示过期 mock 价而与真实分时/K线不一致
@@ -320,9 +323,8 @@ internal class StockDetailPage : BasePager() {
                 }
                 Text { attr { text(stock.code); fontSize(12f); color(Color(0xFF999999)); marginLeft(8f) } }
                 View { attr { flex(1f) } }
-                // 加自选按钮（随 watchUIVersion 翻转刷新选中态；body 不随 observable 重跑，故需翻转）
-                vif({ ctx.watchUIVersion }) { val c = this; c.renderWatchButton(ctx, code) }
-                vif({ !ctx.watchUIVersion }) { val c = this; c.renderWatchButton(ctx, code) }
+                // 加自选按钮（attr 内现读 watchlistCodes → 随自选集合变化即时刷新，无需 vif 翻转）
+                renderWatchButton(ctx, code)
             }
 
             // ===== 滚动内容 =====
@@ -624,19 +626,21 @@ internal class StockDetailPage : BasePager() {
     }
 }
 
-/** 详情页「加自选」按钮（文件级：在 vif 翻转闭包内调用，须为文件级扩展函数）。
- *  随 watchUIVersion 翻转重建以刷新选中态（body 不随 observable 重跑）。 */
+/** 详情页「加自选」按钮。⚠️ 选中态须在每个 attr 闭包内「现读」watchlistCodes(observable)——
+ *  Kuikly 响应式只重跑读了 observable 的 attr 闭包；提成局部 val 不会随 watchlistCodes 刷新。
+ *  这样首次进详情时按钮随已加载的自选集合自动正确，点击切换也即时变色，无需依赖 vif 翻转。 */
 internal fun ViewContainer<*, *>.renderWatchButton(ctx: StockDetailPage, code: String) {
-    val watched = ctx.watchlistCodes.contains(code)
     View {
         attr {
             height(32f); paddingLeft(14f); paddingRight(14f); borderRadius(16f)
+            val watched = ctx.watchlistCodes.contains(code)
             backgroundColor(if (watched) Color(0xFFFFF4E0) else Color(UserSettings.themeColor))
             flexDirectionRow(); alignItemsCenter(); justifyContentCenter(); marginRight(8f)
         }
         event { click { ctx.toggleWatch(code) } }
         Text {
             attr {
+                val watched = ctx.watchlistCodes.contains(code)
                 text(if (watched) "★ 已自选" else "☆ 加自选")
                 fontSize(13f)
                 color(if (watched) Color(0xFFE58A00) else Color.WHITE)
