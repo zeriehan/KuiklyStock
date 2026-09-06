@@ -377,7 +377,7 @@ internal class StockDetailPage : BasePager() {
                                 attr {
                                     paddingLeft(10f); paddingRight(10f); height(24f); borderRadius(12f)
                                     marginRight(8f); justifyContentCenter(); alignItemsCenter()
-                                    backgroundColor(if (ctx.selectedPeriod == i) Color(0xFF23D3FD) else Color(0xFFF2F3F5))
+                                    backgroundColor(if (ctx.selectedPeriod == i) Color(UserSettings.themeColor) else Color(0xFFF2F3F5))
                                 }
                                 event { click {
                                     ctx.selectedPeriod = i
@@ -410,7 +410,7 @@ internal class StockDetailPage : BasePager() {
                                     attr {
                                         paddingLeft(10f); paddingRight(10f); height(24f); borderRadius(12f)
                                         marginRight(8f); justifyContentCenter(); alignItemsCenter()
-                                        backgroundColor(if (ctx.selectedIndicator == ind) Color(0xFF23D3FD) else Color(0xFFF2F3F5))
+                                        backgroundColor(if (ctx.selectedIndicator == ind) Color(UserSettings.themeColor) else Color(0xFFF2F3F5))
                                     }
                                     event { click { ctx.applyIndicator(stock, ind) } }
                                     Text {
@@ -482,7 +482,7 @@ internal class StockDetailPage : BasePager() {
                                 paddingLeft(12f); paddingRight(12f); height(28f); borderRadius(14f)
                                 marginRight(8f); justifyContentCenter(); alignItemsCenter()
                                 val on = ctx.modules.contains(m)
-                                backgroundColor(if (on) Color(0xFF23D3FD) else Color.WHITE)
+                                backgroundColor(if (on) Color(UserSettings.themeColor) else Color.WHITE)
                                 border(if (on) Border(0f, BorderStyle.SOLID, Color(0)) else Border(1f, BorderStyle.SOLID, Color(0xFFDDDDDD)))
                             }
                             event { click {
@@ -550,7 +550,7 @@ internal class StockDetailPage : BasePager() {
                         Button {
                             attr {
                                 size(200f, 36f); marginTop(12f); borderRadius(18f)
-                                backgroundColor(Color(0xFF23D3FD))
+                                backgroundColor(Color(UserSettings.themeColor))
                                 titleAttr { text("深入聊聊这只股票 →"); fontSize(14f); color(Color.WHITE) }
                             }
                             event {
@@ -648,7 +648,7 @@ internal fun ViewContainer<*, *>.renderWatchButton(ctx: StockDetailPage, code: S
     View {
         attr {
             height(32f); paddingLeft(14f); paddingRight(14f); borderRadius(16f)
-            backgroundColor(if (watched) Color(0xFFFFF4E0) else Color(0xFF23D3FD))
+            backgroundColor(if (watched) Color(0xFFFFF4E0) else Color(UserSettings.themeColor))
             flexDirectionRow(); alignItemsCenter(); justifyContentCenter(); marginRight(8f)
         }
         event { click { ctx.toggleWatch(code) } }

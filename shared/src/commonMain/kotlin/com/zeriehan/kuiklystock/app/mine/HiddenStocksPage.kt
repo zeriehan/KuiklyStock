@@ -13,6 +13,7 @@ import com.tencent.kuikly.core.views.compose.Button
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.core.StockData
+import com.zeriehan.kuiklystock.core.UserSettings
 import com.zeriehan.kuiklystock.core.UserStockStore
 
 /**
@@ -174,7 +175,7 @@ private fun ViewContainer<*, *>.renderHiddenList(ctx: HiddenStocksPage, contentW
                 Button {
                     attr {
                         size(56f, 28f); borderRadius(14f); backgroundColor(Color(0xFFF2F3F5))
-                        titleAttr { text("恢复"); fontSize(13f); color(Color(0xFF23D3FD)) }
+                        titleAttr { text("恢复"); fontSize(13f); color(Color(UserSettings.themeColor)) }
                     }
                     event {
                         click {
@@ -195,7 +196,7 @@ private fun ViewContainer<*, *>.renderHiddenList(ctx: HiddenStocksPage, contentW
             alignItemsCenter(); justifyContentCenter()
         }
         event { click { ctx.unhideAll() } }
-        Text { attr { text("全部恢复"); fontSize(15f); color(Color(0xFF23D3FD)) } }
+        Text { attr { text("全部恢复"); fontSize(15f); color(Color(UserSettings.themeColor)) } }
     }
     View { attr { height(24f) } }
 }

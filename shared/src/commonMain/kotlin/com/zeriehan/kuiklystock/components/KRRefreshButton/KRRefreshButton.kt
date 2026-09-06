@@ -3,6 +3,7 @@ package com.zeriehan.kuiklystock.components.KRRefreshButton
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.*
+import com.zeriehan.kuiklystock.core.UserSettings
 
 /**
  * 圆形「重试 / 刷新」图标（透明背景，只显示图标本身，无外圈按钮）。
@@ -27,7 +28,7 @@ internal fun ViewContainer<*, *>.KRRefreshButton(
         event { click { if (!loadingGetter()) onClick() } }
         Canvas({ attr { width(22f); height(22f) } }) { c, w, h ->
             val loading = loadingGetter()
-            val col = if (loading) Color(0xFFBBBBBB) else Color(0xFF23D3FD)
+            val col = if (loading) Color(0xFFBBBBBB) else Color(UserSettings.themeColor)
             val cx = w / 2f
             val cy = h / 2f
             val r = (if (w < h) w else h) / 2f - 2f

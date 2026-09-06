@@ -107,7 +107,7 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                             val expanded = ctx.expandedIndex == index
                             marginTop(if (expanded) 8f else 0f)
                             marginBottom(if (expanded) 8f else 0f)
-                            border(if (expanded) Border(1.5f, BorderStyle.SOLID, Color(0xFF23D3FD)) else Border(0f, BorderStyle.SOLID, Color(0)))
+                            border(if (expanded) Border(1.5f, BorderStyle.SOLID, Color(UserSettings.themeColor)) else Border(0f, BorderStyle.SOLID, Color(0)))
                         }
                         // ===== 展开态（行内，vif 瞬时挂载，向上展开、挤开上方行；用户放弃动画）=====
                         // 向上展开：展开块长在折叠行「上方」，底行展开也不会被底部 Tab 遮挡，
