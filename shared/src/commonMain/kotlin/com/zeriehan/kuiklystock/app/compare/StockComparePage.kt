@@ -24,6 +24,7 @@ import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 import com.zeriehan.kuiklystock.core.llm.ChatStore
+import com.zeriehan.kuiklystock.core.llm.ChatSync
 
 /**
  * 「股票对比」页（#96）：多股并排对比 + AI 对比解读。
@@ -71,6 +72,11 @@ internal class StockComparePage : BasePager() {
     internal var cmpContentH: Float = 0f
     /** 消息流视口高度（scroll 事件回写） */
     internal var cmpViewportH: Float = 0f
+    /** 页面是否已销毁：销毁后回调/监听只写单例，不再碰本页 observable（防后台完成回复丢失） */
+    private var compDestroyed: Boolean = false
+    /** ChatSync 监听（须为稳定同一对象，pageWillDestroy 里才能精确移除）：
+     *  后台请求完成/任何会话变化落盘后 bump，本页(若存活)重读 ChatStore 刷新，实现"退出重进后台仍回复" */
+    private val cmpChatListener: () -> Unit = { syncCompFromStore() }
 
     override fun viewDidLoad() {
         super.viewDidLoad()
@@ -79,12 +85,10 @@ internal class StockComparePage : BasePager() {
         compareCodes = loadSavedCompare()
         // 每只股默认迷你走势周期为「分时」
         comparePeriods = compareCodes.associateWith { "intraday" }
-        // 恢复对比聊天历史（持久化于 ChatStore.COMPARE_CONV，主框架已 attach 落盘）：
-        // 退出对比页再重进时把上次的对比问答补回，不因页面销毁而丢
-        val cmpHist = ChatStore.messages(ChatStore.COMPARE_CONV)
-        if (cmpHist.isNotEmpty() && chatMessages.isEmpty()) {
-            chatMessages = cmpHist.map { CompareChatMsg(it.role, it.text) }
-        }
+        // 聊天消息/等待态统一由 ChatStore(COMPARE_CONV) 驱动：进入即同步历史 + 恢复等待态
+        // （退出对比页后 AI 若仍在后台跑，isPending=true；完成后落盘 bump → 监听刷新显示，见 syncCompFromStore）
+        ChatSync.addListener(cmpChatListener)
+        syncCompFromStore()
         // 拉各股真实行情/分时/K线(各周期)，保证对比数据真
         compareCodes.forEach { code ->
             val st = StockData.findByCode(code)
@@ -121,6 +125,33 @@ internal class StockComparePage : BasePager() {
             }
             uiToggle = !uiToggle
             bridgeModule.toast("已应用对比股")
+        }
+        // 重新出现(返回本页/重进前台)：期间后台若已把 AI 回复落盘，重新同步一次（配合 ChatSync 监听双保险）
+        syncCompFromStore()
+    }
+
+    /** 页面销毁：解除监听 + 标记已销毁，后续回调只写单例(不碰本页 observable) */
+    override fun pageWillDestroy() {
+        compDestroyed = true
+        ChatSync.removeListener(cmpChatListener)
+        super.pageWillDestroy()
+    }
+
+    /**
+     * 聊天消息/等待态从持久真源 ChatStore(COMPARE_CONV) 单向同步到本页 UI。
+     * 由 ChatSync 监听、进入页面、pageDidAppear 驱动；本页销毁后不再被调（监听已移除）。
+     * 关键作用：退出对比页时 AI 还在后台跑 → 完成后落盘 + bump → 重进(新实例)监听触发这里刷新，
+     * 实现"发消息后退出、再进入，AI 后台回复仍会显示"。
+     */
+    private fun syncCompFromStore() {
+        if (compDestroyed) return
+        val hist = ChatStore.messages(ChatStore.COMPARE_CONV)
+        val msgs = hist.map { CompareChatMsg(it.role, it.text) }
+        val waiting = ChatStore.isPending(ChatStore.COMPARE_CONV)
+        if (msgs != chatMessages || waiting != cmpWaiting) {
+            chatMessages = msgs
+            cmpWaiting = waiting
+            chatToggle = !chatToggle  // vif 重建消息区
         }
     }
 
@@ -191,25 +222,32 @@ internal class StockComparePage : BasePager() {
         sendCompareQuestion(q)
     }
 
-    /** 发送一条对比问题并请求 AI（引导 chips / 手动输入共用；cmpWaiting 时忽略）。 */
+    /** 发送一条对比问题并请求 AI（引导 chips / 手动输入共用；cmpWaiting 时忽略）。
+     *  消息与等待态一律写持久真源 ChatStore(COMPARE_CONV)，UI 靠 syncCompFromStore（ChatSync.bump 驱动）刷新。
+     *  这样即便用户在 AI 回复前退出对比页，请求仍经常驻根页桥在后台完成并落盘；
+     *  重进(新实例)监听 ChatSync → syncCompFromStore 显示回复，实现"退出后后台继续处理"。 */
     internal fun sendCompareQuestion(q: String) {
         if (q.isBlank() || cmpWaiting) return
-        val userMsg = CompareChatMsg(role = "user", text = q)
-        chatMessages = chatMessages + userMsg
-        // 落盘（ChatStore 主框架已 attach）→ 退出重进仍保留
-        ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("user", q))
-        chatToggle = !chatToggle
         cmpWaiting = true
+        ChatStore.setPending(ChatStore.COMPARE_CONV, true)
+        // 用户消息落盘（先落盘再 bump，避免依赖本页存活）
+        ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("user", q))
+        ChatSync.bump()  // 本页监听 → syncCompFromStore 立即显示 user 气泡 + 思考中
         val prompt = buildComparePrompt(q)
         // 走 AIJobCenter（常驻根页桥，同主聊天/GLMFlashClient）：对比页是 push 的子页面，
         // 直接 bridgeModule.llmAnalyze(当前页桥) 在页面切走/返回/后台时会失效 → 回调空 → 误报"无key/限流"。
         AIJobCenter.sendPrompt(prompt, stream = false, sid = "") { resp ->
             val text = resp?.optString("text").orEmpty()
             val reply = if (text.isBlank()) "（AI 未返回，可能是限流或无 Key。请稍后重试。）" else text
-            chatMessages = chatMessages + CompareChatMsg(role = "assistant", text = reply)
+            // ⚠️ 回调先安全落盘单例（本页可能已销毁，绝不在回调里直接写 chatMessages observable，
+            // 那会因页面已销毁而丢失后台回复）。落盘 + setPending(false) + bump 驱动 UI。
             ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("assistant", reply))
-            cmpWaiting = false
-            chatToggle = !chatToggle
+            ChatStore.setPending(ChatStore.COMPARE_CONV, false)
+            ChatSync.bump()
+            // 本页已销毁(用户已退出)：后台完成提示走常驻桥
+            if (compDestroyed) {
+                AIJobCenter.toast("对比 AI 已回复，点开查看")
+            }
         }
     }
 
