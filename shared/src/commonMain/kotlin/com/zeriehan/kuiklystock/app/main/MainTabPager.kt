@@ -26,6 +26,7 @@ import com.zeriehan.kuiklystock.core.StockColor
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.UserStockStore
+import com.zeriehan.kuiklystock.core.AlertStore
 import com.zeriehan.kuiklystock.core.UserSettings
 import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 import com.zeriehan.kuiklystock.core.llm.AIAnalysisStore
@@ -65,6 +66,13 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal var watchMoveCode: String? by observable(null)
     /** 长按自选分组 chip 的分组 id（弹分组操作菜单：重命名/删除） */
     internal var watchGroupSheetId: String? by observable(null)
+    // ===== 价格预警镜像 =====
+    internal var priceAlerts: List<AlertStore.PriceAlert> by observable(emptyList())
+    /** 长按行正在设置预警的股票 code */
+    internal var alertStock: Stock? by observable(null)
+    /** 预警类型选择弹层的临时状态：当前选类型 + 阈值输入文本 */
+    internal var alertType: String by observable("below")
+    internal var alertThresholdText: String by observable("")
     /** 强制重渲染计数：标签/隐藏/设置变更后 +1（辅助用，真正触发列表重建靠下方 vif 翻转） */
     internal var dataVersion: Int by observable(0)
     /** vif 翻转触发器：最近对话列表据此强制重建（本版本 body 不随 observable 重跑） */
@@ -184,6 +192,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
             mktLoading = false
             // 行情数据 tick：驱动「大盘」子内容强制重建（即使一直停留在大盘子页也随新报价刷新）
             marketDataTick = !marketDataTick
+            // 价格预警：真实行情到达即检查一次命中（fired 去重，不会重复刷）
+            checkPriceAlerts()
         }
         // 首屏大盘报价刷新：未就绪先显示"加载中"，DataSync 到达后自动消失
         if (!StockData.isReal()) mktLoading = true
@@ -237,6 +247,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
         followSectors = UserStockStore.loadFollowSectors(prefs)
         watchGroups = UserStockStore.loadWatchGroups(prefs)
         watchGroupMap = UserStockStore.loadWatchGroupMap(prefs)
+        priceAlerts = AlertStore.load(prefs)
         // 载入个性化设置：主题色 / 字体 / 深色模式（渲染前保证最新）
         UserSettings.load(prefs)
     }
@@ -780,6 +791,96 @@ internal class MainTabPager : BasePager(), StockNavigator {
         prompt = TextPrompt(title, initial, onOk)
     }
 
+    // ===== 价格预警（App 内命中提示）=====
+
+    /** 预警类型文案 */
+    internal fun alertTypeLabel(type: String): String = when (type) {
+        "above" -> "涨破"
+        "below" -> "跌破"
+        "pctUp" -> "当日涨幅≥"
+        "pctDown" -> "当日跌幅≥"
+        else -> type
+    }
+
+    /** 打开某股的设预警弹层（类型 chips + 阈值输入） */
+    internal fun openAlertFor(stock: Stock) {
+        alertStock = stock
+        alertType = "below"
+        alertThresholdText = ""
+    }
+    internal fun closeAlert() { alertStock = null }
+
+    /** 确认添加预警：解析阈值 → 落盘 + 关闭弹层 */
+    internal fun confirmAddAlert() {
+        val st = alertStock ?: return
+        val t = alertThresholdText.trim().toFloatOrNull()
+        if (t == null || t <= 0f) {
+            bridgeModule.toast("请输入有效的阈值")
+            return
+        }
+        if (AlertStore.exists(priceAlerts, st.code, alertType, t)) {
+            bridgeModule.toast("该条件已设置")
+            return
+        }
+        val a = AlertStore.PriceAlert(st.code, alertType, t)
+        priceAlerts = priceAlerts + a
+        AlertStore.save(prefs, priceAlerts)
+        closeAlert()
+        bridgeModule.toast("已设预警：${st.name} ${alertTypeLabel(alertType)} $t")
+    }
+
+    /** 删除某股票的全部预警 */
+    internal fun removeAlertsFor(code: String) {
+        priceAlerts = priceAlerts.filterNot { it.code == code }
+        AlertStore.save(prefs, priceAlerts)
+        bridgeModule.toast("已清除该股预警")
+    }
+
+    /** 重置某条预警的 fired（允许再次命中提示） */
+    internal fun resetAlertFired(code: String, type: String, threshold: Float) {
+        priceAlerts = priceAlerts.map {
+            if (it.code == code && it.type == type && it.threshold == threshold) it.copy(fired = false) else it
+        }
+        AlertStore.save(prefs, priceAlerts)
+    }
+
+    /** 行情刷新（DataSync）后检查所有预警是否命中；命中 → toast + 标 fired（防重复刷）。
+     *  价格离开触发区间时自动复位 fired（允许下次再入区间时再次提示，如"跌破50"回到51再跌会再响）。 */
+    internal fun checkPriceAlerts() {
+        if (priceAlerts.isEmpty()) return
+        var changed = false
+        val updated = mutableListOf<AlertStore.PriceAlert>()
+        priceAlerts.forEach { a ->
+            val st = StockData.getQuotes().firstOrNull { it.code == a.code }
+            if (st == null) { updated.add(a); return@forEach }
+            val hit = when (a.type) {
+                "above" -> st.price >= a.threshold
+                "below" -> st.price <= a.threshold
+                "pctUp" -> st.changePercent >= a.threshold
+                "pctDown" -> st.changePercent <= -a.threshold
+                else -> false
+            }
+            if (hit) {
+                // 命中且此前未提示过 → 提示一次并标 fired
+                if (!a.fired) {
+                    val cond = alertTypeLabel(a.type) + (if (a.type.startsWith("pct")) "${a.threshold}%" else "${a.threshold}")
+                    bridgeModule.toast("🔔 ${st.name} 已${cond}（现价${formatPrice(st.price)}）")
+                    updated.add(a.copy(fired = true))
+                    changed = true
+                } else {
+                    updated.add(a)  // 仍在触发区：保持 fired，不重复提示
+                }
+            } else {
+                // 离开触发区：复位 fired，允许下次再入区间时再次提示
+                if (a.fired) { updated.add(a.copy(fired = false)); changed = true } else updated.add(a)
+            }
+        }
+        if (changed) {
+            priceAlerts = updated
+            AlertStore.save(prefs, updated)
+        }
+    }
+
     /** 切换主 Tab。切到「行情」(1)时：若真实报价未就绪则显示加载中并触发刷新，且翻转 listToggle 让行情/大盘/主列表重建读最新池 */
     internal fun selectMainTab(i: Int) {
         selectedTab = i
@@ -865,7 +966,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         val vh = ctx.pagerData.pageViewHeight
                         val menuW = 176f
                         val watched = ctx.sheetStock != null && ctx.watchlistCodes.contains(ctx.sheetStock!!.code)
-                        val menuH = if (watched) 380f else 320f
+                        val menuH = if (watched) 500f else 380f
                         val left = (ctx.sheetX - menuW / 2f).coerceIn(8f, (vw - menuW - 8f).coerceAtLeast(8f))
                         val top = ctx.sheetY.coerceIn(8f, (vh - menuH - 8f).coerceAtLeast(8f))
                         absolutePosition(top = top, left = left)
@@ -894,6 +995,11 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     sheetDivider()
                     // 加入股票对比（持久化对比股列表，进对比页自动生效）
                     sheetItem("⇄ 加对比") { ctx.addToCompare(stock) }
+                    sheetDivider()
+                    // 价格预警（命中提示）
+                    sheetItem(if (ctx.priceAlerts.any { it.code == stock.code }) "⏰ 管理价格预警" else "⏰ 设价格预警") {
+                        val s = stock; ctx.closeSheet(); ctx.openAlertFor(s)
+                    }
                     // 不感兴趣 / 恢复（按当前是否已被标记切换文案）
                     sheetItem(if (dimmed) "恢复" else "不感兴趣") {
                         if (dimmed) ctx.restoreStock(stock.code) else ctx.hideStock(stock.code)
@@ -902,6 +1008,77 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     }
                     sheetDivider()
                     sheetItem("复制代码") { ctx.copyCode(stock) }
+                }
+            }
+
+            // ===== 价格预警设置 overlay（类型 chips + 阈值输入 + 确认）=====
+            vif({ ctx.alertStock != null }) {
+                View { attr { absolutePositionAllZero(); backgroundColor(Color(0x55000000)) }
+                    event { click { ctx.closeAlert() } } }
+                View {
+                    attr {
+                        val vw = ctx.pagerData.pageViewWidth
+                        val menuW = 300f
+                        val left = (vw - menuW) / 2f
+                        val top = (ctx.pagerData.pageViewHeight - 360f) / 2f
+                        absolutePosition(top = top, left = left)
+                        width(menuW); backgroundColor(Color.WHITE); borderRadius(12f); flexDirectionColumn()
+                    }
+                    val st = ctx.alertStock!!
+                    View { attr { padding(14f); flexDirectionRow(); alignItemsCenter() }
+                        Text { attr { text("价格预警 · ${st.name}"); fontSize(ctx.fs(15f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                        View { attr { flex(1f) } }
+                        // 若已有预警：提供清除入口
+                        vif({ ctx.priceAlerts.any { it.code == st.code } }) {
+                            Text { attr { text("清除预警"); fontSize(ctx.fs(13f)); color(Color(ctx.themeColor)); textDecorationUnderLine() }
+                                event { click { ctx.removeAlertsFor(st.code) } } }
+                        }
+                    }
+                    View { attr { padding(left = 14f, right = 14f, bottom = 8f) }
+                        Text { attr { text("现价 ${formatPrice(st.price)}（今日 ${formatPercent(st.changePercent)}）"); fontSize(ctx.fs(12f)); color(Color(0xFF999999)) } }
+                    }
+                    // 类型 chips（两行，每行 2 个，避免横向溢出）
+                    View { attr { flexDirectionColumn(); paddingLeft(14f); paddingRight(14f) }
+                        listOf(listOf("below", "above"), listOf("pctDown", "pctUp")).forEach { row ->
+                            View { attr { flexDirectionRow() }
+                                row.forEach { t ->
+                                    View {
+                                        attr {
+                                            padding(7f, 5f, bottom = 7f, right = 5f); marginRight(8f); marginBottom(6f); borderRadius(12f)
+                                            backgroundColor(if (ctx.alertType == t) Color(ctx.themeColor) else Color(0xFFF2F3F5))
+                                        }
+                                        event { click { ctx.alertType = t } }
+                                        Text { attr { text(ctx.alertTypeLabel(t)); fontSize(ctx.fs(12f)); color(if (ctx.alertType == t) Color.WHITE else Color(0xFF666666)) } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // 阈值输入
+                    View { attr { paddingLeft(14f); paddingRight(14f); marginTop(4f) }
+                        // Input 无 padding（外包 View 已缩进），文字用 textAlignLeft 贴左 + 内部由宿主处理
+                        Input {
+                            attr {
+                                flex(1f); height(38f); backgroundColor(Color(0xFFF5F6F8)); borderRadius(8f)
+                                color(Color(0xFF222222)); fontSize(ctx.fs(14f))
+                                placeholder(if (ctx.alertType.startsWith("pct")) "输入百分比（如 5）" else "输入价格（如 50.0）")
+                                placeholderColor(Color(0xFF999999))
+                            }
+                            event { textDidChange { ctx.alertThresholdText = it.text } }
+                        }
+                    }
+                    View { attr { flexDirectionRow(); padding(14f) }
+                        View {
+                            attr { flex(1f); height(40f); borderRadius(8f); marginRight(8f); alignItemsCenter(); justifyContentCenter(); backgroundColor(Color(0xFFF2F3F5)) }
+                            event { click { ctx.closeAlert() } }
+                            Text { attr { text("取消"); fontSize(ctx.fs(14f)); color(Color(0xFF666666)) } }
+                        }
+                        View {
+                            attr { flex(1f); height(40f); borderRadius(8f); alignItemsCenter(); justifyContentCenter(); backgroundColor(Color(ctx.themeColor)) }
+                            event { click { ctx.confirmAddAlert() } }
+                            Text { attr { text("确认设置"); fontSize(ctx.fs(14f)); color(Color.WHITE) } }
+                        }
+                    }
                 }
             }
 
