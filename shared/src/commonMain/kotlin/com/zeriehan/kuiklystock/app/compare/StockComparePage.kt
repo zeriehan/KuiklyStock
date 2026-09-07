@@ -11,6 +11,7 @@ import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.*
+import com.tencent.kuikly.core.views.ScrollerView
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.bridgeModule
 import com.zeriehan.kuiklystock.components.KRMiniTimeSharing.KRMiniTimeSharing
@@ -64,6 +65,12 @@ internal class StockComparePage : BasePager() {
     internal var lastKeyboardH: Float by observable(0f)
     /** 键盘当前抬起高度，驱动输入栏后的占位 Spacer 把输入栏顶到键盘上沿 */
     internal var keyboardH: Float by observable(0f)
+    /** 下区消息流 Scroller ref：内容变化时滚到底（最新消息可见） */
+    internal lateinit var cmpScrollerRef: ViewRef<ScrollerView<*, *>>
+    /** 消息流最近一次真实内容高度（滚底 target = contentH - viewportH） */
+    internal var cmpContentH: Float = 0f
+    /** 消息流视口高度（scroll 事件回写） */
+    internal var cmpViewportH: Float = 0f
 
     override fun viewDidLoad() {
         super.viewDidLoad()
@@ -203,6 +210,19 @@ internal class StockComparePage : BasePager() {
             ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("assistant", reply))
             cmpWaiting = false
             chatToggle = !chatToggle
+        }
+    }
+
+    /**
+     * 消息流滚到底（最新消息可见）。offset 必须在 [0, contentH-viewportH] 内才生效，
+     * 故用真实尺寸算 y=contentH-viewportH，绝不用极大值。延迟一拍等布局完成后调用。
+     */
+    internal fun scrollCompToBottom() {
+        val v = cmpScrollerRef.view ?: return
+        if (cmpContentH <= 0f) return
+        val y = (cmpContentH - cmpViewportH).coerceAtLeast(0f)
+        com.tencent.kuikly.core.timer.setTimeout(pagerId, 30) {
+            v.setContentOffset(0f, y, false)
         }
     }
 
@@ -403,9 +423,25 @@ private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
 private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
     View {
         attr { flex(1f); paddingLeft(10f); paddingRight(10f); paddingTop(6f); paddingBottom(6f); flexDirectionColumn() }
-        // 消息列表
+        // 消息列表：白卡片弹性区(圆角) 内包一个 Scroller —— 消息一多即可上下滚动，
+        // 不会溢出/盖住输入栏（参考主聊天页：Scroller 放 flex(1f) 容器里作头部~输入栏间唯一滚动区）。
         View {
-            attr { flex(1f); borderRadius(10f); backgroundColor(Color.WHITE); padding(10f); marginBottom(8f) }
+            attr { flex(1f); borderRadius(10f); backgroundColor(Color.WHITE); marginBottom(8f); flexDirectionColumn() }
+            Scroller {
+                ref { ctx.cmpScrollerRef = it }
+                attr {
+                    flex(1f); flexDirectionColumn()
+                    padding(top = 10f, left = 10f, bottom = 10f, right = 10f)
+                }
+                event {
+                    // 内容尺寸变化(布局完成/来新消息)后滚到底，让最新消息可见
+                    contentSizeChanged { _, h ->
+                        ctx.cmpContentH = h
+                        ctx.scrollCompToBottom()
+                    }
+                    // 记录视口高度：滚底 target = contentH - viewportH
+                    scroll { params -> ctx.cmpViewportH = params.viewHeight }
+                }
             if (ctx.chatMessages.isEmpty()) {
                 // 首条消息前：引导提示（只提示一次，发过就不再显示）
                 val names = ctx.compareCodes.take(2).map { StockData.findByCode(it).name }
@@ -471,7 +507,8 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
                     Text { attr { text("AI 思考中…"); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)) } }
                 }
             }
-        }
+            }  // Scroller 结束
+        }  // 白卡片弹性区结束
         // 输入栏
         View {
             attr { flexDirectionRow(); alignItemsCenter(); height(40f) }
