@@ -233,8 +233,8 @@ object AgentChat {
         if (n.contains("watch") || n.contains("self") || n.contains("favorite")) return "addWatch"
         if (n.contains("compare") || n.contains("对比")) return "addCompare"
         if (n.contains("alert") || n.contains("预警") || n.contains("提醒")) return "addAlert"
-        // 主题色
-        if (n.contains("theme") && (n.contains("color") || n.contains("色"))) return "setThemeColor"
+        // 改主题色（兼容 change_color / set_color / color_theme / change_theme / 改颜色 等）
+        if (n.contains("color") || n.contains("theme") || n.contains("色")) return "setThemeColor"
         // 深色 / 暗黑 / 夜间模式
         if (n.contains("dark") || n.contains("深色") || n.contains("暗黑") || n.contains("夜间") || n.contains("night")) return "setDarkMode"
         // 没匹配：原样返（executeTool 会报"未知操作：xxx"）
