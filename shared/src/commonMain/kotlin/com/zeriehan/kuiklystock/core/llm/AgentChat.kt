@@ -166,26 +166,25 @@ object AgentChat {
     /** 解析并执行 TOOL json，返回用户可见的结果文本 */
     private fun executeTool(toolLine: String, prefs: SharedPreferencesModule): String {
         return try {
-            val obj = JSONObject(toolLine)
-            val name = obj.optString("name").let { canonicalizeToolName(it) }
-            val args = obj.optJSONObject("args") ?: JSONObject()
+            val obj = ToolArgs.parse(toolLine)
+            val name = canonicalizeToolName(obj.optString("name"))
             when (name) {
                 "addWatch", "addCompare", "addAlert" -> {
-                    val stockName = args.optString("stock")
+                    val stockName = obj.optString("stock")
                     val st = resolveStock(stockName)
                         ?: return "未找到股票「$stockName」，未执行。可用完整名或6位代码。"
                     when (name) {
                         "addWatch" -> AgentActions.addWatch(st, prefs)
                         "addCompare" -> AgentActions.addCompare(st, prefs)
                         else -> {
-                            val typeLabel = args.optString("type")
-                            val threshold = args.optDouble("threshold").toFloat()
+                            val typeLabel = obj.optString("type")
+                            val threshold = obj.optDouble("threshold").toFloat()
                             AgentActions.addAlert(st, mapType(typeLabel), threshold, prefs)
                         }
                     }
                 }
                 "setThemeColor" -> {
-                    var c = args.optString("colorName").ifBlank { args.optString("color") }
+                    var c = obj.optString("colorName").ifBlank { obj.optString("color") }
                     var argb = if (c.isNotBlank()) colorToArgb(c) else null
                     // 字段名/参数格式可能与少样本不一致：从原始 toolLine 里扫颜色词兜底
                     if (argb == null) {
@@ -196,13 +195,70 @@ object AgentChat {
                     else AgentActions.setThemeColor(argb, prefs)
                 }
                 "setDarkMode" -> {
-                    val on = args.optString("boolean") == "true" || args.optBoolean("boolean", false)
+                    val on = obj.optString("boolean") == "true" || obj.optBoolean("boolean", false)
                     AgentActions.setDark(on, prefs)
                 }
                 else -> "未知操作：$name（请把这个原文发我便于修复：${toolLine.take(200)}）"
             }
         } catch (e: Throwable) {
-            "操作执行失败：${e.message ?: "未知错误"}"
+            "操作执行失败：${e.message ?: "未知错误"}（请把这个原文发我便于修复：${toolLine.take(200)}）"
+        }
+    }
+
+    /**
+     * 容错 JSON 字段读取：先按标准 JSON 解析；失败时回退到正则从 raw 文本里抠字段。
+     * 模型经常输出 {name:"x"}（key 没引号）或 {"name": x}（value 没引号）等非标 JSON，
+     * 严格 JSONObject 会抛 Expected ':' / Expected ',' — 用 regex 兜底保证 agent 不死锁。
+     */
+    private class ToolArgs private constructor(private val map: Map<String, String>) {
+        fun optString(key: String): String = map[key] ?: map[key.lowercase()] ?: ""
+        fun optDouble(key: String): Double = map[key]?.toDoubleOrNull()
+            ?: map[key.lowercase()]?.toDoubleOrNull() ?: 0.0
+        fun optBoolean(key: String, default: Boolean): Boolean {
+            val v = map[key] ?: map[key.lowercase()] ?: return default
+            return v == "true" || v == "1"
+        }
+        companion object {
+            fun parse(raw: String): ToolArgs {
+                // 路径1: 标准 JSON
+                try {
+                    val obj = JSONObject(raw)
+                    val m = mutableMapOf<String, String>()
+                    obj.keys().forEach { k ->
+                        val v = obj.optString(k)
+                        if (v.isNotBlank()) m[k] = v
+                    }
+                    val args = obj.optJSONObject("args")
+                    if (args != null) {
+                        args.keys().forEach { k ->
+                            val v = args.optString(k)
+                            if (v.isNotBlank()) m[k] = v
+                        }
+                    }
+                    if (m.containsKey("name")) return ToolArgs(m)
+                } catch (_: Throwable) { /* 退化到 regex */ }
+                // 路径2: regex 兜底（任意 key/value 形式都能匹配）
+                return ToolArgs(regexFallback(raw))
+            }
+            private fun regexFallback(raw: String): Map<String, String> {
+                val m = mutableMapOf<String, String>()
+                // 双引号包 key: "key":"value"
+                Regex("\"([\\w]+)\"\\s*:\\s*\"([^\"]*)\"").findAll(raw).forEach {
+                    m[it.groupValues[1]] = it.groupValues[2]
+                }
+                // 双引号包 key, value 是数字/布尔: "key": 数字 / "key": true/false
+                Regex("\"([\\w]+)\"\\s*:\\s*([0-9.\\-]+)").findAll(raw).forEach {
+                    if (!m.containsKey(it.groupValues[1])) m[it.groupValues[1]] = it.groupValues[2]
+                }
+                Regex("\"([\\w]+)\"\\s*:\\s*(true|false)").findAll(raw).forEach {
+                    if (!m.containsKey(it.groupValues[1])) m[it.groupValues[1]] = it.groupValues[2]
+                }
+                // 无引号 key: key:"value" / key: 数字
+                Regex("([\\w]+)\\s*:\\s*\"([^\"]*)\"").findAll(raw).forEach {
+                    if (!m.containsKey(it.groupValues[1])) m[it.groupValues[1]] = it.groupValues[2]
+                }
+                return m
+            }
         }
     }
 
