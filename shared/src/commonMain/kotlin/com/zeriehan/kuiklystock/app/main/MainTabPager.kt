@@ -5,6 +5,7 @@ import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
+import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.module.RouterModule
 import com.tencent.kuikly.core.module.SharedPreferencesModule
@@ -73,6 +74,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
     /** 预警类型选择弹层的临时状态：当前选类型 + 阈值输入文本 */
     internal var alertType: String by observable("below")
     internal var alertThresholdText: String by observable("")
+    /** 预警弹层 Input ref，打开窗口后用于回显已设阈值 */
+    private lateinit var alertInputRef: ViewRef<InputView>
     /** 强制重渲染计数：标签/隐藏/设置变更后 +1（辅助用，真正触发列表重建靠下方 vif 翻转） */
     internal var dataVersion: Int by observable(0)
     /** vif 翻转触发器：最近对话列表据此强制重建（本版本 body 不随 observable 重跑） */
@@ -802,11 +805,22 @@ internal class MainTabPager : BasePager(), StockNavigator {
         else -> type
     }
 
-    /** 打开某股的设预警弹层（类型 chips + 阈值输入） */
+    /** 打开某股的设预警弹层（类型 chips + 阈值输入）。若该股已设过预警，预填类型与阈值 */
     internal fun openAlertFor(stock: Stock) {
         alertStock = stock
-        alertType = "below"
-        alertThresholdText = ""
+        val existing = priceAlerts.firstOrNull { it.code == stock.code }
+        if (existing != null) {
+            alertType = existing.type
+            alertThresholdText = if (existing.type.startsWith("pct")) existing.threshold.toInt().toString()
+                else formatPrice(existing.threshold)
+        } else {
+            alertType = "below"
+            alertThresholdText = ""
+        }
+        // 若 Input ref 已就绪，强制把文本写进宿主（attr 闭包可能因首次渲染时序问题没读到）
+        if (::alertInputRef.isInitialized) {
+            try { alertInputRef.view?.setText(alertThresholdText) } catch (_: Throwable) { /* 反射/属性失败由 attr 兜底 */ }
+        }
     }
     internal fun closeAlert() { alertStock = null }
 
@@ -1058,6 +1072,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     View { attr { paddingLeft(14f); paddingRight(14f); marginTop(4f) }
                         // Input 无 padding（外包 View 已缩进），文字用 textAlignLeft 贴左 + 内部由宿主处理
                         Input {
+                            ref { ctx.alertInputRef = it }
                             attr {
                                 flex(1f); height(38f); backgroundColor(Color(0xFFF5F6F8)); borderRadius(8f)
                                 color(Color(0xFF222222)); fontSize(ctx.fs(14f))

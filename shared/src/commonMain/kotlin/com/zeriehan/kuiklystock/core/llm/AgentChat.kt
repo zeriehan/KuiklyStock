@@ -260,9 +260,12 @@ private class ToolArgs private constructor(
         }
         fun candidateNames(): List<String> = toolNameCandidates
 
-        /** 模型把工具名放协议字段（tool/name/function/action）里时取出来 */
+        /** 模型把工具名放协议字段里时取出来（含驼峰后缀变体：functionName/toolName/...） */
         fun toolName(): String {
-            listOf("name", "tool", "function", "operation", "action", "cmd", "command").forEach { k ->
+            listOf(
+                "name", "tool", "function", "operation", "action", "cmd", "command",
+                "functionName", "toolName", "methodName", "apiName", "actionName", "commandName",
+            ).forEach { k ->
                 val v = params[k] ?: params[k.lowercase()] ?: ""
                 if (v.isNotBlank()) return v
             }
@@ -271,7 +274,8 @@ private class ToolArgs private constructor(
 
         companion object {
             private val NON_TOOL_KEYS = setOf("stock", "type", "threshold", "colorName", "color",
-                "boolean", "args", "parameters", "params", "input", "data")
+                "boolean", "args", "parameters", "params", "input", "data",
+                "functionName", "toolName", "methodName", "apiName", "actionName", "commandName")
 
             fun parse(raw: String): ToolArgs {
                 // 路径1: 标准 JSON（递归拍平所有内嵌对象字段，保留外层 keys 当候选名）
