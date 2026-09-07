@@ -62,8 +62,10 @@ object AgentChat {
         prefs: SharedPreferencesModule,
         callback: (String) -> Unit,
     ) {
+        // 拉一份股票当前价（用于"加跌100的预警"这种无单位表达，AI 自己按当前价算阈值）
+        val priceTable = buildPriceTable()
         // 首轮：判断是否要调工具
-        val firstPrompt = buildFirstPrompt(query, historyText)
+        val firstPrompt = buildFirstPrompt(query, historyText, priceTable)
         AIJobCenter.sendPrompt(firstPrompt) { r1 ->
             val t1 = r1?.optString("text").orEmpty()
             val tool1 = extractToolLine(t1)
@@ -74,7 +76,7 @@ object AgentChat {
             // 首轮无 TOOL：若模型空回 → 直接空（上层兜底）
             if (t1.isBlank()) { callback(""); return@sendPrompt }
             // 强重试一次（glm-4-flash 偶有"装作普通回答"倾向）
-            val retryPrompt = buildRetryPrompt(query, t1)
+            val retryPrompt = buildRetryPrompt(query, t1, priceTable)
             AIJobCenter.sendPrompt(retryPrompt) { r2 ->
                 val t2 = r2?.optString("text").orEmpty()
                 val tool2 = extractToolLine(t2)
@@ -101,11 +103,18 @@ object AgentChat {
         }
     }
 
-    private fun buildFirstPrompt(query: String, hist: String): String {
+    private fun buildFirstPrompt(query: String, hist: String, priceTable: String = ""): String {
         val sb = StringBuilder()
         sb.append("[SYSTEM · 工具调用模式]\n")
         sb.append("你是「RinoStock」股票的 AI 助手。你能回答问题，也能在用户要求时执行 App 内的操作。\n\n")
         sb.append(toolsSpec).append("\n\n")
+        if (priceTable.isNotBlank()) {
+            sb.append("当前股票价表（用于把'跌100'这类无单位表达换算成绝对阈值）：\n").append(priceTable).append("\n\n")
+            sb.append("无单位数字的换算规则：用户原话中只有数字、没说'元/%'时，\n")
+            sb.append("  - '跌破/跌100' → 按当前价-100 算阈值（threshold=当前价-100）\n")
+            sb.append("  - '涨破/涨100' → 按当前价+100 算阈值（threshold=当前价+100）\n")
+            sb.append("  - '跌幅 5 / 涨 5' → pctDown/pctUp 5%（threshold=5, type=当日跌幅≥/当日涨幅≥）\n\n")
+        }
         sb.append("判断与输出规则（极其重要）：\n")
         sb.append("- 若用户消息是要执行上述任一 App 操作（加自选/加对比/设价格预警/改主题色/切深色浅色），你**必须只输出一行 ").append(TAG).append("{json}**，形如：\n")
         sb.append("  · 用户“把茅台加进自选”→ ").append(TAG).append("""{"name":"addWatch","args":{"stock":"贵州茅台"}}""").append("\n")
@@ -122,7 +131,7 @@ object AgentChat {
         return sb.toString()
     }
 
-    private fun buildRetryPrompt(query: String, lastReply: String): String {
+    private fun buildRetryPrompt(query: String, lastReply: String, priceTable: String = ""): String {
         val sb = StringBuilder()
         sb.append("[SYSTEM · 重试，必须输出工具调用（严格规范）]\n")
         sb.append("上一条模型回复未按规范（它写成了普通回答）：\n").append(lastReply.take(200)).append("\n\n")
@@ -298,6 +307,20 @@ private class ToolArgs private constructor(
                 return m
             }
         }
+    }
+
+    /** 抓当前自选/行情池的（name, price）简短表，给模型用 — 用于"加跌100的预警"按当前价算阈值。
+     *  上限 30 行避免 prompt 过长 */
+    private fun buildPriceTable(): String {
+        val quotes = try { StockData.getQuotes() } catch (_: Throwable) { return "" }
+        if (quotes.isEmpty()) return ""
+        val sb = StringBuilder()
+        quotes.take(30).forEach { q ->
+            if (q.name.isNotBlank() && q.price > 0) {
+                sb.append(q.name).append('=').append("%.2f".format(q.price)).append("; ")
+            }
+        }
+        return sb.toString().trim().removeSuffix(";")
     }
 
     private fun mapType(label: String): String = when {
