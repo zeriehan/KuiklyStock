@@ -111,6 +111,8 @@ object AgentChat {
         sb.append("  · 用户“把茅台加进自选”→ ").append(TAG).append("""{"name":"addWatch","args":{"stock":"贵州茅台"}}""").append("\n")
         sb.append("  · 用户“宁德时代加入对比”→ ").append(TAG).append("""{"name":"addCompare","args":{"stock":"宁德时代"}}""").append("\n")
         sb.append("  · 用户“茅台跌破1500提醒我”→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"贵州茅台","type":"跌破","threshold":1500}}""").append("\n")
+        sb.append("  · 用户“加跌100的预警”（无单位=百分比）→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"茅台","type":"当日跌幅≥","threshold":100}}""").append("\n")
+        sb.append("  · 用户“涨100提醒我”→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"茅台","type":"当日涨幅≥","threshold":100}}""").append("\n")
         sb.append("  · 用户“改成红色”→ ").append(TAG).append("""{"name":"setThemeColor","args":{"colorName":"红"}}""").append("\n")
         sb.append("  · 用户“换深色”→ ").append(TAG).append("""{"name":"setDarkMode","args":{"boolean":true}}""").append("\n")
         sb.append("  json 里 name/args 必须准确；股票尽量用中文全名（茅台→贵州茅台）。\n")
@@ -145,7 +147,7 @@ object AgentChat {
         return sb.toString()
     }
 
-    /** 提取文本中的首段 ⟦TOOL⟧{json}；无则 null */
+    /** 提取文本中的首段 ⟦TOOL⟧{json}；无则 null。剔除空 {} 和字面量 {json} 占位 */
     private fun extractToolLine(text: String): String? {
         if (text.isBlank()) return null
         val i = text.indexOf(TAG)
@@ -157,7 +159,14 @@ object AgentChat {
             if (ch == '{') depth++
             else if (ch == '}') {
                 depth--
-                if (depth == 0) return rest.substring(0, k + 1)
+                if (depth == 0) {
+                    val candidate = rest.substring(0, k + 1)
+                    // 过滤空对象 {} 和字面量占位 {json}/{tool}/{...}
+                    val inner = candidate.trim().removePrefix("{").removeSuffix("}").trim()
+                    if (inner.isEmpty() || inner.lowercase() in setOf("json", "tool", "func", "function",
+                            "action", "cmd", "command", "name", "params", "args", "input", "data")) return null
+                    return candidate
+                }
             }
         }
         return null
