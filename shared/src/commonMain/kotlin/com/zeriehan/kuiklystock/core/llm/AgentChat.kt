@@ -209,61 +209,71 @@ object AgentChat {
         }
     }
 
-    /**
-     * 容错 JSON 字段读取：先按标准 JSON 解析；失败时回退到正则从 raw 文本里抠字段。
-     * 模型经常输出 {name:"x"}（key 没引号）或 {"name": x}（value 没引号）等非标 JSON，
-     * 严格 JSONObject 会抛 Expected ':' / Expected ',' — 用 regex 兜底保证 agent 不死锁。
-     */
-    private class ToolArgs private constructor(private val map: Map<String, String>) {
-        fun optString(key: String): String = map[key] ?: map[key.lowercase()] ?: ""
-        fun optDouble(key: String): Double = map[key]?.toDoubleOrNull()
-            ?: map[key.lowercase()]?.toDoubleOrNull() ?: 0.0
+/**
+ * 容错 JSON 字段读取：先按标准 JSON 解析；失败时回退到正则从 raw 文本里抠字段。
+ * 模型经常输出 {name:"x"}（key 没引号）或 {"name": x}（value 没引号）等非标 JSON，
+ * 严格 JSONObject 会抛 Expected ':' / Expected ',' — 用 regex 兜底保证 agent 不死锁。
+ * 同时维护 [candidateNames] — 模型有时把工具名当外层 key（如 {"addAlert":{"stock":...}}），
+ * 这种情况下外层 key 不进 params 但作为候选工具名供 executeTool 遍历使用。
+ */
+private class ToolArgs private constructor(
+        private val params: Map<String, String>,
+        private val toolNameCandidates: List<String>,
+    ) {
+        fun optString(key: String): String = params[key] ?: params[key.lowercase()] ?: ""
+        fun optDouble(key: String): Double = params[key]?.toDoubleOrNull()
+            ?: params[key.lowercase()]?.toDoubleOrNull() ?: 0.0
         fun optBoolean(key: String, default: Boolean): Boolean {
-            val v = map[key] ?: map[key.lowercase()] ?: return default
+            val v = params[key] ?: params[key.lowercase()] ?: return default
             return v == "true" || v == "1"
         }
-        /** 排除明显非工具名的 key，剩下的就是候选工具名（模型有时把 name 当外层 key） */
-        fun candidateNames(): List<String> {
-            val nonTool = setOf("stock", "type", "threshold", "colorName", "color",
-                "boolean", "args", "parameters", "params", "input", "data")
-            return map.keys.filter { it.lowercase() !in nonTool }
-        }
+        fun candidateNames(): List<String> = toolNameCandidates
+
         companion object {
+            private val NON_TOOL_KEYS = setOf("stock", "type", "threshold", "colorName", "color",
+                "boolean", "args", "parameters", "params", "input", "data", "name")
+
             fun parse(raw: String): ToolArgs {
-                // 路径1: 标准 JSON
+                // 路径1: 标准 JSON（递归拍平所有内嵌对象字段，保留外层 keys 当候选名）
                 try {
                     val obj = JSONObject(raw)
-                    val m = mutableMapOf<String, String>()
-                    obj.keys().forEach { k ->
-                        val v = obj.optString(k)
-                        if (v.isNotBlank()) m[k] = v
-                    }
+                    val params = mutableMapOf<String, String>()
+                    val outerKeys = mutableListOf<String>()
+                    flattenFlatten(obj, params, outerKeys)
                     val args = obj.optJSONObject("args")
-                    if (args != null) {
-                        args.keys().forEach { k ->
-                            val v = args.optString(k)
-                            if (v.isNotBlank()) m[k] = v
-                        }
-                    }
-                    if (m.containsKey("name")) return ToolArgs(m)
+                    if (args != null) flattenFlatten(args, params, outerKeys)
+                    val candidates = outerKeys.filter { it.lowercase() !in NON_TOOL_KEYS }
+                    return ToolArgs(params, candidates)
                 } catch (_: Throwable) { /* 退化到 regex */ }
-                // 路径2: regex 兜底（任意 key/value 形式都能匹配）
-                return ToolArgs(regexFallback(raw))
+                // 路径2: regex 兜底
+                return ToolArgs(regexFallback(raw), emptyList())
             }
+
+            /** 把 obj 所有 string/number/boolean 字段拍平到 params；非 string 子对象再递归一层 */
+            private fun flattenFlatten(obj: JSONObject, params: MutableMap<String, String>, outerKeys: MutableList<String>) {
+                obj.keys().forEach { k ->
+                    outerKeys.add(k)
+                    val v = obj.opt(k)
+                    when (v) {
+                        is String -> if (v.isNotBlank()) params[k] = v
+                        is Number -> params[k] = v.toString()
+                        is Boolean -> params[k] = v.toString()
+                        is JSONObject -> flattenFlatten(v, params, outerKeys)
+                    }
+                }
+            }
+
             private fun regexFallback(raw: String): Map<String, String> {
                 val m = mutableMapOf<String, String>()
-                // 双引号包 key: "key":"value"
                 Regex("\"([\\w]+)\"\\s*:\\s*\"([^\"]*)\"").findAll(raw).forEach {
                     m[it.groupValues[1]] = it.groupValues[2]
                 }
-                // 双引号包 key, value 是数字/布尔: "key": 数字 / "key": true/false
                 Regex("\"([\\w]+)\"\\s*:\\s*([0-9.\\-]+)").findAll(raw).forEach {
                     if (!m.containsKey(it.groupValues[1])) m[it.groupValues[1]] = it.groupValues[2]
                 }
                 Regex("\"([\\w]+)\"\\s*:\\s*(true|false)").findAll(raw).forEach {
                     if (!m.containsKey(it.groupValues[1])) m[it.groupValues[1]] = it.groupValues[2]
                 }
-                // 无引号 key: key:"value" / key: 数字
                 Regex("([\\w]+)\\s*:\\s*\"([^\"]*)\"").findAll(raw).forEach {
                     if (!m.containsKey(it.groupValues[1])) m[it.groupValues[1]] = it.groupValues[2]
                 }
