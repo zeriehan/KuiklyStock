@@ -74,10 +74,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
     /** 预警类型选择弹层的临时状态：当前选类型 + 阈值输入文本 */
     internal var alertType: String by observable("below")
     internal var alertThresholdText: String by observable("")
-    /** 每预警类型的临时输入草稿（切 chip 不丢：跌破填一半切涨破再切回，跌破的值仍在） */
-    private val alertDrafts = mutableMapOf<String, String>()
-    /** 预警弹层 Input ref，打开窗口后用于回显已设阈值 */
-    private lateinit var alertInputRef: ViewRef<InputView>
+    /** 每预警类型的临时输入草稿（4 行各自独立填，切/保存不丢） */
+    internal val alertDrafts = mutableMapOf<String, String>()
+    /** 每预警类型 Input 的 ref（4 行各自），打开弹窗后回显草稿用 */
+    internal val alertInputRefs = mutableMapOf<String, ViewRef<InputView>>()
     /** 强制重渲染计数：标签/隐藏/设置变更后 +1（辅助用，真正触发列表重建靠下方 vif 翻转） */
     internal var dataVersion: Int by observable(0)
     /** vif 翻转触发器：最近对话列表据此强制重建（本版本 body 不随 observable 重跑） */
@@ -807,75 +807,72 @@ internal class MainTabPager : BasePager(), StockNavigator {
         else -> type
     }
 
-    /** 打开某股的设预警弹层：初始化每种类型的草稿（来自已设预警），默认选中已设类型或 below */
+    /** 打开某股的设预警弹层：4 行各自回显已设阈值，供一次设置多种 */
     internal fun openAlertFor(stock: Stock) {
         alertStock = stock
-        // 每类型草稿 = 已设预警的值（用于切 chip 时回显已配的）；用户没配的类型空
+        // 每类型草稿 = 已设预警的值（回显到各自输入框）；没配的类型空
         alertDrafts.clear()
+        alertInputRefs.clear()
         listOf("below", "above", "pctDown", "pctUp").forEach { t ->
             val ex = priceAlerts.firstOrNull { it.code == stock.code && it.type == t }
             alertDrafts[t] = if (ex != null) {
                 if (t.startsWith("pct")) ex.threshold.toInt().toString() else formatPrice(ex.threshold)
             } else ""
         }
-        // 默认选中第一个已设类型（有预警优先）；全没设 → below
-        val existingType = priceAlerts.firstOrNull { it.code == stock.code }?.type ?: "below"
-        alertType = existingType
-        applyDraftToInput(existingType)
+        alertType = "below"
+        alertThresholdText = ""
     }
 
-    /** 切换预警类型 chip：高亮 + 把输入框切到该类型草稿（已填的临时值不丢） */
-    internal fun selectAlertType(t: String) {
-        alertType = t
-        applyDraftToInput(t)
-    }
-
-    /** 把 alertThresholdText + Input 文本设成 type 的草稿值 */
-    private fun applyDraftToInput(type: String) {
-        alertThresholdText = alertDrafts[type].orEmpty()
-        if (::alertInputRef.isInitialized) {
-            try { alertInputRef.view?.setText(alertThresholdText) } catch (_: Throwable) { /* 由 attr 兜底 */ }
+    /** 某行 Input ref 就绪时回显该类型草稿 */
+    internal fun onAlertInputReady(type: String, ref: ViewRef<InputView>) {
+        alertInputRefs[type] = ref
+        val d = alertDrafts[type].orEmpty()
+        if (d.isNotBlank()) {
+            try { ref.view?.setText(d) } catch (_: Throwable) { /* 由 placeholder 占位兜底 */ }
         }
     }
 
-    /** Input 文本变化时写入当前类型的草稿（供切 chip 回来保留） */
-    internal fun updateAlertDraft(text: String) {
-        alertDrafts[alertType] = text
-        alertThresholdText = text
+    /** 某行 Input 文本变化时写入该类型草稿 */
+    internal fun updateAlertDraft(type: String, text: String) {
+        alertDrafts[type] = text
+        if (type == alertType) alertThresholdText = text
     }
 
-    internal fun closeAlert() { alertStock = null; alertDrafts.clear() }
+    internal fun closeAlert() { alertStock = null; alertDrafts.clear(); alertInputRefs.clear() }
 
-    /** 确认添加预警：解析阈值 → 落盘 + 关闭弹层 */
+    /** 保存设置：把 4 行各自填的（非空）预警全部落盘（同 type 覆盖旧的） */
     internal fun confirmAddAlert() {
         val st = alertStock ?: return
-        val t = alertThresholdText.trim().toFloatOrNull()
-        if (t == null || t <= 0f) {
-            bridgeModule.toast("请输入有效的阈值")
-            return
+        var added = 0
+        val updated = priceAlerts.filterNot { it.code == st.code }.toMutableList() // 先移除该股旧的，按新草稿全量写入
+        var hasAny = false
+        listOf("below", "above", "pctDown", "pctUp").forEach { t ->
+            val text = alertDrafts[t].orEmpty().trim()
+            if (text.isEmpty()) return@forEach
+            val th = text.toFloatOrNull()
+            if (th == null || th <= 0f) { bridgeModule.toast("${alertTypeLabel(t)} 阈值无效：$text"); return }
+            hasAny = true
+            updated.add(AlertStore.PriceAlert(st.code, t, th))
+            added++
         }
-        if (AlertStore.exists(priceAlerts, st.code, alertType, t)) {
-            bridgeModule.toast("该条件已设置")
-            return
-        }
-        val a = AlertStore.PriceAlert(st.code, alertType, t)
-        priceAlerts = priceAlerts + a
+        if (!hasAny) { bridgeModule.toast("请至少填一项预警阈值"); return }
+        priceAlerts = updated
         AlertStore.save(prefs, priceAlerts)
         closeAlert()
-        bridgeModule.toast("已设预警：${st.name} ${alertTypeLabel(alertType)} $t")
+        bridgeModule.toast("已保存 $added 项预警")
     }
 
     /** 删除某股票的全部预警 */
     internal fun removeAlertsFor(code: String) {
         priceAlerts = priceAlerts.filterNot { it.code == code }
         AlertStore.save(prefs, priceAlerts)
-        // 若正在弹这个股的预警层：该股预警全删，各类型草稿清空 + 输入框回占位
+        // 若正在弹这个股的预警层：各类型草稿清空 + 各输入框回占位
         if (alertStock?.code == code) {
-            alertDrafts.clear()
-            if (::alertInputRef.isInitialized) {
-                alertThresholdText = ""
-                try { alertInputRef.view?.setText("") } catch (_: Throwable) { /* 由 attr 兜底 */ }
+            alertDrafts.replaceAll { _, _ -> "" }
+            alertInputRefs.forEach { (_, r) ->
+                try { r.view?.setText("") } catch (_: Throwable) { /* 由 placeholder 兜底 */ }
             }
+            alertThresholdText = ""
         }
         bridgeModule.toast("已清除该股预警")
     }
@@ -1064,7 +1061,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         val vw = ctx.pagerData.pageViewWidth
                         val menuW = 300f
                         val left = (vw - menuW) / 2f
-                        val top = (ctx.pagerData.pageViewHeight - 360f) / 2f
+                        val top = 90f
                         absolutePosition(top = top, left = left)
                         width(menuW); backgroundColor(Color.WHITE); borderRadius(12f); flexDirectionColumn()
                     }
@@ -1081,35 +1078,23 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     View { attr { padding(left = 14f, right = 14f, bottom = 8f) }
                         Text { attr { text("现价 ${formatPrice(st.price)}（今日 ${formatPercent(st.changePercent)}）"); fontSize(ctx.fs(12f)); color(Color(0xFF999999)) } }
                     }
-                    // 类型 chips（两行，每行 2 个，避免横向溢出）
+                    // 4 行预警类型，各自一个输入框（可一次设置多种）
                     View { attr { flexDirectionColumn(); paddingLeft(14f); paddingRight(14f) }
-                        listOf(listOf("below", "above"), listOf("pctDown", "pctUp")).forEach { row ->
-                            View { attr { flexDirectionRow() }
-                                row.forEach { t ->
-                                    View {
-                                        attr {
-                                            padding(7f, 5f, bottom = 7f, right = 5f); marginRight(8f); marginBottom(6f); borderRadius(12f)
-                                            backgroundColor(if (ctx.alertType == t) Color(ctx.themeColor) else Color(0xFFF2F3F5))
-                                        }
-                                        event { click { ctx.selectAlertType(t) } }
-                                        Text { attr { text(ctx.alertTypeLabel(t)); fontSize(ctx.fs(12f)); color(if (ctx.alertType == t) Color.WHITE else Color(0xFF666666)) } }
+                        listOf("below", "above", "pctDown", "pctUp").forEach { t ->
+                            View { attr { flexDirectionRow(); alignItemsCenter(); marginBottom(8f) }
+                                Text { attr {
+                                    width(72f); text(ctx.alertTypeLabel(t)); fontSize(ctx.fs(13f)); color(Color(0xFF444444)) } }
+                                Input {
+                                    ref { ctx.onAlertInputReady(t, it) }
+                                    attr {
+                                        flex(1f); height(36f); backgroundColor(Color(0xFFF5F6F8)); borderRadius(8f)
+                                        color(Color(0xFF222222)); fontSize(ctx.fs(14f))
+                                        placeholder(if (t.startsWith("pct")) "如 5（%）" else "如 ${formatPrice(st.price.coerceAtLeast(1f))}")
+                                        placeholderColor(Color(0xFF999999))
                                     }
+                                    event { textDidChange { ctx.updateAlertDraft(t, it.text) } }
                                 }
                             }
-                        }
-                    }
-                    // 阈值输入
-                    View { attr { paddingLeft(14f); paddingRight(14f); marginTop(4f) }
-                        // Input 无 padding（外包 View 已缩进），文字用 textAlignLeft 贴左 + 内部由宿主处理
-                        Input {
-                            ref { ctx.alertInputRef = it }
-                            attr {
-                                flex(1f); height(38f); backgroundColor(Color(0xFFF5F6F8)); borderRadius(8f)
-                                color(Color(0xFF222222)); fontSize(ctx.fs(14f))
-                                placeholder(if (ctx.alertType.startsWith("pct")) "输入百分比（如 5）" else "输入价格（如 50.0）")
-                                placeholderColor(Color(0xFF999999))
-                            }
-                            event { textDidChange { ctx.updateAlertDraft(it.text) } }
                         }
                     }
                     View { attr { flexDirectionRow(); padding(14f) }
@@ -1121,7 +1106,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         View {
                             attr { flex(1f); height(40f); borderRadius(8f); alignItemsCenter(); justifyContentCenter(); backgroundColor(Color(ctx.themeColor)) }
                             event { click { ctx.confirmAddAlert() } }
-                            Text { attr { text("确认设置"); fontSize(ctx.fs(14f)); color(Color.WHITE) } }
+                            Text { attr { text("保存设置"); fontSize(ctx.fs(14f)); color(Color.WHITE) } }
                         }
                     }
                 }
