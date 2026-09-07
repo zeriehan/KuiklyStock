@@ -52,16 +52,21 @@ internal class FullTextPage : BasePager() {
                 }
             }
 
-            // ===== 正文（可滚动，不截断）=====
+            // ===== 正文（白底卡铺满，可滚动，不截断）=====
+            // Scroller 默认不拉伸子元素，须显式给宽以铺满，避免右侧留白
+            val contentW = (ctx.pagerData.pageViewWidth - 24f).coerceAtLeast(200f)
             Scroller {
-                attr { flex(1f); flexDirectionColumn(); padding(14f) }
-                if (ctx.fullText.isBlank()) {
-                    Text { attr { text("暂无内容"); fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)) } }
-                } else {
-                    Text {
-                        attr {
-                            text(ctx.fullText)
-                            fontSize(UserSettings.fs(14f)); color(Color(0xFF333333)); lineHeight(22f)
+                attr { flex(1f); flexDirectionColumn(); padding(12f) }
+                View {
+                    attr { width(contentW); padding(14f); backgroundColor(Color.WHITE); borderRadius(10f) }
+                    if (ctx.fullText.isBlank()) {
+                        Text { attr { text("暂无内容"); fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)) } }
+                    } else {
+                        Text {
+                            attr {
+                                text(ctx.fullText)
+                                fontSize(UserSettings.fs(14f)); color(Color(0xFF333333)); lineHeight(22f)
+                            }
                         }
                     }
                 }
