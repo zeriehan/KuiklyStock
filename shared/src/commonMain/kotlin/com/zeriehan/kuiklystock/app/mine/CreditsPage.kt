@@ -76,7 +76,7 @@ private fun ViewContainer<*, *>.renderCredits(ctx: CreditsPage, contentW: Float)
         Triple("🧠", "腾讯混元大模型", "提供底层大模型能力的服务方"),
         Triple("✨", "智谱 GLM", "提供免费大模型 AI 能力，驱动智能对话与操作理解"),
         Triple("📈", "东方财富", "提供实时行情数据"),
-        Triple("📉", "腾讯行情", "提供 K 线 / 分时等行情数据"),
+        Triple("💹", "腾讯行情", "提供 K 线 / 分时等行情数据"),
         Triple("📊", "新浪财经", "提供辅助行情数据源"),
         Triple("🖼", "KuiklyUI", "承载界面渲染的开源 UI 框架"),
     ).forEach { (icon, name, desc) ->
