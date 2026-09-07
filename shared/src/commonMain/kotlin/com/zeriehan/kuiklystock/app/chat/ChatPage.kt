@@ -7,6 +7,7 @@ import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.module.RouterModule
+import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.directives.vif
@@ -21,6 +22,8 @@ import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.QuickTipsGate
 import com.zeriehan.kuiklystock.core.StockMention
+import com.zeriehan.kuiklystock.core.AgentRouter
+import com.zeriehan.kuiklystock.core.AgentActions
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.UserSettings
@@ -272,6 +275,19 @@ internal class ChatPage : BasePager() {
         }
         // 统一走 ChatSync.bump()：本页监听刷新气泡（重建含流式气泡），主框架刷新「最近对话」
         ChatSync.bump()
+
+        // ⚠️ AI 操控 app（Agent）：先识别是否为可执行的明确操作指令（加自选/加对比/设预警/改外观）。
+        //    命中 → 直接执行真实 app 操作并回一句确认，不再请求模型（确定性、不依赖模型输出）。
+        val agent = AgentRouter.route(q)
+        if (agent != null) {
+            val prefsObj = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
+            val feedback = AgentActions.execute(agent, prefsObj)
+            if (!destroyed) { streaming = false; streamText = "" }
+            ChatStore.append(code, ChatStore.ChatMessage("assistant", feedback))
+            ChatStore.setPending(code, false)
+            ChatSync.bump()
+            return
+        }
 
         // 传完整历史给模型作为上下文
         val history = ChatStore.messages(code)
