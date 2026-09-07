@@ -52,3 +52,6 @@ secrets.properties
 gradle.properties.local
 # 编译日志(临时)
 compile_*.log
+
+# 本地图标制作脚本/产物（不入库）
+.workbuddy/
