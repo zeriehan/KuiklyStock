@@ -109,19 +109,23 @@ object AgentChat {
         sb.append("你是「RinoStock」股票的 AI 助手。你能回答问题，也能在用户要求时执行 App 内的操作。\n\n")
         sb.append(toolsSpec).append("\n\n")
         if (priceTable.isNotBlank()) {
-            sb.append("当前股票价表（用于把'跌100'这类无单位表达换算成绝对阈值）：\n").append(priceTable).append("\n\n")
-            sb.append("无单位数字的换算规则：用户原话中只有数字、没说'元/%'时，\n")
-            sb.append("  - '跌破/跌100' → 按当前价-100 算阈值（threshold=当前价-100）\n")
-            sb.append("  - '涨破/涨100' → 按当前价+100 算阈值（threshold=当前价+100）\n")
-            sb.append("  - '跌幅 5 / 涨 5' → pctDown/pctUp 5%（threshold=5, type=当日跌幅≥/当日涨幅≥）\n\n")
+            sb.append("当前股票价表（用来自动换算无单位金额预警）：\n").append(priceTable).append("\n\n")
         }
+        // 换算规则无条件注入（不依赖价表）——用户说"跌100/涨100"这种只有金额没有'%'的，
+        // 铁定是"元"不是"百分比"（跌超100%不可能）。价表有价就按当前价±金额算绝对阈值。
+        sb.append("预警金额换算规则（对 addAlert 的 type/threshold 极其重要）：\n")
+        sb.append("  - 用户说'跌100'/'跌到多少以下'/'跌破多少'：threshold 指**价格**。若价表里有该股现价，threshold=现价-金额；\n")
+        sb.append("    若价表没有现价，直接 threshold=那个数字本身（如'跌到1200'→threshold=1200）。\n")
+        sb.append("  - 用户说'跌100%'或'跌幅100'或明确说'百分之'才用当日跌幅≥（pctDown）。**没有%或百分之，绝不是百分比。**\n")
+        sb.append("  - '当日跌幅≥5%'这类才走 type=当日跌幅≥/当日涨幅≥，threshold=5。\n\n")
         sb.append("判断与输出规则（极其重要）：\n")
         sb.append("- 若用户消息是要执行上述任一 App 操作（加自选/加对比/设价格预警/改主题色/切深色浅色），你**必须只输出一行 ").append(TAG).append("{json}**，形如：\n")
         sb.append("  · 用户“把茅台加进自选”→ ").append(TAG).append("""{"name":"addWatch","args":{"stock":"贵州茅台"}}""").append("\n")
         sb.append("  · 用户“宁德时代加入对比”→ ").append(TAG).append("""{"name":"addCompare","args":{"stock":"宁德时代"}}""").append("\n")
         sb.append("  · 用户“茅台跌破1500提醒我”→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"贵州茅台","type":"跌破","threshold":1500}}""").append("\n")
-        sb.append("  · 用户“加跌100的预警”（无单位=百分比）→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"茅台","type":"当日跌幅≥","threshold":100}}""").append("\n")
-        sb.append("  · 用户“涨100提醒我”→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"茅台","type":"当日涨幅≥","threshold":100}}""").append("\n")
+        sb.append("  · 用户“加茅台跌100的预警”→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"贵州茅台","type":"跌破","threshold":1216}}""").append("（说明：茅台现价1316，1316-100=1216）\n")
+        sb.append("  · 用户“涨100提醒我”→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"贵州茅台","type":"涨破","threshold":1416}}""").append("（现价1316+100）\n")
+        sb.append("  · 用户“茅台当日跌幅≥5%提醒我”→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"贵州茅台","type":"当日跌幅≥","threshold":5}}""").append("\n")
         sb.append("  · 用户“改成红色”→ ").append(TAG).append("""{"name":"setThemeColor","args":{"colorName":"红"}}""").append("\n")
         sb.append("  · 用户“换深色”→ ").append(TAG).append("""{"name":"setDarkMode","args":{"boolean":true}}""").append("\n")
         sb.append("  json 里 name/args 必须准确；股票尽量用中文全名（茅台→贵州茅台）。\n")
@@ -200,8 +204,17 @@ object AgentChat {
                         "addCompare" -> AgentActions.addCompare(st, prefs)
                         else -> {
                             val typeLabel = obj.optString("type")
-                            val threshold = obj.optDouble("threshold").toFloat()
-                            AgentActions.addAlert(st, mapType(typeLabel), threshold, prefs)
+                            var threshold = obj.optDouble("threshold").toFloat()
+                            var mapped = mapType(typeLabel)
+                            // 本地金额兜底：模型可能把"跌100元"误当"当日跌幅≥100%"。
+                            // A股日涨跌幅上限约20%，threshold≥50 且标成 pctDown/pctUp 几乎必然是"金额被当百分比"。
+                            // 此时用 resolveStock 拿到的现价 st.price 换算成价格预警（现价∓金额）。
+                            if ((mapped == "pctDown" || mapped == "pctUp") && threshold >= 50 && st.price > 0) {
+                                threshold = if (mapped == "pctDown") st.price - threshold else st.price + threshold
+                                mapped = if (mapped == "pctDown") "below" else "above"
+                                if (threshold <= 0) threshold = 0f
+                            }
+                            AgentActions.addAlert(st, mapped, threshold, prefs)
                         }
                     }
                 }
