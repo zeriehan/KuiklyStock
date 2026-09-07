@@ -23,7 +23,8 @@ object AgentChat {
     private const val TAG = "⟦TOOL⟧"
 
     private const val toolsSpec =
-        """可用工具（仅当用户明确要求执行某 app 操作时才调用）：
+        """可用工具（仅当用户明确要求执行某 app 操作时才调用）。
+工具 name 必须是下列之一，**不要用 change_/switch_/update_/modify_/turn_ 等其他前缀**（用了也识别不到）：
 1. addWatch：把股票加入自选。args: {"stock":"股票中文名或6位代码"}
 2. addCompare：把股票加入股票对比列表。args: {"stock":"..."}
 3. addAlert：给股票设价格预警。args: {"stock":"...","type":"跌破/涨破/当日涨幅≥/当日跌幅≥","threshold":数字}
@@ -160,7 +161,7 @@ object AgentChat {
     private fun executeTool(toolLine: String, prefs: SharedPreferencesModule): String {
         return try {
             val obj = JSONObject(toolLine)
-            val name = obj.optString("name")
+            val name = obj.optString("name").let { canonicalizeToolName(it) }
             val args = obj.optJSONObject("args") ?: JSONObject()
             when (name) {
                 "addWatch", "addCompare", "addAlert" -> {
@@ -221,6 +222,23 @@ object AgentChat {
             .firstOrNull { q -> q.name == name || name.contains(q.name) || q.name.contains(name) }
             ?.let { return it }
         return null
+    }
+
+    /** 把模型可能输出的别名（change_theme_color / set_theme_color 等）规范化到我们的内部名 */
+    private fun canonicalizeToolName(raw: String): String {
+        val n = raw.trim().lowercase()
+        // 已是自己名字
+        if (n in setOf("addwatch", "addcompare", "addalert", "setthemecolor", "setdarkmode")) return raw
+        // watch / 自选
+        if (n.contains("watch") || n.contains("self") || n.contains("favorite")) return "addWatch"
+        if (n.contains("compare") || n.contains("对比")) return "addCompare"
+        if (n.contains("alert") || n.contains("预警") || n.contains("提醒")) return "addAlert"
+        // 主题色
+        if (n.contains("theme") && (n.contains("color") || n.contains("色"))) return "setThemeColor"
+        // 深色 / 暗黑 / 夜间模式
+        if (n.contains("dark") || n.contains("深色") || n.contains("暗黑") || n.contains("夜间") || n.contains("night")) return "setDarkMode"
+        // 没匹配：原样返（executeTool 会报"未知操作：xxx"）
+        return raw
     }
 
     private fun colorToArgb(c0: String): Long? {
