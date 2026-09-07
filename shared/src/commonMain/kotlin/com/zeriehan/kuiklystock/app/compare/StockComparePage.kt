@@ -76,6 +76,8 @@ internal class StockComparePage : BasePager() {
     internal var cmpContentH: Float = 0f
     /** 消息流视口高度（scroll 事件回写） */
     internal var cmpViewportH: Float = 0f
+    /** 视口未就绪时滚底重试计数（进页首帧 scroll 事件未回写前不清滚，用估算会出界被忽略） */
+    internal var cmpScrollRetry: Int = 0
     // ===== 消息长按菜单 / 多选（对齐主聊天 ChatPage）=====
     /** 长按菜单：当前操作消息在 ChatStore(COMPARE_CONV) 里的索引 / 文本 */
     internal var cmpMsgMenuIndex: Int? by observable(null)
@@ -145,6 +147,7 @@ internal class StockComparePage : BasePager() {
         // 重新出现(返回本页/重进前台)：期间后台若已把 AI 回复落盘，重新同步一次（配合 ChatSync 监听双保险）
         syncCompFromStore()
         // 进页/重新出现都滚到底（最新消息可见），避免停留在历史最旧处
+        cmpScrollRetry = 0
         com.tencent.kuikly.core.timer.setTimeout(pagerId, 120) { if (!compDestroyed) scrollCompToBottom() }
     }
 
@@ -274,26 +277,26 @@ internal class StockComparePage : BasePager() {
     /**
      * 消息流滚到底（最新消息可见）。offset 必须在 [0, contentH-viewportH] 内才生效，
      * 故用真实尺寸算 y=contentH-viewportH，绝不用极大值。
-     * 进页首帧 scroll 事件可能尚未回写视口高，用估算值兜底；延迟一拍等布局完成后调用。
+     * 进页首帧 scroll 事件可能尚未回写视口高（cmpViewportH=0）：此时不清用估算值（易算出界被忽略，
+     * 正是"进页仍停在最旧"的元凶），改为稍后重试，等 scroll 事件给了真实视口高再滚一次。
      */
     internal fun scrollCompToBottom() {
         val v = cmpScrollerRef.view ?: return
         if (cmpContentH <= 0f) return
-        val vh = if (cmpViewportH > 0f) cmpViewportH else estimateCmpViewportH()
-        val y = (cmpContentH - vh).coerceAtLeast(0f)
-        com.tencent.kuikly.core.timer.setTimeout(pagerId, 30) {
-            v.setContentOffset(0f, y, false)
+        if (cmpViewportH <= 0f) {
+            // 真实视口未就绪：延迟重试（最多几次），让初始 scroll 事件回写 cmpViewportH
+            cmpScrollRetry++
+            if (cmpScrollRetry <= 6) {
+                com.tencent.kuikly.core.timer.setTimeout(pagerId, 80 * cmpScrollRetry) {
+                    if (!compDestroyed) scrollCompToBottom()
+                }
+            }
+            return
         }
-    }
-
-    /**
-     * 视口高度估算（scroll 事件尚未回写时兜底）：整页高 − 顶部返回栏(状态栏+44)
-     * − 上区对比卡(206) − 分隔(4) − 下区内边距(上下各6) − 输入栏(40) − 卡片距输入栏(8)。
-     * 供首帧滚底用，之后由 scroll 事件的真实 cmpViewportH 覆盖。
-     */
-    private fun estimateCmpViewportH(): Float {
-        val sb = pagerData.statusBarHeight
-        return (pagerData.pageViewHeight - (44f + sb) - 206f - 4f - 12f - 40f - 8f - keyboardH).coerceAtLeast(0f)
+        val y = (cmpContentH - cmpViewportH).coerceAtLeast(0f)
+        com.tencent.kuikly.core.timer.setTimeout(pagerId, 30) {
+            if (!compDestroyed) v.setContentOffset(0f, y, false)
+        }
     }
 
     // ===== 消息长按菜单 / 多选（操作 ChatStore.COMPARE_CONV，与渲染单向同步）=====
@@ -424,8 +427,9 @@ internal class StockComparePage : BasePager() {
             View { attr { height(4f); backgroundColor(Color(0xFFF2F3F5)) } }
 
             // ===== 下区（约 3/5）：对比 AI 聊天（#100）=====
-            vif({ ctx.chatToggle }) { val c = this; c.renderCompareChat(ctx) }
-            vif({ !ctx.chatToggle }) { val c = this; c.renderCompareChat(ctx) }
+            // 常驻渲染一次（Scroller 本体不随 chatToggle 重建，进页滚底/长按才可靠）；
+            // 消息内容在 renderCompareChat 内用 vif(chatToggle) 双分支重建
+            renderCompareChat(ctx)
 
             // ===== 消息长按菜单（浮层，放根 column 常驻，不受 chatToggle 重建影响）=====
             vif({ ctx.cmpMsgMenuIndex != null }) {
@@ -625,84 +629,18 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
                         ctx.cmpContentH = h
                         ctx.scrollCompToBottom()
                     }
-                    // 记录视口高度：滚底 target = contentH - viewportH
-                    scroll { params -> ctx.cmpViewportH = params.viewHeight }
-                }
-            if (ctx.chatMessages.isEmpty()) {
-                // 空态：仅一行提示；推荐问句统一放在输入栏上方(见 body 的快捷胶囊区)，避免两处重复
-                Text {
-                    attr {
-                        text("对比 AI：综合几只股票的实时价与近期走势，给出横向对比、优劣势与结论。点下方推荐问题或直接输入开始。")
-                        fontSize(UserSettings.fs(12f)); color(Color(0xFF999999))
-                    }
-                }
-            } else {
-                ctx.chatMessages.forEachIndexed { mi, msg ->
-                    val isUser = msg.role == "user"
-                    View {
-                        attr {
-                            flexDirectionRow(); alignItemsCenter(); marginBottom(8f)
-                            justifyContent(if (isUser) FlexJustifyContent.FLEX_END else FlexJustifyContent.FLEX_START)
-                        }
-                        // 多选态：气泡左侧勾选圆点（选中填充主题色+打勾；attr 内现读勾选态）
-                        vif({ ctx.cmpSelectMode }) {
-                            View {
-                                attr {
-                                    width(20f); height(20f); borderRadius(10f); marginRight(8f)
-                                    alignItemsCenter(); justifyContentCenter()
-                                    val sel = ctx.cmpSelectedIdx.contains(mi)
-                                    border(Border(1.5f, BorderStyle.SOLID, Color(if (sel) UserSettings.themeColor else 0xFFCCCCCC)))
-                                    backgroundColor(if (sel) Color(UserSettings.themeColor) else Color.WHITE)
-                                }
-                                event { click { ctx.toggleCmpSelect(mi) } }
-                                Text { attr {
-                                    val sel = ctx.cmpSelectedIdx.contains(mi)
-                                    text(if (sel) "✓" else ""); fontSize(UserSettings.fs(13f)); color(Color.WHITE)
-                                } }
-                            }
-                        }
-                        View {
-                            attr {
-                                maxWidth((ctx.pagerData.pageViewWidth - 60f))
-                                flexDirectionColumn()
-                                backgroundColor(if (isUser) Color(UserSettings.themeColor) else Color(0xFFF7F8FA))
-                                borderRadius(8f); padding(8f)
-                            }
-                            event {
-                                // 长按弹操作菜单（复制/删除/选取文字/多选）；多选态改由点按勾选，屏蔽长按
-                                longPress { if (!ctx.cmpSelectMode) ctx.openCmpMsgMenu(mi, msg.text) }
-                                click { if (ctx.cmpSelectMode) ctx.toggleCmpSelect(mi) }
-                            }
-                            if (isUser) {
-                                Text {
-                                    attr {
-                                        text(msg.text); fontSize(UserSettings.fs(13f)); color(Color.WHITE)
-                                        maxWidth((ctx.pagerData.pageViewWidth - 60f) - 16f)
-                                    }
-                                }
-                            } else {
-                                // assistant: Markdown 渲染（复用聊天富文本）
-                                renderMarkdown(
-                                    text = msg.text,
-                                    contentW = (ctx.pagerData.pageViewWidth - 60f) - 16f,
-                                    textColor = Color(0xFF222222),
-                                    accent = Color(UserSettings.themeColor),
-                                    onOpenStock = { code ->
-                                        val st = StockData.findByCode(code)
-                                        if (st.name.isNotEmpty() && st.name != code) {
-                                            val d = JSONObject().put("stockCode", code)
-                                            ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
-                                        }
-                                    }
-                                )
-                            }
+                    // 记录视口高度：滚底 target = contentH - viewportH；就绪后滚一次底并清重试计数
+                    scroll { params ->
+                        ctx.cmpViewportH = params.viewHeight
+                        if (ctx.cmpContentH > 0f && ctx.cmpScrollRetry > 0) {
+                            ctx.cmpScrollRetry = 0
+                            ctx.scrollCompToBottom()
                         }
                     }
                 }
-                if (ctx.cmpWaiting) {
-                    Text { attr { text("AI 思考中…"); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)) } }
-                }
-            }
+            // 消息内容：仅这一块随 chatToggle 重建（Scroller 本体常驻，进页滚底/滚动位置不被打断）
+            vif({ ctx.chatToggle }) { val c = this; c.renderCompareChatMsgs(ctx) }
+            vif({ !ctx.chatToggle }) { val c = this; c.renderCompareChatMsgs(ctx) }
             }  // Scroller 结束
         }  // 白卡片弹性区结束
         // ===== 推荐问句（快捷胶囊，本进程首次进对比页提示一次；发过第一条收起）=====
@@ -791,6 +729,87 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
                 height(ctx.keyboardH)
                 backgroundColor(if (UserSettings.darkMode) Color(0xFF1A1B1E) else Color(0xFFF2F3F5))
             }
+        }
+    }
+}
+
+/** 渲染对比聊天的消息内容（空态提示 或 消息气泡+思考中）。
+ *  作为 Scroller 内 vif(chatToggle) 双分支的内容：chatToggle 变化时仅重建此内容，
+ *  Scroller 本体常驻，进页/来新消息的 contentSizeChanged 滚底才可靠。 */
+private fun ViewContainer<*, *>.renderCompareChatMsgs(ctx: StockComparePage) {
+    if (ctx.chatMessages.isEmpty()) {
+        // 空态：仅一行提示；推荐问句统一放在输入栏上方(见 renderCompareChat 的快捷胶囊区)，避免两处重复
+        Text {
+            attr {
+                text("对比 AI：综合几只股票的实时价与近期走势，给出横向对比、优劣势与结论。点下方推荐问题或直接输入开始。")
+                fontSize(UserSettings.fs(12f)); color(Color(0xFF999999))
+            }
+        }
+    } else {
+        ctx.chatMessages.forEachIndexed { mi, msg ->
+            val isUser = msg.role == "user"
+            View {
+                attr {
+                    flexDirectionRow(); alignItemsCenter(); marginBottom(8f)
+                    justifyContent(if (isUser) FlexJustifyContent.FLEX_END else FlexJustifyContent.FLEX_START)
+                }
+                // 多选态：气泡左侧勾选圆点（选中填充主题色+打勾；attr 内现读勾选态）
+                vif({ ctx.cmpSelectMode }) {
+                    View {
+                        attr {
+                            width(20f); height(20f); borderRadius(10f); marginRight(8f)
+                            alignItemsCenter(); justifyContentCenter()
+                            val sel = ctx.cmpSelectedIdx.contains(mi)
+                            border(Border(1.5f, BorderStyle.SOLID, Color(if (sel) UserSettings.themeColor else 0xFFCCCCCC)))
+                            backgroundColor(if (sel) Color(UserSettings.themeColor) else Color.WHITE)
+                        }
+                        event { click { ctx.toggleCmpSelect(mi) } }
+                        Text { attr {
+                            val sel = ctx.cmpSelectedIdx.contains(mi)
+                            text(if (sel) "✓" else ""); fontSize(UserSettings.fs(13f)); color(Color.WHITE)
+                        } }
+                    }
+                }
+                View {
+                    attr {
+                        maxWidth((ctx.pagerData.pageViewWidth - 60f))
+                        flexDirectionColumn()
+                        backgroundColor(if (isUser) Color(UserSettings.themeColor) else Color(0xFFF7F8FA))
+                        borderRadius(8f); padding(8f)
+                    }
+                    event {
+                        // 长按弹操作菜单（复制/删除/选取文字/多选）；多选态改由点按勾选，屏蔽长按
+                        longPress { if (!ctx.cmpSelectMode) ctx.openCmpMsgMenu(mi, msg.text) }
+                        click { if (ctx.cmpSelectMode) ctx.toggleCmpSelect(mi) }
+                    }
+                    if (isUser) {
+                        Text {
+                            attr {
+                                text(msg.text); fontSize(UserSettings.fs(13f)); color(Color.WHITE)
+                                maxWidth((ctx.pagerData.pageViewWidth - 60f) - 16f)
+                            }
+                        }
+                    } else {
+                        // assistant: Markdown 渲染（复用聊天富文本）
+                        renderMarkdown(
+                            text = msg.text,
+                            contentW = (ctx.pagerData.pageViewWidth - 60f) - 16f,
+                            textColor = Color(0xFF222222),
+                            accent = Color(UserSettings.themeColor),
+                            onOpenStock = { code ->
+                                val st = StockData.findByCode(code)
+                                if (st.name.isNotEmpty() && st.name != code) {
+                                    val d = JSONObject().put("stockCode", code)
+                                    ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        if (ctx.cmpWaiting) {
+            Text { attr { text("AI 思考中…"); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)) } }
         }
     }
 }
