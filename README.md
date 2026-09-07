@@ -265,7 +265,7 @@ class QuotesPage : Pager() {   // 或继承 base/BasePager
 ## 附：实际进度快照（接手 AI 先看这里）
 
 > 上文战略/排期/目录为 8/27 初版，以下为实测状态，两者冲突以下文为准。
-> ⏱ 快照最后更新：**2026-09-06**（9/5-9/6 新增见「9/6 增量」小节；更早基线为 9/4）。
+> ⏱ 快照最后更新：**2026-09-07**（9/7 见「9/7 增量」小节；9/5-9/6 见「9/6 增量」；更早基线为 9/4）。
 
 ### 当前进度（截至 9/6）
 - Task01（AI 行情原型）**已收官**：行情页(大盘/板块/个股)/自选/详情/板块详情/我的 全链路可演示，假数据与"待接入"空壳已清。
@@ -286,10 +286,10 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
 │   ├── main/         MainTabPager(四Tab 主框架,含行情/自选/我的Tab)
 │   ├── chat/         ChatPage(AI对话:富文本+提及股卡+思考态+多选+长按)
 │   ├── detail/       StockDetailPage/SectorDetailPage(承接页,含AI分析/K线/分时)
-│   ├── mine/         AppearancePage/ExpandSettingsPage/HiddenStocksPage
+│   ├── mine/         AppearancePage/ExpandSettingsPage/HiddenStocksPage/CreditsPage(关于与致谢)
 │   └── quotes/       HeatPoolPage(行情池)/QuotesPage(旧验证页,无入口,勿用)
 ```
-- 路由页 @Page: MainTab / QuotesPage / StockDetail / SectorDetail / Chat / HeatPool / Appearance / ExpandSettings / HiddenStocks。
+- 路由页 @Page: MainTab / QuotesPage / StockDetail / SectorDetail / Chat / HeatPool / Appearance / ExpandSettings / HiddenStocks / Credits。
 
 ### 编译
 - `./gradlew --stop` 后 `./gradlew :shared:compileDebugKotlinAndroid`（判 UP-TO-DATE 加 `--rerun-tasks`）。
@@ -329,6 +329,19 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/
 - **Kuikly Input 隐性坑 + 选股页按"复刻行情页"重写**：所有 `Input` 控件 attr 必须显式 `color(0xFF222222)`，否则键入文字透明不可见—— 全项目 Input 审计补齐（选股页搜索框、对比页聊天框）。选股页重写为**行情同构**布局：搜索框（静态不丢焦点）+ 榜单 Tab（涨幅/跌幅/换手/振幅，数据复用 `StockData.rankOf/getQuotes`）+ 顶部已加 chips（横滚×删）+ 榜单行（market 风格行尾「＋加入/✓移除」，点整行或按钮切换），榜单列表独立竖向滚动区。搜索框/Tab 移出 vif 重建区防输入丢焦点（参照行情页 renderRankArea）；`initialCodes` 用 `pageData` 直接传（不依赖单例跨页，根除丢值）。
 - **榜单加「全部」Tab + 搜索自动跳全部（选股页 + 行情个股榜）**：榜单 Tab 增至「涨幅/跌幅/换手/振幅/全部」，「全部」展示全池（与榜单同源）；搜索时高亮自动切到「全部」并跨全池过滤——修"某股不在当前榜就搜不到"的根本问题（如"中国平安"不在涨幅榜也能搜到）。已加对比 chips 支持折叠/展开（点标题行，节省纵向空间 + 醒目"N 只"胶囊）。
 - **对比股"完成即自动生效" + 各周期迷你图正确变换**：选股页「完成」落盘对比股 → 对比页 `pageDidAppear()` 自动重读并应用（不再手动点「应用选股」）；对新增股票补拉 分时+周/月/年K，保证换股后迷你走势图读取新数据、切任意周期都有内容。
+
+### 9/7 增量
+> ⏱ 快照更新时间戳同步为 2026-09-07。9/7 集中在「AI Agent 真执行 App 操作」的协议/语义兜底加固 + 预警弹窗交互改版 + 致谢页。
+- **AI Agent「听懂人话→执行 App 操作」协议全闭环**（核心，详见 `亮点与创新.md` 新增「AI Agent 实操」节）：用户自然语言（加自选/加对比/设价格预警/改主题色/切深色）→ 模型决策是否执行 + `⟦TOOL⟧{json}` 少样本 → `executeTool` 真实改 `UserSettings`/自选/预警并落盘。历经 10+ commit 从规则路由(`eaa7e81`)进化到模型决策，覆盖：
+  - **JSON 解析容错**：模型输出五花八门的协议形态都能解析——标准 `{name+args}`、`{tool/function/action+args}` 驼峰字段(`5c2df24`)、name 直接当外层 key `{"addAlert":{...}}`(`225a29c`)、递归拍平内嵌 `args`(`06b529d`)、字面量 `{json}`/空 `{}` 占位过滤(`e23d8ad`)。
+  - **别名规范化 canonicalizeToolName**：`change_theme_color`/`set_theme_color`/`tool` 等任意含 theme/color/色/dark/night/watch/compare/alert 的别名都映射回内部精确名；未匹配返回空不再当工具名(`91765c6` `5c2df24`)。
+  - **语义兜底不能只靠 prompt**（glm-4-flash 照抄少样本倾向强，样本必须自洽）：`executeTool` 代码侧二次校准——"加跌100的预警"这类无单位金额，注入实时价表让模型按现价算(`29fc11a`)，少样本/规则无条件注入修正(`c4da462`)，再用用户原话 query 二次换算成绝对阈值 `threshold=现价∓金额`(`db7246e`)。
+  - 失败短路：`executeTool` 结果含"未/失败/无法"直接 callback 准确错误，不让模型复述包装。
+- **预警弹窗改版「4 行独立输入 + 一次保存」**：原 4 chip 单选 + 1 输入框只配一种 → 改 4 行（跌破/涨破/当日跌幅≥/当日涨幅≥ 各一行）各自填值，保存按钮一次落盘同股同类型覆盖。回显稳定性根因修复——Kuikly Input 设初值用声明式 `attr{ text(草稿) }` 而非 ref 时序 hack（vif 重建时按草稿注入）。
+- **预警输入占位与已填值区分**：placeholder 染色在 Kuikly Android 不可靠 → 用**占位右对齐浅灰 + 已填值左对齐深黑**的对齐区分方案（自绘伪占位 Text 叠加 Input，草稿空时显示右对齐浅灰提示）。已设值经延迟 setText 回显。
+- **我的页「关于与致谢」**：新增 `CreditsPage`(@Page "Credits")致谢页 + 「我的」设置区入口行，感谢 WorkBuddy/腾讯混元/智谱GLM/东方财富/腾讯行情/新浪财经/KuiklyUI。
+- 路由页补 `Credits`。源码 40+ → 50+ .kt。
+- ⚠️ **输入回显铁律沉淀**：Kuikly Input/Text 设初值一律 attr `text(...)` 声明式；API 不确定时解 core-android aar 的 classes.jar `javap -p .../InputAttr.class` 查（见 `架构说明.md`）。
 
 ### Task02 关键实现速览（供演示/续做）
 - **富文本**：KRMarkdown 解析 Markdown→块+行内 token；渲染用 Kuikly `RichText+Span`(跨行/自动换行/行内 click)，块=标题/段落/列表/引用/代码；股票名→主题色可点跳详情。字号走 `UserSettings.fs`。
