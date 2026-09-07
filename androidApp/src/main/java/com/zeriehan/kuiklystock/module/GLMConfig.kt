@@ -30,12 +30,14 @@ object GLMConfig {
 
     /**
      * 模型候选链，按顺序尝试，命中一个即返回。
-     * 均为智谱当前的免费 Flash 系列；4.7 限流时自动降级。
+     * ⚠️ 2026-09-07 实测：glm-4.7-flash / glm-4.5-flash 高峰常报 1305 访问量过大(429)，
+     *    glm-4-flash 稳定可通。故把 **glm-4-flash 放最前**保证演示/日常稳定响应，
+     *    4.7/4.5 放其后作为降级候选(它们偶尔不限流、能力更好)。
      */
     val MODEL_CANDIDATES: List<String> = listOf(
-        "glm-4.7-flash",
-        "glm-4.5-flash",
         "glm-4-flash",
+        "glm-4.5-flash",
+        "glm-4.7-flash",
     )
 
     /** 采样温度：分析类任务取中等，兼顾稳定与多样 */
