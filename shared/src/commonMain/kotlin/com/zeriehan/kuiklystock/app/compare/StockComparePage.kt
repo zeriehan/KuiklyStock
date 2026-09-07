@@ -5,6 +5,9 @@ import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.ViewRef
+import com.tencent.kuikly.core.base.Border
+import com.tencent.kuikly.core.base.BorderStyle
+import com.tencent.kuikly.core.layout.FlexJustifyContent
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.module.RouterModule
 import com.tencent.kuikly.core.module.SharedPreferencesModule
@@ -22,6 +25,7 @@ import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.UserSettings
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.formatPrice
+import com.zeriehan.kuiklystock.core.QuickTipsGate
 import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 import com.zeriehan.kuiklystock.core.llm.ChatStore
 import com.zeriehan.kuiklystock.core.llm.ChatSync
@@ -72,6 +76,16 @@ internal class StockComparePage : BasePager() {
     internal var cmpContentH: Float = 0f
     /** 消息流视口高度（scroll 事件回写） */
     internal var cmpViewportH: Float = 0f
+    // ===== 消息长按菜单 / 多选（对齐主聊天 ChatPage）=====
+    /** 长按菜单：当前操作消息在 ChatStore(COMPARE_CONV) 里的索引 / 文本 */
+    internal var cmpMsgMenuIndex: Int? by observable(null)
+    internal var cmpMsgMenuText: String by observable("")
+    /** 消息多选模式（长按菜单「多选」进入），可勾选后批量删除 */
+    internal var cmpSelectMode: Boolean by observable(false)
+    /** 多选态已勾选消息索引（重新赋值触发响应式，勿原地 mutate） */
+    internal var cmpSelectedIdx: Set<Int> by observable(emptySet())
+    /** 推荐问句(快捷胶囊)是否可见：本进程首次进对比页提示一次，发过第一条收起 */
+    internal var cmpQuickTipsVisible: Boolean by observable(false)
     /** 页面是否已销毁：销毁后回调/监听只写单例，不再碰本页 observable（防后台完成回复丢失） */
     private var compDestroyed: Boolean = false
     /** ChatSync 监听（须为稳定同一对象，pageWillDestroy 里才能精确移除）：
@@ -89,6 +103,8 @@ internal class StockComparePage : BasePager() {
         // （退出对比页后 AI 若仍在后台跑，isPending=true；完成后落盘 bump → 监听刷新显示，见 syncCompFromStore）
         ChatSync.addListener(cmpChatListener)
         syncCompFromStore()
+        // 推荐问句：本进程首次进对比页提示一次（QuickTipsGate 与主聊天共享门控）
+        cmpQuickTipsVisible = QuickTipsGate.claim()
         // 拉各股真实行情/分时/K线(各周期)，保证对比数据真
         compareCodes.forEach { code ->
             val st = StockData.findByCode(code)
@@ -128,6 +144,8 @@ internal class StockComparePage : BasePager() {
         }
         // 重新出现(返回本页/重进前台)：期间后台若已把 AI 回复落盘，重新同步一次（配合 ChatSync 监听双保险）
         syncCompFromStore()
+        // 进页/重新出现都滚到底（最新消息可见），避免停留在历史最旧处
+        com.tencent.kuikly.core.timer.setTimeout(pagerId, 120) { if (!compDestroyed) scrollCompToBottom() }
     }
 
     /** 页面销毁：解除监听 + 标记已销毁，后续回调只写单例(不碰本页 observable) */
@@ -217,6 +235,7 @@ internal class StockComparePage : BasePager() {
     internal fun sendCompareAsk() {
         val q = cmpInput.trim()
         if (q.isBlank() || cmpWaiting) return
+        exitCmpSelectIfNeeded()
         cmpInput = ""
         cmpInputRef.view?.setText("")
         sendCompareQuestion(q)
@@ -229,6 +248,7 @@ internal class StockComparePage : BasePager() {
     internal fun sendCompareQuestion(q: String) {
         if (q.isBlank() || cmpWaiting) return
         cmpWaiting = true
+        cmpQuickTipsVisible = false  // 发出第一条后：推荐问句收起，避免一直挡视野
         ChatStore.setPending(ChatStore.COMPARE_CONV, true)
         // 用户消息落盘（先落盘再 bump，避免依赖本页存活）
         ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("user", q))
@@ -253,16 +273,80 @@ internal class StockComparePage : BasePager() {
 
     /**
      * 消息流滚到底（最新消息可见）。offset 必须在 [0, contentH-viewportH] 内才生效，
-     * 故用真实尺寸算 y=contentH-viewportH，绝不用极大值。延迟一拍等布局完成后调用。
+     * 故用真实尺寸算 y=contentH-viewportH，绝不用极大值。
+     * 进页首帧 scroll 事件可能尚未回写视口高，用估算值兜底；延迟一拍等布局完成后调用。
      */
     internal fun scrollCompToBottom() {
         val v = cmpScrollerRef.view ?: return
         if (cmpContentH <= 0f) return
-        val y = (cmpContentH - cmpViewportH).coerceAtLeast(0f)
+        val vh = if (cmpViewportH > 0f) cmpViewportH else estimateCmpViewportH()
+        val y = (cmpContentH - vh).coerceAtLeast(0f)
         com.tencent.kuikly.core.timer.setTimeout(pagerId, 30) {
             v.setContentOffset(0f, y, false)
         }
     }
+
+    /**
+     * 视口高度估算（scroll 事件尚未回写时兜底）：整页高 − 顶部返回栏(状态栏+44)
+     * − 上区对比卡(206) − 分隔(4) − 下区内边距(上下各6) − 输入栏(40) − 卡片距输入栏(8)。
+     * 供首帧滚底用，之后由 scroll 事件的真实 cmpViewportH 覆盖。
+     */
+    private fun estimateCmpViewportH(): Float {
+        val sb = pagerData.statusBarHeight
+        return (pagerData.pageViewHeight - (44f + sb) - 206f - 4f - 12f - 40f - 8f - keyboardH).coerceAtLeast(0f)
+    }
+
+    // ===== 消息长按菜单 / 多选（操作 ChatStore.COMPARE_CONV，与渲染单向同步）=====
+
+    /** 长按某消息气泡 → 打开操作菜单（多选态下屏蔽，改由点按勾选） */
+    internal fun openCmpMsgMenu(index: Int, text: String) { cmpMsgMenuIndex = index; cmpMsgMenuText = text }
+    internal fun closeCmpMsgMenu() { cmpMsgMenuIndex = null; cmpMsgMenuText = "" }
+
+    /** 复制消息文本到剪贴板 */
+    internal fun copyCmpText(text: String) {
+        bridgeModule.copyToPasteboard(text)
+        bridgeModule.toast("已复制")
+    }
+
+    /** 删除单条消息（同步 ChatStore + 广播刷新 UI） */
+    internal fun deleteCmpMsg(index: Int) {
+        if (index !in ChatStore.messages(ChatStore.COMPARE_CONV).indices) return
+        ChatStore.deleteMessageAt(ChatStore.COMPARE_CONV, index)
+        ChatSync.bump()
+    }
+
+    /** 进入多选：关闭长按菜单，并预勾选触发长按的那条（符合直觉） */
+    internal fun enterCmpSelect(index: Int) {
+        closeCmpMsgMenu()
+        cmpSelectMode = true
+        cmpSelectedIdx = setOf(index)
+    }
+    internal fun exitCmpSelect() { cmpSelectMode = false; cmpSelectedIdx = emptySet() }
+
+    /** 勾选/取消勾选（重新赋值整个集合触发响应式） */
+    internal fun toggleCmpSelect(index: Int) {
+        cmpSelectedIdx = if (cmpSelectedIdx.contains(index)) cmpSelectedIdx - index else cmpSelectedIdx + index
+    }
+
+    /** 全选 / 取消全选 */
+    internal fun toggleCmpSelectAll() {
+        val total = ChatStore.messages(ChatStore.COMPARE_CONV).size
+        cmpSelectedIdx = if (total > 0 && cmpSelectedIdx.size >= total) emptySet() else (0 until total).toSet()
+    }
+
+    /** 批量删除已勾选消息（一次性删，避免索引错位） */
+    internal fun deleteCmpSelected() {
+        if (cmpSelectedIdx.isEmpty()) return
+        val n = cmpSelectedIdx.size
+        val targets = cmpSelectedIdx
+        exitCmpSelect()
+        ChatStore.deleteMessagesAt(ChatStore.COMPARE_CONV, targets)
+        ChatSync.bump()
+        bridgeModule.toast("已删除 $n 条消息")
+    }
+
+    /** 发送前退出多选态：避免勾选索引与新消息列表语义错位 */
+    internal fun exitCmpSelectIfNeeded() { if (cmpSelectMode) exitCmpSelect() }
 
     /** 构造对比 prompt：列出当前对比股的名称/代码/实时价/涨跌/近 N 日 K 线摘要 + 用户问题 */
     private fun buildComparePrompt(question: String): String {
@@ -342,6 +426,70 @@ internal class StockComparePage : BasePager() {
             // ===== 下区（约 3/5）：对比 AI 聊天（#100）=====
             vif({ ctx.chatToggle }) { val c = this; c.renderCompareChat(ctx) }
             vif({ !ctx.chatToggle }) { val c = this; c.renderCompareChat(ctx) }
+
+            // ===== 消息长按菜单（浮层，放根 column 常驻，不受 chatToggle 重建影响）=====
+            vif({ ctx.cmpMsgMenuIndex != null }) {
+                View { attr { absolutePositionAllZero(); backgroundColor(Color(0x55000000)) }
+                    event { click { ctx.closeCmpMsgMenu() } } }
+                View {
+                    attr {
+                        val vw = ctx.pagerData.pageViewWidth
+                        val menuW = 170f
+                        val left = (vw - menuW) / 2f
+                        absolutePosition(top = 240f, left = left)
+                        width(menuW); backgroundColor(Color.WHITE); borderRadius(12f); flexDirectionColumn()
+                    }
+                    val idx = ctx.cmpMsgMenuIndex!!
+                    ctx.cmpMsgMenuItem("复制") { ctx.copyCmpText(ctx.cmpMsgMenuText); ctx.closeCmpMsgMenu() }
+                    ctx.cmpMsgDivider()
+                    ctx.cmpMsgMenuItem("删除") { ctx.deleteCmpMsg(idx); ctx.closeCmpMsgMenu() }
+                    ctx.cmpMsgDivider()
+                    ctx.cmpMsgMenuItem("选取文字") { ctx.bridgeModule.showSelectableText("选取文字", ctx.cmpMsgMenuText); ctx.closeCmpMsgMenu() }
+                    ctx.cmpMsgDivider()
+                    ctx.cmpMsgMenuItem("多选") { ctx.enterCmpSelect(idx) }
+                    ctx.cmpMsgDivider()
+                    ctx.cmpMsgMenuItem("取消") { ctx.closeCmpMsgMenu() }
+                }
+            }
+
+            // ===== 消息多选操作栏（多选态浮在输入栏上方）=====
+            vif({ ctx.cmpSelectMode }) {
+                View {
+                    attr {
+                        absolutePosition(left = 0f, bottom = 64f)
+                        width(ctx.pagerData.pageViewWidth)
+                        height(52f); flexDirectionRow(); alignItemsCenter()
+                        backgroundColor(Color.WHITE)
+                        padding(0f, 12f)
+                    }
+                    // 全选 / 取消全选
+                    View {
+                        attr { padding(6f, 4f, bottom = 6f, right = 4f); marginRight(8f)
+                            borderRadius(8f); backgroundColor(Color(0xFFF2F3F5)) }
+                        event { click { ctx.toggleCmpSelectAll() } }
+                        Text { attr {
+                            val total = ChatStore.messages(ChatStore.COMPARE_CONV).size
+                            val all = total > 0 && ctx.cmpSelectedIdx.size >= total
+                            text(if (all) "取消全选" else "全选"); fontSize(UserSettings.fs(14f)); color(Color(0xFF333333))
+                        } }
+                    }
+                    Text { attr { text("已选 ${ctx.cmpSelectedIdx.size}"); fontSize(UserSettings.fs(14f)); color(Color(0xFF222222)); flex(1f); marginRight(16f) } }
+                    // 删除（红）
+                    View {
+                        attr { padding(6f, 4f, bottom = 6f, right = 4f); marginRight(8f)
+                            borderRadius(8f); backgroundColor(Color(0xFFFDECEA)) }
+                        event { click { ctx.deleteCmpSelected() } }
+                        Text { attr { text("删除"); fontSize(UserSettings.fs(14f)); color(Color(0xFFE54D42)) } }
+                    }
+                    // 取消多选
+                    View {
+                        attr { padding(6f, 4f, bottom = 6f, right = 4f)
+                            borderRadius(8f); backgroundColor(Color(0xFFF2F3F5)) }
+                        event { click { ctx.exitCmpSelect() } }
+                        Text { attr { text("取消"); fontSize(UserSettings.fs(14f)); color(Color(0xFF333333)) } }
+                    }
+                }
+            }
         }
     }
 }
@@ -481,63 +629,73 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
                     scroll { params -> ctx.cmpViewportH = params.viewHeight }
                 }
             if (ctx.chatMessages.isEmpty()) {
-                // 首条消息前：引导提示（只提示一次，发过就不再显示）
-                val names = ctx.compareCodes.take(2).map { StockData.findByCode(it).name }
-                val whoText = if (names.size >= 2) "${names[0]} 和 ${names[1]} 谁更值得关注？" else "当前对比股谁更值得关注？"
+                // 空态：仅一行提示；推荐问句统一放在输入栏上方(见 body 的快捷胶囊区)，避免两处重复
                 Text {
                     attr {
-                        text("对比 AI：会综合几只股票的实时价与近期走势给出横向对比、优劣势与结论。点下面问题开始：")
+                        text("对比 AI：综合几只股票的实时价与近期走势，给出横向对比、优劣势与结论。点下方推荐问题或直接输入开始。")
                         fontSize(UserSettings.fs(12f)); color(Color(0xFF999999))
                     }
                 }
-                View {
-                    attr { flexDirectionColumn() }
-                    listOf(whoText, "帮我挑一只更稳的", "谁短线更强？").forEach { q ->
-                        View {
-                            attr {
-                                marginTop(6f); paddingLeft(12f); paddingRight(12f); height(34f)
-                                borderRadius(17f); justifyContentCenter()
-                                backgroundColor(Color(0xFFFFF3E0))
-                            }
-                            event { click { ctx.sendCompareQuestion(q) } }
-                            Text { attr { text(q); fontSize(UserSettings.fs(13f)); color(Color(0xFF9A6B00)) } }
-                        }
-                    }
-                }
             } else {
-                ctx.chatMessages.forEach { msg ->
-                    if (msg.role == "user") {
-                        View {
-                            attr { marginBottom(8f); flexDirectionRow(); justifyContentFlexEnd() }
+                ctx.chatMessages.forEachIndexed { mi, msg ->
+                    val isUser = msg.role == "user"
+                    View {
+                        attr {
+                            flexDirectionRow(); alignItemsCenter(); marginBottom(8f)
+                            justifyContent(if (isUser) FlexJustifyContent.FLEX_END else FlexJustifyContent.FLEX_START)
+                        }
+                        // 多选态：气泡左侧勾选圆点（选中填充主题色+打勾；attr 内现读勾选态）
+                        vif({ ctx.cmpSelectMode }) {
                             View {
                                 attr {
-                                    backgroundColor(Color(UserSettings.themeColor)); borderRadius(8f); padding(8f)
-                                    // 限制最大宽度，避免长文本横铺；attr 现读 text
+                                    width(20f); height(20f); borderRadius(10f); marginRight(8f)
+                                    alignItemsCenter(); justifyContentCenter()
+                                    val sel = ctx.cmpSelectedIdx.contains(mi)
+                                    border(Border(1.5f, BorderStyle.SOLID, Color(if (sel) UserSettings.themeColor else 0xFFCCCCCC)))
+                                    backgroundColor(if (sel) Color(UserSettings.themeColor) else Color.WHITE)
                                 }
+                                event { click { ctx.toggleCmpSelect(mi) } }
+                                Text { attr {
+                                    val sel = ctx.cmpSelectedIdx.contains(mi)
+                                    text(if (sel) "✓" else ""); fontSize(UserSettings.fs(13f)); color(Color.WHITE)
+                                } }
+                            }
+                        }
+                        View {
+                            attr {
+                                maxWidth((ctx.pagerData.pageViewWidth - 60f))
+                                flexDirectionColumn()
+                                backgroundColor(if (isUser) Color(UserSettings.themeColor) else Color(0xFFF7F8FA))
+                                borderRadius(8f); padding(8f)
+                            }
+                            event {
+                                // 长按弹操作菜单（复制/删除/选取文字/多选）；多选态改由点按勾选，屏蔽长按
+                                longPress { if (!ctx.cmpSelectMode) ctx.openCmpMsgMenu(mi, msg.text) }
+                                click { if (ctx.cmpSelectMode) ctx.toggleCmpSelect(mi) }
+                            }
+                            if (isUser) {
                                 Text {
                                     attr {
                                         text(msg.text); fontSize(UserSettings.fs(13f)); color(Color.WHITE)
+                                        maxWidth((ctx.pagerData.pageViewWidth - 60f) - 16f)
                                     }
                                 }
+                            } else {
+                                // assistant: Markdown 渲染（复用聊天富文本）
+                                renderMarkdown(
+                                    text = msg.text,
+                                    contentW = (ctx.pagerData.pageViewWidth - 60f) - 16f,
+                                    textColor = Color(0xFF222222),
+                                    accent = Color(UserSettings.themeColor),
+                                    onOpenStock = { code ->
+                                        val st = StockData.findByCode(code)
+                                        if (st.name.isNotEmpty() && st.name != code) {
+                                            val d = JSONObject().put("stockCode", code)
+                                            ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
+                                        }
+                                    }
+                                )
                             }
-                        }
-                    } else {
-                        View {
-                            attr { marginBottom(8f); backgroundColor(Color(0xFFF7F8FA)); borderRadius(8f); padding(8f) }
-                            // assistant: Markdown 渲染（复用聊天富文本）
-                            renderMarkdown(
-                                text = msg.text,
-                                contentW = ctx.pagerData.pageViewWidth - 60f,
-                                textColor = Color(0xFF222222),
-                                accent = Color(UserSettings.themeColor),
-                                onOpenStock = { code ->
-                                    val st = StockData.findByCode(code)
-                                    if (st.name.isNotEmpty() && st.name != code) {
-                                        val d = JSONObject().put("stockCode", code)
-                                        ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("StockDetail", d)
-                                    }
-                                }
-                            )
                         }
                     }
                 }
@@ -547,6 +705,38 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
             }
             }  // Scroller 结束
         }  // 白卡片弹性区结束
+        // ===== 推荐问句（快捷胶囊，本进程首次进对比页提示一次；发过第一条收起）=====
+        vif({ ctx.cmpQuickTipsVisible }) {
+            View {
+                attr {
+                    flexDirectionColumn(); backgroundColor(Color.WHITE)
+                    borderRadius(10f); padding(8f); marginBottom(6f)
+                }
+                Text { attr { text("试试这样问："); fontSize(UserSettings.fs(11f)); color(Color(0xFF999999)) } }
+                val names = ctx.compareCodes.take(2).map { StockData.findByCode(it).name }
+                val qs = if (names.size >= 2) {
+                    listOf("${names[0]} 和 ${names[1]} 谁更值得关注？", "这两只谁短线更强？", "帮我挑一只更稳的", "现在更适合买哪只？")
+                } else listOf("谁更值得关注？", "短线还是长线更适合？", "帮我挑一只更稳的")
+                qs.chunked(2).forEach { row ->
+                    View {
+                        attr { flexDirectionRow(); marginTop(6f) }
+                        row.forEachIndexed { i, q ->
+                            View {
+                                attr {
+                                    flex(1f)
+                                    if (i > 0) marginLeft(6f)
+                                    padding(7f); paddingLeft(10f); paddingRight(10f); borderRadius(14f)
+                                    backgroundColor(Color(UserSettings.themeTint(0.12f)))
+                                    justifyContentCenter(); alignItemsCenter()
+                                }
+                                event { click { ctx.sendCompareQuestion(q) } }
+                                Text { attr { text(q); fontSize(UserSettings.fs(12f)); color(Color(UserSettings.themeColor)); maxWidth(160f) } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // 输入栏
         View {
             attr { flexDirectionRow(); alignItemsCenter(); height(40f) }
@@ -625,4 +815,17 @@ private fun ViewContainer<*, *>.comparePeriodChip(
             }
         }
     }
+}
+
+/** 消息长按菜单项（对齐主聊天 chatMsgItem） */
+private fun ViewContainer<*, *>.cmpMsgMenuItem(label: String, onClick: () -> Unit) {
+    View { attr { height(48f); justifyContentCenter(); paddingLeft(16f) }
+        event { click { onClick() } }
+        Text { attr { text(label); fontSize(UserSettings.fs(15f)); color(Color(0xFF222222)) } }
+    }
+}
+
+/** 消息长按菜单分隔线 */
+private fun ViewContainer<*, *>.cmpMsgDivider() {
+    View { attr { height(0.5f); backgroundColor(Color(0xFFEEEEEE)); marginLeft(16f) } }
 }
