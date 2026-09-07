@@ -23,14 +23,13 @@ internal class FullTextPage : BasePager() {
     internal var fullTitle: String by observable("")
     internal var fullText: String by observable("")
 
-    override fun viewDidLoad() {
-        super.viewDidLoad()
-        fullTitle = pageData.params.optString("title", "全文")
-        fullText = pageData.params.optString("text", "")
-    }
-
     override fun body(): ViewBuilder {
         val ctx = this
+        // ⚠️ Kuikly 的 pageData.params 须在 body 作用域内读取(viewDidLoad 中为空白)
+        if (fullText.isEmpty()) {
+            fullTitle = pageData.params.optString("title", "全文")
+            fullText = pageData.params.optString("text", "")
+        }
         return {
             attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
 
