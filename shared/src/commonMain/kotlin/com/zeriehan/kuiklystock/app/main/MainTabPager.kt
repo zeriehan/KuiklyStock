@@ -74,6 +74,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
     /** 预警类型选择弹层的临时状态：当前选类型 + 阈值输入文本 */
     internal var alertType: String by observable("below")
     internal var alertThresholdText: String by observable("")
+    /** 每预警类型的临时输入草稿（切 chip 不丢：跌破填一半切涨破再切回，跌破的值仍在） */
+    private val alertDrafts = mutableMapOf<String, String>()
     /** 预警弹层 Input ref，打开窗口后用于回显已设阈值 */
     private lateinit var alertInputRef: ViewRef<InputView>
     /** 强制重渲染计数：标签/隐藏/设置变更后 +1（辅助用，真正触发列表重建靠下方 vif 翻转） */
@@ -805,34 +807,44 @@ internal class MainTabPager : BasePager(), StockNavigator {
         else -> type
     }
 
-    /** 打开某股的设预警弹层。默认选中第一个已设预警的类型（若有），否则 below；同步回显该类型阈值 */
+    /** 打开某股的设预警弹层：初始化每种类型的草稿（来自已设预警），默认选中已设类型或 below */
     internal fun openAlertFor(stock: Stock) {
         alertStock = stock
-        // 找该股已设的类型（任意一个优先，展示"哪些已配过"），无则默认 below
+        // 每类型草稿 = 已设预警的值（用于切 chip 时回显已配的）；用户没配的类型空
+        alertDrafts.clear()
+        listOf("below", "above", "pctDown", "pctUp").forEach { t ->
+            val ex = priceAlerts.firstOrNull { it.code == stock.code && it.type == t }
+            alertDrafts[t] = if (ex != null) {
+                if (t.startsWith("pct")) ex.threshold.toInt().toString() else formatPrice(ex.threshold)
+            } else ""
+        }
+        // 默认选中第一个已设类型（有预警优先）；全没设 → below
         val existingType = priceAlerts.firstOrNull { it.code == stock.code }?.type ?: "below"
         alertType = existingType
-        syncAlertInputText(stock.code, existingType)
+        applyDraftToInput(existingType)
     }
 
-    /** 切换预警类型 chip：高亮 alertType 并回显该类型已设阈值（无则清空输入框） */
+    /** 切换预警类型 chip：高亮 + 把输入框切到该类型草稿（已填的临时值不丢） */
     internal fun selectAlertType(t: String) {
         alertType = t
-        val code = alertStock?.code
-        if (code != null) syncAlertInputText(code, t)
+        applyDraftToInput(t)
     }
 
-    /** 把 alertThresholdText + 输入框文本同步成 code+type 已设的阈值；没设过则清空 */
-    private fun syncAlertInputText(code: String, type: String) {
-        val existing = priceAlerts.firstOrNull { it.code == code && it.type == type }
-        alertThresholdText = if (existing != null) {
-            if (type.startsWith("pct")) existing.threshold.toInt().toString() else formatPrice(existing.threshold)
-        } else ""
+    /** 把 alertThresholdText + Input 文本设成 type 的草稿值 */
+    private fun applyDraftToInput(type: String) {
+        alertThresholdText = alertDrafts[type].orEmpty()
         if (::alertInputRef.isInitialized) {
             try { alertInputRef.view?.setText(alertThresholdText) } catch (_: Throwable) { /* 由 attr 兜底 */ }
         }
     }
 
-    internal fun closeAlert() { alertStock = null }
+    /** Input 文本变化时写入当前类型的草稿（供切 chip 回来保留） */
+    internal fun updateAlertDraft(text: String) {
+        alertDrafts[alertType] = text
+        alertThresholdText = text
+    }
+
+    internal fun closeAlert() { alertStock = null; alertDrafts.clear() }
 
     /** 确认添加预警：解析阈值 → 落盘 + 关闭弹层 */
     internal fun confirmAddAlert() {
@@ -857,10 +869,13 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal fun removeAlertsFor(code: String) {
         priceAlerts = priceAlerts.filterNot { it.code == code }
         AlertStore.save(prefs, priceAlerts)
-        // 若正在弹这个股的预警层：当前选中类型的预警已被删，输入框同步清空回占位
-        if (alertStock?.code == code && ::alertInputRef.isInitialized) {
-            alertThresholdText = ""
-            try { alertInputRef.view?.setText("") } catch (_: Throwable) { /* 由 attr 兜底 */ }
+        // 若正在弹这个股的预警层：该股预警全删，各类型草稿清空 + 输入框回占位
+        if (alertStock?.code == code) {
+            alertDrafts.clear()
+            if (::alertInputRef.isInitialized) {
+                alertThresholdText = ""
+                try { alertInputRef.view?.setText("") } catch (_: Throwable) { /* 由 attr 兜底 */ }
+            }
         }
         bridgeModule.toast("已清除该股预警")
     }
@@ -1094,7 +1109,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                                 placeholder(if (ctx.alertType.startsWith("pct")) "输入百分比（如 5）" else "输入价格（如 50.0）")
                                 placeholderColor(Color(0xFF999999))
                             }
-                            event { textDidChange { ctx.alertThresholdText = it.text } }
+                            event { textDidChange { ctx.updateAlertDraft(it.text) } }
                         }
                     }
                     View { attr { flexDirectionRow(); padding(14f) }
