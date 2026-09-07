@@ -122,10 +122,16 @@ object AgentChat {
 
     private fun buildRetryPrompt(query: String, lastReply: String): String {
         val sb = StringBuilder()
-        sb.append("[SYSTEM · 重试，必须输出工具调用]\n")
-        sb.append("上一条模型回复未按规范（它写成了普通回答）：\n").append(lastReply.take(300)).append("\n\n")
+        sb.append("[SYSTEM · 重试，必须输出工具调用（严格规范）]\n")
+        sb.append("上一条模型回复未按规范（它写成了普通回答）：\n").append(lastReply.take(200)).append("\n\n")
         sb.append("用户原话：").append(query).append("\n\n")
-        sb.append("判定：这条用户消息**就是**要求执行 App 操作。现在只输出一行 ").append(TAG).append("{json}（name+args），不要输出任何其它文字、不要解释。")
+        sb.append("工具 name **必须是以下精确字符串之一，不要用 change_/set_/update_/modify_ 等其他形式**（这些都识别不到）：\n")
+        sb.append("  - addWatch（加自选）args: {\"stock\":\"中文名\"}\n")
+        sb.append("  - addCompare（加对比）args: {\"stock\":\"中文名\"}\n")
+        sb.append("  - addAlert（设预警）args: {\"stock\":\"...\",\"type\":\"跌破/涨破/当日涨幅≥/当日跌幅≥\",\"threshold\":数字}\n")
+        sb.append("  - setThemeColor（改主题色）args: {\"colorName\":\"红/橙/黄/绿/青/蓝/紫/黑/白/粉\"}\n")
+        sb.append("  - setDarkMode（切深色浅色）args: {\"boolean\":true或false}\n\n")
+        sb.append("现在只输出一行 ").append(TAG).append("{json}，不要任何其它文字、不要解释、不要代码块。")
         return sb.toString()
     }
 
