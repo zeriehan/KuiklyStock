@@ -102,6 +102,9 @@ internal class StockComparePage : BasePager() {
         compareCodes = loadSavedCompare()
         // 每只股默认迷你走势周期为「分时」
         comparePeriods = compareCodes.associateWith { "intraday" }
+        // 立即把对比股列表的**真实行情(含名字)**拉入行情池——避免冷启动/池外冷门股(非baseQuotes种子的,如688170柏星龙)
+        // 在对比页渲染时 fallback 上证/显示成 code; 拉到后由 host fetchQuotes 写入 realPool(已含name)
+        StockData.loadCodesQuotes(compareCodes.toSet())
         // 聊天消息/等待态统一由 ChatStore(COMPARE_CONV) 驱动：进入即同步历史 + 恢复等待态
         // （退出对比页后 AI 若仍在后台跑，isPending=true；完成后落盘 bump → 监听刷新显示，见 syncCompFromStore）
         ChatSync.addListener(cmpChatListener)
@@ -131,6 +134,8 @@ internal class StockComparePage : BasePager() {
         if (saved != compareCodes && saved.isNotEmpty()) {
             compareCodes = saved
             comparePeriods = saved.associateWith { "intraday" }
+            // 新加入/变化的对比股：立即拉真实行情入池(含名字/价), 避免占位 fallback
+            StockData.loadCodesQuotes(saved.toSet())
             // 对新列表补拉各周期数据
             saved.forEach { code ->
                 val st = StockData.findByCode(code)

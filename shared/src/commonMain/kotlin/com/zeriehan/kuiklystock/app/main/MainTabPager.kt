@@ -709,6 +709,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
         }
         val merged = list + code
         prefs.setItem(key, merged.joinToString(","))
+        // 立即拉真实行情入池(含名字/价)——避免对比页渲染时池外冷门股 fallback/显示成 code
+        StockData.loadCodesQuotes(setOf(code))
         closeSheet()
         bridgeModule.toast("已加入对比，可在「AI Tab → 股票对比」查看")
     }
