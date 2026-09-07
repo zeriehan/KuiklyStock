@@ -805,23 +805,33 @@ internal class MainTabPager : BasePager(), StockNavigator {
         else -> type
     }
 
-    /** 打开某股的设预警弹层（类型 chips + 阈值输入）。若该股已设过预警，预填类型与阈值 */
+    /** 打开某股的设预警弹层。默认选中第一个已设预警的类型（若有），否则 below；同步回显该类型阈值 */
     internal fun openAlertFor(stock: Stock) {
         alertStock = stock
-        val existing = priceAlerts.firstOrNull { it.code == stock.code }
-        if (existing != null) {
-            alertType = existing.type
-            alertThresholdText = if (existing.type.startsWith("pct")) existing.threshold.toInt().toString()
-                else formatPrice(existing.threshold)
-        } else {
-            alertType = "below"
-            alertThresholdText = ""
-        }
-        // 若 Input ref 已就绪，强制把文本写进宿主（attr 闭包可能因首次渲染时序问题没读到）
+        // 找该股已设的类型（任意一个优先，展示"哪些已配过"），无则默认 below
+        val existingType = priceAlerts.firstOrNull { it.code == stock.code }?.type ?: "below"
+        alertType = existingType
+        syncAlertInputText(stock.code, existingType)
+    }
+
+    /** 切换预警类型 chip：高亮 alertType 并回显该类型已设阈值（无则清空输入框） */
+    internal fun selectAlertType(t: String) {
+        alertType = t
+        val code = alertStock?.code
+        if (code != null) syncAlertInputText(code, t)
+    }
+
+    /** 把 alertThresholdText + 输入框文本同步成 code+type 已设的阈值；没设过则清空 */
+    private fun syncAlertInputText(code: String, type: String) {
+        val existing = priceAlerts.firstOrNull { it.code == code && it.type == type }
+        alertThresholdText = if (existing != null) {
+            if (type.startsWith("pct")) existing.threshold.toInt().toString() else formatPrice(existing.threshold)
+        } else ""
         if (::alertInputRef.isInitialized) {
-            try { alertInputRef.view?.setText(alertThresholdText) } catch (_: Throwable) { /* 反射/属性失败由 attr 兜底 */ }
+            try { alertInputRef.view?.setText(alertThresholdText) } catch (_: Throwable) { /* 由 attr 兜底 */ }
         }
     }
+
     internal fun closeAlert() { alertStock = null }
 
     /** 确认添加预警：解析阈值 → 落盘 + 关闭弹层 */
@@ -847,6 +857,11 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal fun removeAlertsFor(code: String) {
         priceAlerts = priceAlerts.filterNot { it.code == code }
         AlertStore.save(prefs, priceAlerts)
+        // 若正在弹这个股的预警层：当前选中类型的预警已被删，输入框同步清空回占位
+        if (alertStock?.code == code && ::alertInputRef.isInitialized) {
+            alertThresholdText = ""
+            try { alertInputRef.view?.setText("") } catch (_: Throwable) { /* 由 attr 兜底 */ }
+        }
         bridgeModule.toast("已清除该股预警")
     }
 
@@ -1061,7 +1076,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                                             padding(7f, 5f, bottom = 7f, right = 5f); marginRight(8f); marginBottom(6f); borderRadius(12f)
                                             backgroundColor(if (ctx.alertType == t) Color(ctx.themeColor) else Color(0xFFF2F3F5))
                                         }
-                                        event { click { ctx.alertType = t } }
+                                        event { click { ctx.selectAlertType(t) } }
                                         Text { attr { text(ctx.alertTypeLabel(t)); fontSize(ctx.fs(12f)); color(if (ctx.alertType == t) Color.WHITE else Color(0xFF666666)) } }
                                     }
                                 }
