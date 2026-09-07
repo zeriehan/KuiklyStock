@@ -701,7 +701,7 @@ internal fun ViewContainer<*, *>.renderFinanceCard(ctx: StockDetailPage) {
         View {
             attr { flexDirectionRow(); alignItemsCenter() }
             View { attr { width(18f); height(18f); borderRadius(9f); backgroundColor(Color(0xFFFCE4E4)); marginRight(6f) } }
-            Text { attr { text("基本面 · F10"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+            Text { attr { text("基本面"); fontSize(14f); fontWeightSemisolid(); color(Color(0xFF222222)) } }
             View { attr { flex(1f) } }
             if (earn != null) Text {
                 attr { text(earn.optString("reportType", "")); fontSize(12f); color(Color(0xFF999999)) }
@@ -710,11 +710,31 @@ internal fun ViewContainer<*, *>.renderFinanceCard(ctx: StockDetailPage) {
         // 公司概况
         if (company != null) {
             company.optString("profile").takeIf { it.isNotBlank() }?.let { profile ->
-                Text {
-                    attr {
-                        text(if (profile.length > 90) profile.take(90) + "…" else profile)
-                        fontSize(12f); color(Color(0xFF666666)); lineHeight(18f); marginTop(8f)
-                        // 最多 3 行，超长省略号
+                // 截断预览(超长省略号)；点整段 → 跳「全文」页看完整公司概况
+                val truncated = profile.length > 90
+                val fullProfile = profile
+                View {
+                    attr { flexDirectionColumn(); marginTop(8f) }
+                    event { click {
+                        val d = JSONObject()
+                        d.put("title", "${ctx.liveStock?.name ?: ""} 公司概况")
+                        d.put("text", fullProfile)
+                        ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("FullText", d)
+                    } }
+                    Text {
+                        attr {
+                            text(if (truncated) profile.take(90) + "…" else profile)
+                            fontSize(12f); color(Color(0xFF666666)); lineHeight(18f)
+                        }
+                    }
+                    // 截断时提示可点看全文（主题色小字，提示它是可点击的）
+                    if (truncated) {
+                        Text {
+                            attr {
+                                text("… 点击查看全文 ›")
+                                fontSize(12f); color(Color(UserSettings.themeColor)); marginTop(2f)
+                            }
+                        }
                     }
                 }
             }
