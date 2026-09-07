@@ -30,6 +30,7 @@ import com.zeriehan.kuiklystock.core.QuickTipsGate
 import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 import com.zeriehan.kuiklystock.core.llm.ChatStore
 import com.zeriehan.kuiklystock.core.llm.ChatSync
+import com.zeriehan.kuiklystock.core.llm.DataSync
 
 /**
  * 「股票对比」页（#96）：多股并排对比 + AI 对比解读。
@@ -94,6 +95,9 @@ internal class StockComparePage : BasePager() {
     /** ChatSync 监听（须为稳定同一对象，pageWillDestroy 里才能精确移除）：
      *  后台请求完成/任何会话变化落盘后 bump，本页(若存活)重读 ChatStore 刷新，实现"退出重进后台仍回复" */
     private val cmpChatListener: () -> Unit = { syncCompFromStore() }
+    /** DataSync 监听：StockData 真实行情拉回入池后 bump；本页存活则翻 uiToggle 让上区重建，
+     *  renderCompareUpper 重读 getQuotes() 精确解析→池外冷门股名字/价即时刷新成真实值 */
+    private val cmpDataListener: () -> Unit = { if (!compDestroyed) uiToggle = !uiToggle }
 
     override fun viewDidLoad() {
         super.viewDidLoad()
@@ -108,6 +112,8 @@ internal class StockComparePage : BasePager() {
         // 聊天消息/等待态统一由 ChatStore(COMPARE_CONV) 驱动：进入即同步历史 + 恢复等待态
         // （退出对比页后 AI 若仍在后台跑，isPending=true；完成后落盘 bump → 监听刷新显示，见 syncCompFromStore）
         ChatSync.addListener(cmpChatListener)
+        // 监听 DataSync：真实行情异步入池后 bump→本页翻 uiToggle 重建上区, 冷门股名字/价即时刷新
+        DataSync.addListener(cmpDataListener)
         syncCompFromStore()
         // 推荐问句：本进程首次进对比页提示一次（QuickTipsGate 与主聊天共享门控）
         cmpQuickTipsVisible = QuickTipsGate.claim()
@@ -161,6 +167,7 @@ internal class StockComparePage : BasePager() {
     override fun pageWillDestroy() {
         compDestroyed = true
         ChatSync.removeListener(cmpChatListener)
+        DataSync.removeListener(cmpDataListener)
         super.pageWillDestroy()
     }
 
