@@ -1071,7 +1071,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                                         // 声明式初始文本：打开弹窗/清除预警重建时按草稿回显已设值
                                         text(ctx.alertDrafts[t].orEmpty())
                                         placeholder(if (t.startsWith("pct")) "如 5（%）" else "如 ${formatPrice(st.price.coerceAtLeast(1f))}")
-                                        placeholderColor(Color(0xFF999999))
+                                        placeholderColor(Color(0xFFB4B4B4))
                                     }
                                     event { textDidChange { ctx.updateAlertDraft(t, it.text) } }
                                 }
