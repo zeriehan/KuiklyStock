@@ -45,9 +45,11 @@ internal object AgentRouter {
                 if (containsAct(t)) return AgentAction.SetDark(false)
             }
         }
-        // 主题色：换主题色/改成红色/主题改成绿 等
+        // 主题色：换主题色/改成红色/主题改成绿/变成蓝色 等。
+        // 放宽：只要含「改成/换成/调成/设为…」这类改色动作词 + 颜色词，就视为改主题色（"改成红色"也能命中）。
+        // 用动作词限定避免把"收红/拉红"这种行情描述误判成改主题。
         colorNameToArgb(t)?.let { (label, argb) ->
-            if (t.contains("主题") || t.contains("颜色") || t.contains("配色")) {
+            if (t.contains("主题") || t.contains("颜色") || t.contains("配色") || hasRecolorAct(t)) {
                 return AgentAction.SetTheme(label, argb)
             }
         }
@@ -72,6 +74,12 @@ internal object AgentRouter {
         t.contains("换成") || t.contains("切换") || t.contains("改成") || t.contains("设为") ||
             t.contains("调成") || t.contains("打开") || t.contains("开") || t.contains("用") ||
             t.contains("设置") || t.contains("开启") || t.contains("试试")
+
+    /** 改色动作词：把界面/主题改成某种颜色（"改成/换成/调成红色"） */
+    private fun hasRecolorAct(t: String): Boolean =
+        t.contains("改成") || t.contains("换成") || t.contains("调成") || t.contains("变成") ||
+            t.contains("设为") || t.contains("设置成") || t.contains("改为") || t.contains("切换成") ||
+            t.contains("调为") || t.contains("变为")
 
     /** 解析价格预警。返回 null 表示不是预警指令 */
     private fun tryParseAlert(t: String): AgentAction.AddAlert? {
