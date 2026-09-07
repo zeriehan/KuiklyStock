@@ -76,8 +76,6 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal var alertThresholdText: String by observable("")
     /** 每预警类型的临时输入草稿（4 行各自独立填，切/保存不丢） */
     internal val alertDrafts = mutableMapOf<String, String>()
-    /** 每预警类型 Input 的 ref（4 行各自），打开弹窗后回显草稿用 */
-    internal val alertInputRefs = mutableMapOf<String, ViewRef<InputView>>()
     /** 强制重渲染计数：标签/隐藏/设置变更后 +1（辅助用，真正触发列表重建靠下方 vif 翻转） */
     internal var dataVersion: Int by observable(0)
     /** vif 翻转触发器：最近对话列表据此强制重建（本版本 body 不随 observable 重跑） */
@@ -807,12 +805,9 @@ internal class MainTabPager : BasePager(), StockNavigator {
         else -> type
     }
 
-    /** 打开某股的设预警弹层：4 行各自回显已设阈值，供一次设置多种 */
+    /** 打开某股的设预警弹层：4 行各自回显已设阈值（经 vif 重建 + Input text() 声明式注入） */
     internal fun openAlertFor(stock: Stock) {
-        alertStock = stock
-        // 每类型草稿 = 已设预警的值（回显到各自输入框）；没配的类型空
         alertDrafts.clear()
-        alertInputRefs.clear()
         listOf("below", "above", "pctDown", "pctUp").forEach { t ->
             val ex = priceAlerts.firstOrNull { it.code == stock.code && it.type == t }
             alertDrafts[t] = if (ex != null) {
@@ -821,15 +816,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
         }
         alertType = "below"
         alertThresholdText = ""
-    }
-
-    /** 某行 Input ref 就绪时回显该类型草稿 */
-    internal fun onAlertInputReady(type: String, ref: ViewRef<InputView>) {
-        alertInputRefs[type] = ref
-        val d = alertDrafts[type].orEmpty()
-        if (d.isNotBlank()) {
-            try { ref.view?.setText(d) } catch (_: Throwable) { /* 由 placeholder 占位兜底 */ }
-        }
+        alertStock = stock  // 触发 vif 翻转重建弹窗，Input 的 text() 读到已填草稿
     }
 
     /** 某行 Input 文本变化时写入该类型草稿 */
@@ -838,7 +825,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
         if (type == alertType) alertThresholdText = text
     }
 
-    internal fun closeAlert() { alertStock = null; alertDrafts.clear(); alertInputRefs.clear() }
+    internal fun closeAlert() { alertStock = null; alertDrafts.clear() }
 
     /** 保存设置：把 4 行各自填的（非空）预警全部落盘（同 type 覆盖旧的） */
     internal fun confirmAddAlert() {
@@ -862,18 +849,11 @@ internal class MainTabPager : BasePager(), StockNavigator {
         bridgeModule.toast("已保存 $added 项预警")
     }
 
-    /** 删除某股票的全部预警 */
+    /** 删除某股票的全部预警。若正在弹该股管理页，清完直接关闭（重进即空）。 */
     internal fun removeAlertsFor(code: String) {
         priceAlerts = priceAlerts.filterNot { it.code == code }
         AlertStore.save(prefs, priceAlerts)
-        // 若正在弹这个股的预警层：各类型草稿清空 + 各输入框回占位
-        if (alertStock?.code == code) {
-            alertDrafts.replaceAll { _, _ -> "" }
-            alertInputRefs.forEach { (_, r) ->
-                try { r.view?.setText("") } catch (_: Throwable) { /* 由 placeholder 兜底 */ }
-            }
-            alertThresholdText = ""
-        }
+        if (alertStock?.code == code) closeAlert()
         bridgeModule.toast("已清除该股预警")
     }
 
@@ -1085,10 +1065,11 @@ internal class MainTabPager : BasePager(), StockNavigator {
                                 Text { attr {
                                     width(72f); text(ctx.alertTypeLabel(t)); fontSize(ctx.fs(13f)); color(Color(0xFF444444)) } }
                                 Input {
-                                    ref { ctx.onAlertInputReady(t, it) }
                                     attr {
                                         flex(1f); height(36f); backgroundColor(Color(0xFFF5F6F8)); borderRadius(8f)
                                         color(Color(0xFF222222)); fontSize(ctx.fs(14f))
+                                        // 声明式初始文本：打开弹窗/清除预警重建时按草稿回显已设值
+                                        text(ctx.alertDrafts[t].orEmpty())
                                         placeholder(if (t.startsWith("pct")) "如 5（%）" else "如 ${formatPrice(st.price.coerceAtLeast(1f))}")
                                         placeholderColor(Color(0xFF999999))
                                     }
