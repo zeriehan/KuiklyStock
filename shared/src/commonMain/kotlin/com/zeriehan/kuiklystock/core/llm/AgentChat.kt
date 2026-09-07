@@ -3,65 +3,48 @@ package com.zeriehan.kuiklystock.core.llm
 import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.zeriehan.kuiklystock.core.AgentActions
+import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.StockData
-import com.zeriehan.kuiklystock.core.UserSettings
 
 /**
- * 「AI 决定动作」的 Agent 编排（模型决策协议版，非官方 tools 字段）。
+ * 「AI 决定动作」的 Agent 编排（模型决策协议版）。
  *
  * 让模型自己理解用户自然语言并决定是否执行 app 操作：若需执行，模型只输出一行
- * `⟦TOOL⟧{"name":"...","args":{...}}`；shared 解析 → 执行真实操作 → 把结果作为上下文
- * 再问一轮，让模型给出最终答复。**不靠本地规则枚举**（用户诉求：规则永远枚举不完，
- * 交给模型理解自然语言）。
+ * `⟦TOOL⟧{json}`；shared 解析 → 执行真实操作 → 把结果作为上下文再问一轮拿最终答复。
+ * **不靠本地规则枚举**（用户诉求：交给模型理解自然语言）。
  *
- * 现可用工具（name → 执行）：见 [toolsSpec]。
- *
- * ⚠️ 复用已验证稳定的非流式 glm-4-flash 通道（AIJobCenter.sendPrompt），不改 host。
- * 流程最多 2 轮：首轮判断是否要调工具 + 若要则执行；次轮带工具结果生成最终答复。
+ * 可用工具见 [toolsSpec]。流程最多 3 次模型调用：
+ *   首轮 → 若无 ⟦TOOL⟧ 则强重试一次 → 有则执行 + 再问一轮拿最终答复。
+ * 复用已验证稳定的非流式 glm-4-flash 通道（AIJobCenter.sendPrompt），不改 host。
  */
 object AgentChat {
 
-    /** 对话历史里最多取最近 N 条喂给模型（控 token） */
     private const val MAX_HISTORY = 8
-
-    /** 工具 JSON 协议行前缀 */
     private const val TAG = "⟦TOOL⟧"
 
-    /** 人类可读的工具清单（喂给模型） */
     private const val toolsSpec =
-        """可用工具(仅当用户明确要求执行某 app 操作时才调用；普通问答绝不调用)：
-1. addWatch(stockName或代码): 把一只股票加入自选。
-2. addCompare(stockName或代码): 把一只股票加入股票对比列表。
-3. addAlert(stockName或代码, type, threshold): 给股票设价格预警。type ∈ {跌破,涨破,当日涨幅≥,当日跌幅≥}(直接给中文)；threshold 为数字(价格或百分比)。
-4. setThemeColor(colorName): 改主题色。colorName ∈ 红/橙/黄/绿/青/蓝/紫/黑/白/粉。
-5. setDarkMode(boolean): 切换深色(true)/浅色(false)。
+        """可用工具（仅当用户明确要求执行某 app 操作时才调用）：
+1. addWatch：把股票加入自选。args: {"stock":"股票中文名或6位代码"}
+2. addCompare：把股票加入股票对比列表。args: {"stock":"..."}
+3. addAlert：给股票设价格预警。args: {"stock":"...","type":"跌破/涨破/当日涨幅≥/当日跌幅≥","threshold":数字}
+4. setThemeColor：改主题色。args: {"colorName":"红/橙/黄/绿/青/蓝/紫/黑/白/粉"}
+5. setDarkMode：切换深色/浅色。args: {"boolean":true或false}"""
 
-判断规则：
-- 用户说"把xx加入自选/加自选/收藏xx" → addWatch
-- 用户说"把xx加进对比/对比里加上xx" → addCompare
-- 用户说"xx跌破X提醒我/涨破X/跌超X%/提醒" → addAlert(threshold=X)
-- 用户说"改成红色/换成蓝色/主题色变绿" → setThemeColor
-- 用户说"深色模式/换成深色" → setDarkMode(true)；"浅色/白天模式" → setDarkMode(false)
-- 股票名可能用简称(茅台=贵州茅台)；找不到明确股票或没让执行操作 → 不调用工具，直接正常回答用户。"""
-
-    /** 判断消息是否"疑似要执行操作"，只用于选路（不是执行者）。宽松即可：误判走 agent 模型也正常回答 */
+    /** 是否疑似要求执行 app 操作：只用于选路（宽松即可；误判走 agent 模型也只会正常答） */
     fun isLikelyAction(text: String): Boolean {
         val t = text.trim()
         if (t.isEmpty()) return false
-        // 操作动词 + 工具目标词（加自选/加对比/设预警/改颜色/切深浅色）
-        val actionWord = t.contains("自选") || t.contains("加入") || t.contains("加进") || t.contains("收藏") ||
+        val stockAct = t.contains("自选") || t.contains("加入") || t.contains("加进") || t.contains("收藏") ||
             t.contains("对比") || t.contains("预警") || t.contains("提醒") || t.contains("跌破") ||
             t.contains("涨破") || t.contains("涨到") || t.contains("跌到") || t.contains("涨超") || t.contains("跌超")
-        val recolor = (t.contains("改成") || t.contains("换成") || t.contains("调成") || t.contains("主题")) &&
-            (t.contains("红色") || t.contains("红") || t.contains("橙") || t.contains("黄") || t.contains("绿") ||
-                t.contains("蓝") || t.contains("紫") || t.contains("黑") || t.contains("白") || t.contains("粉") ||
-                t.contains("深色") || t.contains("浅色") || t.contains("暗"))
-        val theme = (t.contains("深色") || t.contains("暗") || t.contains("夜间") || t.contains("浅色")) &&
-            (t.contains("模式") || t.contains("改成") || t.contains("换成") || t.contains("调成"))
-        return actionWord || recolor || theme
+        val recolor = (t.contains("改成") || t.contains("换成") || t.contains("调成") || t.contains("主题") || t.contains("换") || t.contains("改")) &&
+            (t.contains("红") || t.contains("橙") || t.contains("黄") || t.contains("绿") || t.contains("蓝") ||
+                t.contains("紫") || t.contains("黑") || t.contains("白") || t.contains("粉") || t.contains("青"))
+        val theme = (t.contains("深色") || t.contains("浅色") || t.contains("暗黑") || t.contains("夜间") || t.contains("白天")) &&
+            (t.contains("模式") || t.contains("改成") || t.contains("换成") || t.contains("调成") || t.contains("切换") || t.contains("开"))
+        return stockAct || recolor || theme
     }
 
-    /** 取某段对话近 N 条做文本历史 */
     fun historyText(history: List<ChatStore.ChatMessage>): String {
         if (history.isEmpty()) return ""
         val recent = history.takeLast(MAX_HISTORY)
@@ -71,81 +54,94 @@ object AgentChat {
         return sb.toString()
     }
 
-    /**
-     * 运行 Agent：首轮让模型判断是否执行操作；若返回 TOOL 行则执行并再问一轮拿最终答复。
-     * @param callback 最终回复文本（失败/空则传空串，上层回退）
-     */
+    /** 运行 Agent（详见类注释）。callback 收到最终用户可见文本。 */
     fun run(
         query: String,
         historyText: String,
         prefs: SharedPreferencesModule,
         callback: (String) -> Unit,
     ) {
-        attemptTool(query, historyText, prefs) { toolLine, firstReply ->
-            if (toolLine == null) {
-                // 首轮无工具调用 → firstReply 即最终答复
-                callback(firstReply)
-                return@attemptTool
+        // 首轮：判断是否要调工具
+        val firstPrompt = buildFirstPrompt(query, historyText)
+        AIJobCenter.sendPrompt(firstPrompt) { r1 ->
+            val t1 = r1?.optString("text").orEmpty()
+            val tool1 = extractToolLine(t1)
+            if (tool1 != null) {
+                finishWithTool(query, historyText, tool1, prefs, callback)
+                return@sendPrompt
             }
-            // 有工具调用：执行并再问一轮
-            val result = executeTool(toolLine, prefs)
-            val secondPrompt = buildSecondPrompt(query, historyText, toolLine, result)
-            AIJobCenter.sendPrompt(secondPrompt) { resp2 ->
-                val text = resp2?.optString("text").orEmpty()
-                callback(text.ifBlank { firstReply })  // 次轮失败则用首轮(带TOOL行的)文本兜底展示
+            // 首轮无 TOOL：若模型空回 → 直接空（上层兜底）
+            if (t1.isBlank()) { callback(""); return@sendPrompt }
+            // 强重试一次（glm-4-flash 偶有"装作普通回答"倾向）
+            val retryPrompt = buildRetryPrompt(query, t1)
+            AIJobCenter.sendPrompt(retryPrompt) { r2 ->
+                val t2 = r2?.optString("text").orEmpty()
+                val tool2 = extractToolLine(t2)
+                if (tool2 != null) {
+                    finishWithTool(query, historyText, tool2, prefs, callback)
+                } else {
+                    val body = if (t2.isNotBlank()) t2 else t1
+                    callback("（这条我理解成普通问答了，没能当成 App 操作执行。你可以换个更明确的说法，如“把茅台加进自选”。）\n$body")
+                }
             }
         }
     }
 
-    /** 首轮：非流式发一次，解析是否含 TOOL 行。回调 (toolLine, 首轮原文) */
-    private fun attemptTool(
-        query: String,
-        hist: String,
-        prefs: SharedPreferencesModule,
-        cb: (String?, String) -> Unit,
-    ) {
-        val prompt = buildFirstPrompt(query, hist)
-        AIJobCenter.sendPrompt(prompt) { resp ->
-            val text = resp?.optString("text").orEmpty()
-            if (text.isBlank()) { cb(null, ""); return@sendPrompt }
-            val toolLine = extractToolLine(text)
-            cb(toolLine, text)
+    /** 执行工具 + 再问一轮拿最终答复 */
+    private fun finishWithTool(query: String, historyText: String, toolLine: String, prefs: SharedPreferencesModule, callback: (String) -> Unit) {
+        val result = executeTool(toolLine, prefs)
+        val secondPrompt = buildSecondPrompt(query, historyText, toolLine, result)
+        AIJobCenter.sendPrompt(secondPrompt) { r ->
+            val text = r?.optString("text").orEmpty()
+            callback(text.ifBlank { "已执行：$result" })
         }
     }
 
     private fun buildFirstPrompt(query: String, hist: String): String {
         val sb = StringBuilder()
-        sb.append("你是「RinoStock」股票的 AI 助手，能回答问题，也能在用户要求时执行 app 内的操作。\n\n")
+        sb.append("[SYSTEM · 工具调用模式]\n")
+        sb.append("你是「RinoStock」股票的 AI 助手。你能回答问题，也能在用户要求时执行 App 内的操作。\n\n")
         sb.append(toolsSpec).append("\n\n")
-        sb.append("对话规则：\n")
-        sb.append("- 若用户请求执行上述某个操作：只输出一行 ").append(TAG).append("{json}（json 含 name 与 args，args 里股票用中文名或6位代码），不要输出其它解释。\n")
-        sb.append("- 否则：像普通财经助手一样正常回答，绝不输出 ").append(TAG).append(" 行。\n\n")
+        sb.append("判断与输出规则（极其重要）：\n")
+        sb.append("- 若用户消息是要执行上述任一 App 操作（加自选/加对比/设价格预警/改主题色/切深色浅色），你**必须只输出一行 ").append(TAG).append("{json}**，形如：\n")
+        sb.append("  · 用户“把茅台加进自选”→ ").append(TAG).append("""{"name":"addWatch","args":{"stock":"贵州茅台"}}""").append("\n")
+        sb.append("  · 用户“宁德时代加入对比”→ ").append(TAG).append("""{"name":"addCompare","args":{"stock":"宁德时代"}}""").append("\n")
+        sb.append("  · 用户“茅台跌破1500提醒我”→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"贵州茅台","type":"跌破","threshold":1500}}""").append("\n")
+        sb.append("  · 用户“改成红色”→ ").append(TAG).append("""{"name":"setThemeColor","args":{"colorName":"红"}}""").append("\n")
+        sb.append("  · 用户“换深色”→ ").append(TAG).append("""{"name":"setDarkMode","args":{"boolean":true}}""").append("\n")
+        sb.append("  json 里 name/args 必须准确；股票尽量用中文全名（茅台→贵州茅台）。\n")
+        sb.append("- 若用户消息**不是**要执行操作（就是问股票/闲聊/要分析），才用自然中文正常回答，**绝不输出 ").append(TAG).append("**。\n\n")
         if (hist.isNotBlank()) sb.append(hist).append("\n\n")
         sb.append("用户：").append(query)
         return sb.toString()
     }
 
-    private fun buildSecondPrompt(query: String, hist: String, toolLine: String, result: String): String {
+    private fun buildRetryPrompt(query: String, lastReply: String): String {
         val sb = StringBuilder()
-        sb.append("你是「RinoStock」股票的 AI 助手。你刚才请求执行了 app 操作，以下是执行结果，请基于结果给用户一句简短、自然的最终确认（不要再说要执行，不要说 JSON，就用自然中文告知已做了什么）。\n\n")
-        if (hist.isNotBlank()) sb.append(hist).append("\n\n")
-        sb.append("用户请求：").append(query).append("\n")
-        sb.append("你请求的操作：").append(toolLine).append("\n")
-        sb.append("执行结果：").append(result).append("\n\n")
-        sb.append("请用一句中文回复用户，说明执行了什么。")
+        sb.append("[SYSTEM · 重试，必须输出工具调用]\n")
+        sb.append("上一条模型回复未按规范（它写成了普通回答）：\n").append(lastReply.take(300)).append("\n\n")
+        sb.append("用户原话：").append(query).append("\n\n")
+        sb.append("判定：这条用户消息**就是**要求执行 App 操作。现在只输出一行 ").append(TAG).append("{json}（name+args），不要输出任何其它文字、不要解释。")
         return sb.toString()
     }
 
-    /** 从模型文本提取首个 TOOL json 行；无则返回 null */
+    private fun buildSecondPrompt(query: String, hist: String, toolLine: String, result: String): String {
+        val sb = StringBuilder()
+        sb.append("你刚才请求执行了 App 操作并已执行完毕，结果如下。请给用户一句简短、自然的中文最终确认，说明做了什么（不要提 JSON/工具，就自然说）。\n\n")
+        sb.append("用户请求：").append(query).append("\n")
+        sb.append("你调用的操作：").append(toolLine).append("\n")
+        sb.append("执行结果：").append(result).append("\n\n")
+        sb.append("请用一句中文回复。")
+        return sb.toString()
+    }
+
+    /** 提取文本中的首段 ⟦TOOL⟧{json}；无则 null */
     private fun extractToolLine(text: String): String? {
+        if (text.isBlank()) return null
         val i = text.indexOf(TAG)
-        if (i < 0) return null
-        var rest = text.substring(i + TAG.length).trim()
-        // 定位到 { ... }（跨行取到配平大括号，稳妥截到 } 结尾）
-        val start = rest.indexOf('{')
+        val start = if (i >= 0) text.indexOf('{', i) else text.indexOf('{')
         if (start < 0) return null
-        rest = rest.substring(start)
-        // 简单配平取第一对完整 { }
+        val rest = text.substring(start)
         var depth = 0
         for ((k, ch) in rest.withIndex()) {
             if (ch == '{') depth++
@@ -157,7 +153,7 @@ object AgentChat {
         return null
     }
 
-    /** 解析 TOOL json 并执行，返回给用户的中文结果；解析/执行失败返回失败说明 */
+    /** 解析并执行 TOOL json，返回用户可见的结果文本 */
     private fun executeTool(toolLine: String, prefs: SharedPreferencesModule): String {
         return try {
             val obj = JSONObject(toolLine)
@@ -165,54 +161,55 @@ object AgentChat {
             val args = obj.optJSONObject("args") ?: JSONObject()
             when (name) {
                 "addWatch", "addCompare", "addAlert" -> {
-                    val stockName = args.optString("stock") ?: args.optString("stockName")
-                    val st = resolveStock(stockName) ?: return "未找到股票「$stockName」，未执行"
+                    val stockName = args.optString("stock")
+                    val st = resolveStock(stockName)
+                        ?: return "未找到股票「$stockName」，未执行。可用完整名或6位代码。"
                     when (name) {
                         "addWatch" -> AgentActions.addWatch(st, prefs)
                         "addCompare" -> AgentActions.addCompare(st, prefs)
                         else -> {
                             val typeLabel = args.optString("type")
                             val threshold = args.optDouble("threshold").toFloat()
-                            val type = mapOf("跌破" to "below", "涨破" to "above", "当日涨幅≥" to "pctUp", "当日跌幅≥" to "pctDown").let { m -> m[typeLabel] ?: inferType(typeLabel) }
-                            AgentActions.addAlert(st, type, threshold, prefs)
+                            AgentActions.addAlert(st, mapType(typeLabel), threshold, prefs)
                         }
                     }
                 }
                 "setThemeColor" -> {
-                    val c = args.optString("colorName") ?: args.optString("color")
+                    val c = args.optString("colorName")
                     val argb = colorToArgb(c)
                     if (argb == null) "无法识别颜色「$c」" else AgentActions.setThemeColor(argb, prefs)
                 }
                 "setDarkMode" -> {
-                    val on = args.optString("boolean").let { it == "true" } || args.optBoolean("boolean") || args.optBoolean("value")
+                    val on = args.optString("boolean") == "true" || args.optBoolean("boolean", false)
                     AgentActions.setDark(on, prefs)
                 }
-                else -> "未知操作 $name"
+                else -> "未知操作：$name"
             }
         } catch (e: Throwable) {
             "操作执行失败：${e.message ?: "未知错误"}"
         }
     }
 
-    private fun inferType(label: String): String = when {
+    private fun mapType(label: String): String = when {
+        label.contains("跌幅") || label.contains("跌超") || label.contains("下跌") -> "pctDown"
+        label.contains("涨幅") || label.contains("涨超") || label.contains("上涨") -> "pctUp"
         label.contains("跌破") || label.contains("跌") -> "below"
         label.contains("涨破") || label.contains("涨") -> "above"
-        label.contains("跌幅") -> "pctDown"
-        label.contains("涨幅") -> "pctUp"
         else -> "below"
     }
 
-    /** 股票名(中文/代码/简称) → Stock；找不到返回 null */
-    private fun resolveStock(s: String): com.zeriehan.kuiklystock.core.Stock? {
+    /** 股票（中文名/代码/常见简称）→ Stock；找不到 null */
+    private fun resolveStock(s: String): Stock? {
         val name = s?.trim().orEmpty()
         if (name.isEmpty()) return null
         val quotes = StockData.getQuotes()
-        // 6位代码
-        if (name.length == 6 && name.all { it.isDigit() }) quotes.firstOrNull { it.code == name }?.let { return it }
-        // 完整名子串匹配（长优先，避免"平安"撞"平安银行"——取精确/最长）
-        quotes.filter { it.name.length >= 2 }
+        if (name.length == 6 && name.all { it.isDigit() }) {
+            quotes.firstOrNull { it.code == name }?.let { return it }
+        }
+        // 完整名：精确优先，其次子串（按名长降序，避免“平安”撞“平安银行”）
+        quotes.filter { it.name.isNotBlank() }
             .sortedByDescending { it.name.length }
-            .firstOrNull { it.name == name || name.contains(it.name) || it.name.contains(name) }
+            .firstOrNull { q -> q.name == name || name.contains(q.name) || q.name.contains(name) }
             ?.let { return it }
         return null
     }
@@ -225,7 +222,6 @@ object AgentChat {
             "紫色" to 0xFF8B5CF6L, "紫" to 0xFF8B5CF6L, "黑色" to 0xFF222222L, "黑" to 0xFF222222L,
             "白色" to 0xFFFFFFFFL, "白" to 0xFFFFFFFFL, "粉色" to 0xFFFF6B9DL, "粉" to 0xFFFF6B9DL,
         )
-        val k = map.firstOrNull { c.contains(it.first) } ?: return null
-        return k.second
+        return map.firstOrNull { c.contains(it.first) }?.second
     }
 }
