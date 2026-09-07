@@ -14,6 +14,7 @@ import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.*
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.layout.FlexJustifyContent
+import com.tencent.kuikly.core.timer.setTimeout
 import com.zeriehan.kuiklystock.base.BasePager
 import com.zeriehan.kuiklystock.base.Utils
 import com.zeriehan.kuiklystock.base.bridgeModule
@@ -76,6 +77,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal var alertThresholdText: String by observable("")
     /** 每预警类型的临时输入草稿（4 行各自独立填，切/保存不丢） */
     internal val alertDrafts = mutableMapOf<String, String>()
+    /** 4 行 Input 的 ref 注册（供 openAlertFor 后延迟 setText 回显草稿） */
+    internal val alertInputRefs = mutableMapOf<String, ViewRef<InputView>>()
     /** 强制重渲染计数：标签/隐藏/设置变更后 +1（辅助用，真正触发列表重建靠下方 vif 翻转） */
     internal var dataVersion: Int by observable(0)
     /** vif 翻转触发器：最近对话列表据此强制重建（本版本 body 不随 observable 重跑） */
@@ -805,9 +808,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
         else -> type
     }
 
-    /** 打开某股的设预警弹层：4 行各自回显已设阈值（经 vif 重建 + Input text() 声明式注入） */
+    /** 打开某股的设预警弹层：4 行各自回显已设阈值（vif 重建 + Input ref 就绪后延迟 setText 兜底） */
     internal fun openAlertFor(stock: Stock) {
         alertDrafts.clear()
+        alertInputRefs.clear()
         listOf("below", "above", "pctDown", "pctUp").forEach { t ->
             val ex = priceAlerts.firstOrNull { it.code == stock.code && it.type == t }
             alertDrafts[t] = if (ex != null) {
@@ -816,7 +820,17 @@ internal class MainTabPager : BasePager(), StockNavigator {
         }
         alertType = "below"
         alertThresholdText = ""
-        alertStock = stock  // 触发 vif 翻转重建弹窗，Input 的 text() 读到已填草稿
+        alertStock = stock  // 触发 vif 翻转重建弹窗
+        // 延迟一帧到下一 frame 时再 setText 兜底：此时所有 Input ref 已注册完毕(view 已 inflate)，
+        // setText 生效(避免 ref{} 即时回调里 view 还没就绪导致 setText 静默失败)
+        setTimeout(pagerId, 0) {
+            listOf("below", "above", "pctDown", "pctUp").forEach { t ->
+                val d = alertDrafts[t].orEmpty()
+                if (d.isNotBlank()) {
+                    try { alertInputRefs[t]?.view?.setText(d) } catch (_: Throwable) { /* 兜底, ref 可能在 vif 重建中暂未就绪 */ }
+                }
+            }
+        }
     }
 
     /** 某行 Input 文本变化时写入该类型草稿 */
@@ -825,7 +839,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
         if (type == alertType) alertThresholdText = text
     }
 
-    internal fun closeAlert() { alertStock = null; alertDrafts.clear() }
+    internal fun closeAlert() { alertStock = null; alertDrafts.clear(); alertInputRefs.clear() }
 
     /** 保存设置：把 4 行各自填的（非空）预警全部落盘（同 type 覆盖旧的） */
     internal fun confirmAddAlert() {
@@ -1065,11 +1079,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
                                 Text { attr {
                                     width(72f); text(ctx.alertTypeLabel(t)); fontSize(ctx.fs(13f)); color(Color(0xFF444444)) } }
                                 Input {
+                                    ref { ctx.alertInputRefs[t] = it }
                                     attr {
                                         flex(1f); height(36f); backgroundColor(Color(0xFFF5F6F8)); borderRadius(8f)
                                         color(Color(0xFF222222)); fontSize(ctx.fs(14f))
-                                        // 声明式初始文本：打开弹窗/清除预警重建时按草稿回显已设值
-                                        text(ctx.alertDrafts[t].orEmpty())
                                         placeholder(if (t.startsWith("pct")) "如 5（%）" else "如 ${formatPrice(st.price.coerceAtLeast(1f))}")
                                         placeholderColor(Color(0xFFB4B4B4))
                                     }
