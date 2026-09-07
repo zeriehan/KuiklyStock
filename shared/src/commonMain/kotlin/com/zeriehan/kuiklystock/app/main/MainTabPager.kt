@@ -56,6 +56,15 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal var watchlistCodes: Set<String> by observable(emptySet())
     internal var hiddenMap: Map<String, Long> by observable(emptyMap())
     private var hideDays: Int by observable(7)
+    // ===== 自选分组镜像（同会话分组模式）=====
+    internal var watchGroups: List<UserStockStore.StockGroup> by observable(emptyList())
+    internal var watchGroupMap: Map<String, String> by observable(emptyMap()) // code -> groupId(""未分组不存)
+    /** 自选当前分组筛选：""=全部 */
+    internal var watchGroupFilter: String by observable("")
+    /** 长按自选行待移动到分组的 code（配合移动到分组 overlay） */
+    internal var watchMoveCode: String? by observable(null)
+    /** 长按自选分组 chip 的分组 id（弹分组操作菜单：重命名/删除） */
+    internal var watchGroupSheetId: String? by observable(null)
     /** 强制重渲染计数：标签/隐藏/设置变更后 +1（辅助用，真正触发列表重建靠下方 vif 翻转） */
     internal var dataVersion: Int by observable(0)
     /** vif 翻转触发器：最近对话列表据此强制重建（本版本 body 不随 observable 重跑） */
@@ -226,6 +235,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
         hiddenMap = UserStockStore.loadHidden(prefs)
         hideDays = UserStockStore.loadHideDays(prefs)
         followSectors = UserStockStore.loadFollowSectors(prefs)
+        watchGroups = UserStockStore.loadWatchGroups(prefs)
+        watchGroupMap = UserStockStore.loadWatchGroupMap(prefs)
         // 载入个性化设置：主题色 / 字体 / 深色模式（渲染前保证最新）
         UserSettings.load(prefs)
     }
@@ -418,9 +429,12 @@ internal class MainTabPager : BasePager(), StockNavigator {
     /** 行情列表：返回全部股票（被「不感兴趣」的股票不再消失，改为灰幕覆盖，见 [renderMarketRow]） */
     internal fun visibleQuotes(): List<Stock> = StockData.getQuotes()
 
-    /** 自选列表：仅含被打「自选」标签、且未被隐藏的股票 */
+    /** 自选列表：仅含被打「自选」标签、未被隐藏、且通过当前分组筛选的股票 */
     internal fun watchlistStocks(): List<Stock> =
-        StockData.getQuotes().filter { it.code in watchlistCodes && !isHidden(it.code) }
+        StockData.getQuotes().filter {
+            it.code in watchlistCodes && !isHidden(it.code) &&
+                (watchGroupFilter.isEmpty() || watchGroupMap[it.code] == watchGroupFilter)
+        }
 
     /** 行情页「大盘指数大框」：仅取 isIndex 的指数（剔除冷却期内的隐藏项） */
     internal fun marketIndices(): List<Stock> = visibleQuotes().filter { it.isIndex }
@@ -430,6 +444,11 @@ internal class MainTabPager : BasePager(), StockNavigator {
         val adding = !watchlistCodes.contains(code)
         watchlistCodes = if (adding) watchlistCodes + code else watchlistCodes - code
         UserStockStore.saveWatchlist(prefs, watchlistCodes)
+        // 取消自选时清理其分组归属，避免残留映射占用分组
+        if (!adding && watchGroupMap[code] != null) {
+            watchGroupMap = watchGroupMap - code
+            UserStockStore.saveWatchGroupMap(prefs, watchGroupMap)
+        }
         bumpList()
         // 新加的自选若不在行情池(baseQuotes 种子之外、且尚未被榜单/成分并入)：立即拉一次报价并入，
         // 否则刚加即被 watchlistStocks 的池内过滤挡掉(自选 Tab 空白)。
@@ -715,6 +734,52 @@ internal class MainTabPager : BasePager(), StockNavigator {
         bridgeModule.toast("已加入对比，可在「AI Tab → 股票对比」查看")
     }
 
+    // ===== 自选分组（同会话分组模式）=====
+
+    /** 分组名展示；""=未分组 */
+    internal fun watchGroupName(id: String): String = watchGroups.find { it.id == id }?.name ?: "未分组"
+
+    /** 把某只自选股设到指定分组（""=移回未分组）并落盘+刷新 */
+    internal fun setWatchGroup(code: String, groupId: String) {
+        val m = watchGroupMap.toMutableMap()
+        if (groupId.isEmpty()) m.remove(code) else m[code] = groupId
+        watchGroupMap = m
+        UserStockStore.saveWatchGroupMap(prefs, watchGroupMap)
+        listToggle = !listToggle
+    }
+
+    /** 新建自选分组（弹窗确认后调用），返回新 id */
+    internal fun createWatchGroup(name: String): String {
+        val id = "g${System.currentTimeMillis()}"
+        watchGroups = watchGroups + UserStockStore.StockGroup(id, name.trim().ifBlank { "新分组" })
+        UserStockStore.saveWatchGroups(prefs, watchGroups)
+        listToggle = !listToggle
+        return id
+    }
+
+    /** 重命名自选分组 */
+    internal fun renameWatchGroup(id: String, name: String) {
+        watchGroups = watchGroups.map { if (it.id == id) UserStockStore.StockGroup(id, name.trim().ifBlank { "新分组" }) else it }
+        UserStockStore.saveWatchGroups(prefs, watchGroups)
+        listToggle = !listToggle
+    }
+
+    /** 删除自选分组：组内股票全部移回未分组 */
+    internal fun deleteWatchGroup(id: String) {
+        watchGroups = watchGroups.filterNot { it.id == id }
+        watchGroupMap = watchGroupMap.filterValues { it != id }
+        UserStockStore.saveWatchGroups(prefs, watchGroups)
+        UserStockStore.saveWatchGroupMap(prefs, watchGroupMap)
+        if (watchGroupFilter == id) watchGroupFilter = ""
+        listToggle = !listToggle
+    }
+
+    /** 打开自选分组输入弹窗（新建/重命名共用） */
+    internal fun promptWatchGroup(title: String, initial: String, onOk: (String) -> Unit) {
+        promptInput = initial
+        prompt = TextPrompt(title, initial, onOk)
+    }
+
     /** 切换主 Tab。切到「行情」(1)时：若真实报价未就绪则显示加载中并触发刷新，且翻转 listToggle 让行情/大盘/主列表重建读最新池 */
     internal fun selectMainTab(i: Int) {
         selectedTab = i
@@ -799,7 +864,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         val vw = ctx.pagerData.pageViewWidth
                         val vh = ctx.pagerData.pageViewHeight
                         val menuW = 176f
-                        val menuH = 320f
+                        val watched = ctx.sheetStock != null && ctx.watchlistCodes.contains(ctx.sheetStock!!.code)
+                        val menuH = if (watched) 380f else 320f
                         val left = (ctx.sheetX - menuW / 2f).coerceIn(8f, (vw - menuW - 8f).coerceAtLeast(8f))
                         val top = ctx.sheetY.coerceIn(8f, (vh - menuH - 8f).coerceAtLeast(8f))
                         absolutePosition(top = top, left = left)
@@ -817,6 +883,11 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         ctx.closeSheet()
                         ctx.bridgeModule.toast(if (watched) "已取消自选" else "已加入自选")
                     }
+                    // 是自选股：提供「移动到分组」
+                    vif({ watched }) {
+                        sheetDivider()
+                        sheetItem("⇲ 移动到分组") { val c = stock.code; ctx.closeSheet(); ctx.watchMoveCode = c }
+                    }
                     sheetDivider()
                     sheetItem("问 AI") { ctx.askAI(stock) }
                     sheetItem("查看详细") { ctx.openDetail(stock) }
@@ -831,6 +902,62 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     }
                     sheetDivider()
                     sheetItem("复制代码") { ctx.copyCode(stock) }
+                }
+            }
+
+            // ===== 自选「移动到分组」overlay =====
+            vif({ ctx.watchMoveCode != null }) {
+                View { attr { absolutePositionAllZero(); backgroundColor(Color(0x55000000)) }
+                    event { click { ctx.watchMoveCode = null } } }
+                View {
+                    attr {
+                        val vw = ctx.pagerData.pageViewWidth
+                        val vh = ctx.pagerData.pageViewHeight
+                        val menuW = 200f
+                        val menuH = if (ctx.watchGroups.isEmpty()) 180f else 240f
+                        val left = (vw - menuW) / 2f
+                        val top = (vh - menuH) / 2f
+                        absolutePosition(top = top, left = left)
+                        width(menuW); backgroundColor(Color.WHITE); borderRadius(12f); flexDirectionColumn()
+                    }
+                    View { attr { padding(14f) }
+                        Text { attr { text("移动到分组"); fontSize(ctx.fs(15f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                    }
+                    val code = ctx.watchMoveCode!!
+                    sheetItem("未分组（移出分组）") { ctx.setWatchGroup(code, ""); ctx.watchMoveCode = null }
+                    ctx.watchGroups.forEach { g -> sheetItem(g.name) { ctx.setWatchGroup(code, g.id); ctx.watchMoveCode = null } }
+                    sheetDivider()
+                    sheetItem("+ 新建分组并移入") {
+                        val c = code
+                        ctx.watchMoveCode = null
+                        ctx.promptWatchGroup("新建分组并移入", "") { n -> val id = ctx.createWatchGroup(n); ctx.setWatchGroup(c, id) }
+                    }
+                    sheetDivider()
+                    sheetItem("取消") { ctx.watchMoveCode = null }
+                }
+            }
+
+            // ===== 自选分组操作菜单（长按分组 chip：重命名/删除）=====
+            vif({ ctx.watchGroupSheetId != null }) {
+                View { attr { absolutePositionAllZero(); backgroundColor(Color(0x55000000)) }
+                    event { click { ctx.watchGroupSheetId = null } } }
+                View {
+                    attr {
+                        val vw = ctx.pagerData.pageViewWidth
+                        val menuW = 200f
+                        val menuH = 150f
+                        val left = (vw - menuW) / 2f
+                        val top = (ctx.pagerData.pageViewHeight - menuH) / 2f
+                        absolutePosition(top = top, left = left)
+                        width(menuW); backgroundColor(Color.WHITE); borderRadius(12f); flexDirectionColumn()
+                    }
+                    val gid = ctx.watchGroupSheetId!!
+                    View { attr { padding(14f) }
+                        Text { attr { text("分组：${ctx.watchGroupName(gid)}"); fontSize(ctx.fs(15f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                    }
+                    sheetItem("重命名") { val g = gid; ctx.watchGroupSheetId = null; ctx.promptWatchGroup("重命名分组", ctx.watchGroupName(g)) { n -> ctx.renameWatchGroup(g, n) } }
+                    sheetItem("删除分组") { val g = gid; ctx.watchGroupSheetId = null; ctx.deleteWatchGroup(g) }
+                    sheetItem("取消") { ctx.watchGroupSheetId = null }
                 }
             }
 
@@ -1760,7 +1887,7 @@ private fun ViewContainer<*, *>.renderAIPickCard(ctx: MainTabPager) {
     }
 }
 
-/** 自选列表：随 listToggle 翻转重建 */
+/** 自选列表：随 listToggle 翻转重建；支持分组筛选 chips + 长按行移入分组 */
 private fun ViewContainer<*, *>.renderWatchlist(ctx: MainTabPager) {
     vif({ ctx.watchlistCodes.isEmpty() }) {
         View {
@@ -1770,12 +1897,38 @@ private fun ViewContainer<*, *>.renderWatchlist(ctx: MainTabPager) {
         }
     }
     vif({ ctx.watchlistCodes.isNotEmpty() }) {
-        KRStockList {
-            attr { flex(1f) }
-            stocks = ctx.watchlistStocks()
-            onRowClick = { /* 展开/收起内部处理 */ }
-            onDetailClick = { ctx.openDetail(it) }
-            onRowLongPress = { stock, x, y -> ctx.openSheet(stock, x, y) }
+        // 分组筛选 chips（全部 / 各分组 / + 新建）；分组 chip 长按重命名/删除
+        View {
+            attr {
+                flexDirectionRow(); alignItemsCenter(); width(ctx.pagerData.pageViewWidth)
+                paddingLeft(10f); paddingRight(10f); paddingBottom(6f); marginTop(6f)
+            }
+            // 横滑避免分组多时溢出裁掉
+            // （用横向 Scroller 包一行 chips；横向 Scroller 不吞 chip 的 click/长按需验证——先直接行内排，分组多再展开）
+            chatChip(ctx, "全部", ctx.watchGroupFilter.isEmpty()) {
+                ctx.watchGroupFilter = ""; ctx.listToggle = !ctx.listToggle
+            }
+            ctx.watchGroups.forEach { g ->
+                chatChip(ctx, g.name, ctx.watchGroupFilter == g.id,
+                    onLongPress = { ctx.watchGroupSheetId = g.id }) {
+                    ctx.watchGroupFilter = g.id; ctx.listToggle = !ctx.listToggle
+                }
+            }
+            chatChip(ctx, "+ 新建", false) { ctx.promptWatchGroup("新建分组", "") { n -> ctx.createWatchGroup(n); ctx.watchGroupFilter = ctx.watchGroups.lastOrNull()?.id ?: ""; ctx.listToggle = !ctx.listToggle } }
+        }
+        vif({ ctx.watchlistStocks().isEmpty() && ctx.watchGroupFilter.isNotEmpty() }) {
+            View { attr { flex(1f); alignItemsCenter(); justifyContentCenter() }
+                Text { attr { text("该分组暂无股票，长按自选行选「移动到分组」即可归入"); fontSize(ctx.fs(13f)); color(Color(0xFF999999)) } }
+            }
+        }
+        vif({ ctx.watchlistStocks().isNotEmpty() }) {
+            KRStockList {
+                attr { flex(1f) }
+                stocks = ctx.watchlistStocks()
+                onRowClick = { /* 展开/收起内部处理 */ }
+                onDetailClick = { ctx.openDetail(it) }
+                onRowLongPress = { stock, x, y -> ctx.openSheet(stock, x, y) }
+            }
         }
     }
 }

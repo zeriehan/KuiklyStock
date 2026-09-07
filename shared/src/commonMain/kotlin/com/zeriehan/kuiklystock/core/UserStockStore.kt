@@ -60,4 +60,41 @@ internal object UserStockStore {
     fun saveFollowSectors(prefs: SharedPreferencesModule, set: Set<String>) {
         prefs.setItem(KEY_FOLLOW_SECTORS, set.joinToString(","))
     }
+
+    // ===== 自选分组（同会话分组模式）：分组列表 + 自选股→分组映射 =====
+
+    const val KEY_WATCH_GROUPS = "kb_watch_groups"        // 形如 "g1~自选一,g2~自选二"
+    const val KEY_WATCH_GROUP_MAP = "kb_watch_group_map"  // 形如 "600519:g1,000858:"
+
+    /** 自选分组定义（id 进程唯一；name 展示） */
+    data class StockGroup(val id: String, var name: String)
+
+    fun loadWatchGroups(prefs: SharedPreferencesModule): List<StockGroup> {
+        val raw = prefs.getItem(KEY_WATCH_GROUPS)
+        if (raw.isBlank()) return emptyList()
+        return raw.split(',').mapNotNull { seg ->
+            val kv = seg.split('~', limit = 2)
+            val id = kv.getOrNull(0)?.trim() ?: return@mapNotNull null
+            val name = kv.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() } ?: "分组"
+            if (id.isEmpty()) null else StockGroup(id, name)
+        }
+    }
+
+    fun saveWatchGroups(prefs: SharedPreferencesModule, list: List<StockGroup>) {
+        prefs.setItem(KEY_WATCH_GROUPS, list.joinToString(",") { "${it.id}~${it.name}" })
+    }
+
+    /** 自选股 code → 分组 id；值为 "" 表示未分组（不存则视为未分组） */
+    fun loadWatchGroupMap(prefs: SharedPreferencesModule): Map<String, String> {
+        val raw = prefs.getItem(KEY_WATCH_GROUP_MAP)
+        if (raw.isBlank()) return emptyMap()
+        return raw.split(',').mapNotNull { kv ->
+            val (c, g) = kv.split(':', limit = 2)
+            if (c.isNotBlank() && g.isNotBlank()) c to g else null
+        }.toMap()
+    }
+
+    fun saveWatchGroupMap(prefs: SharedPreferencesModule, map: Map<String, String>) {
+        prefs.setItem(KEY_WATCH_GROUP_MAP, map.entries.joinToString(",") { (c, g) -> "$c:$g" })
+    }
 }
