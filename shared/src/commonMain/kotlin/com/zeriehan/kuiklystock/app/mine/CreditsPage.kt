@@ -64,7 +64,7 @@ private fun ViewContainer<*, *>.renderCredits(ctx: CreditsPage, contentW: Float)
         attr { padding(14f); backgroundColor(Color.WHITE); borderRadius(10f); width(contentW); marginBottom(10f) }
         Text {
             attr {
-                text("RinoStock 能走到今天，离不开这些工具、模型与数据源的无偿支持，由衷感谢：")
+                text("KuiklyStock 能走到今天，离不开这些工具、模型、平台与数据源的无偿支持，由衷感谢：")
                 fontSize(UserSettings.fs(13f)); color(Color(0xFF666666))
             }
         }
@@ -72,6 +72,7 @@ private fun ViewContainer<*, *>.renderCredits(ctx: CreditsPage, contentW: Float)
 
     // 致谢项（图标 emoji + 名称 + 说明）
     listOf(
+        Triple("🐦", "腾讯犀牛鸟", "提供参赛机会与大模型 token 支持"),
         Triple("🤖", "WorkBuddy", "一起把它从想法变成现实的开发伙伴"),
         Triple("🧠", "腾讯混元大模型", "提供底层大模型能力的服务方"),
         Triple("✨", "智谱 GLM", "提供免费大模型 AI 能力，驱动智能对话与操作理解"),
