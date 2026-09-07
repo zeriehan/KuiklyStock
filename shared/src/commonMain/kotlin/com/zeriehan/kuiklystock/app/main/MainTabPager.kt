@@ -694,6 +694,23 @@ internal class MainTabPager : BasePager(), StockNavigator {
         bridgeModule.toast("代码 ${stock.code} 已复制")
     }
 
+    /** 把某只股票加入「股票对比」列表（持久化 key 与 StockComparePage 的 kb_compare_codes 一致）。
+     *  去重追加；进对比页时其 pageDidAppear 会自动应用最新列表(完成即生效)。 */
+    internal fun addToCompare(code: String) {
+        val key = "kb_compare_codes"
+        val raw = prefs.getItem(key)
+        val list = if (!raw.isNullOrBlank()) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
+        if (code in list) {
+            closeSheet()
+            bridgeModule.toast("已在对比列表")
+            return
+        }
+        val merged = list + code
+        prefs.setItem(key, merged.joinToString(","))
+        closeSheet()
+        bridgeModule.toast("已加入对比，可在「AI Tab → 股票对比」查看")
+    }
+
     /** 切换主 Tab。切到「行情」(1)时：若真实报价未就绪则显示加载中并触发刷新，且翻转 listToggle 让行情/大盘/主列表重建读最新池 */
     internal fun selectMainTab(i: Int) {
         selectedTab = i
@@ -778,7 +795,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         val vw = ctx.pagerData.pageViewWidth
                         val vh = ctx.pagerData.pageViewHeight
                         val menuW = 176f
-                        val menuH = 250f
+                        val menuH = 320f
                         val left = (ctx.sheetX - menuW / 2f).coerceIn(8f, (vw - menuW - 8f).coerceAtLeast(8f))
                         val top = ctx.sheetY.coerceIn(8f, (vh - menuH - 8f).coerceAtLeast(8f))
                         absolutePosition(top = top, left = left)
@@ -799,6 +816,9 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     sheetDivider()
                     sheetItem("问 AI") { ctx.askAI(stock) }
                     sheetItem("查看详细") { ctx.openDetail(stock) }
+                    sheetDivider()
+                    // 加入股票对比（持久化对比股列表，进对比页自动生效）
+                    sheetItem("⇄ 加对比") { ctx.addToCompare(stock.code) }
                     // 不感兴趣 / 恢复（按当前是否已被标记切换文案）
                     sheetItem(if (dimmed) "恢复" else "不感兴趣") {
                         if (dimmed) ctx.restoreStock(stock.code) else ctx.hideStock(stock.code)
