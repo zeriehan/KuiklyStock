@@ -92,14 +92,14 @@ object AgentChat {
 
     /** 执行工具 + 再问一轮拿最终答复。执行失败时直接把准确错误返给用户，不靠模型复述（避免模型把失败包装成模糊话术） */
     private fun finishWithTool(query: String, historyText: String, toolLine: String, prefs: SharedPreferencesModule, callback: (String) -> Unit) {
-        val result = executeTool(toolLine, prefs)
+        val result = executeTool(toolLine, prefs, query)
         val isFailure = result.contains("未") || result.contains("失败") || result.contains("无法") ||
             result.contains("不存在") || result.contains("错误") || result.contains("没找到")
         if (isFailure) { callback(result); return }
         val secondPrompt = buildSecondPrompt(query, historyText, toolLine, result)
         AIJobCenter.sendPrompt(secondPrompt) { r ->
             val text = r?.optString("text").orEmpty()
-            callback(text.ifBlank { "已执行：$result" })
+            callback(text.ifBlank { "已执行：$result" } + "")
         }
     }
 
@@ -185,8 +185,8 @@ object AgentChat {
         return null
     }
 
-    /** 解析并执行 TOOL json，返回用户可见的结果文本 */
-    private fun executeTool(toolLine: String, prefs: SharedPreferencesModule): String {
+    /** 解析并执行 TOOL json，返回用户可见的结果文本。query=用户原话用于 addAlert 二次换算 */
+    private fun executeTool(toolLine: String, prefs: SharedPreferencesModule, query: String = ""): String {
         return try {
             val obj = ToolArgs.parse(toolLine)
             // 优先协议字段（name/tool/function/...）；为空时模型可能把 name 当外层 key（{"addAlert":{...}}），
@@ -206,13 +206,13 @@ object AgentChat {
                             val typeLabel = obj.optString("type")
                             var threshold = obj.optDouble("threshold").toFloat()
                             var mapped = mapType(typeLabel)
-                            // 本地金额兜底：模型可能把"跌100元"误当"当日跌幅≥100%"。
-                            // A股日涨跌幅上限约20%，threshold≥50 且标成 pctDown/pctUp 几乎必然是"金额被当百分比"。
-                            // 此时用 resolveStock 拿到的现价 st.price 换算成价格预警（现价∓金额）。
-                            if ((mapped == "pctDown" || mapped == "pctUp") && threshold >= 50 && st.price > 0) {
-                                threshold = if (mapped == "pctDown") st.price - threshold else st.price + threshold
-                                mapped = if (mapped == "pctDown") "below" else "above"
-                                if (threshold <= 0) threshold = 0f
+                            // 二次换算：拿用户原话 query 校准金额/百分比语义。
+                            // 规则: query 里若没含 %/百分之/百分比词 + 出现 跌/跌破/涨/涨破/超过/少于 + 数字
+                            //       且 st.price>0 → 模型若把 type 弄成金额式(below/above), 用 现价∓query里数字 替代
+                            val qRecalc = recalcFromQuery(query, mapped, threshold, st.price)
+                            if (qRecalc != null) {
+                                mapped = qRecalc.first
+                                threshold = qRecalc.second
                             }
                             AgentActions.addAlert(st, mapped, threshold, prefs)
                         }
@@ -334,6 +334,29 @@ private class ToolArgs private constructor(
             }
         }
         return sb.toString().trim().removeSuffix(";")
+    }
+
+    /**
+     * 用用户原话二次校准 addAlert 的 (type, threshold)。
+     * 触发: query 没含%/"百分之"/"百分比" + 含 跌/跌破/涨/涨破/超过 + 数字
+     *       + mapped 是金额式(below/above) + price>0 + 模型给的 threshold ≈ query 里的金额
+     *       → 拿金额换算, threshold=price∓金额。
+     */
+    private fun recalcFromQuery(query: String, mapped: String, threshold: Float, price: Float): Pair<String, Float>? {
+        if (price <= 0f || query.isBlank()) return null
+        if (query.contains("%") || query.contains("百分之") || query.contains("百分比")) return null
+        if (mapped != "below" && mapped != "above") return null
+        val isDown = query.contains("跌") || query.contains("跌破")
+        val isUp = query.contains("涨") || query.contains("涨破") || query.contains("超过")
+        if (!isDown && !isUp) return null
+        val numRegex = Regex("([0-9]+(?:\\.[0-9]+)?)")
+        val match = numRegex.find(query) ?: return null
+        val amount = match.groupValues[1].toFloatOrNull() ?: return null
+        val directionMatch = (isDown && mapped == "below") || (isUp && mapped == "above")
+        if (!directionMatch) return null
+        if (kotlin.math.abs(threshold - amount) > 1f) return null
+        val newThreshold = if (isDown) (price - amount).coerceAtLeast(0f) else price + amount
+        return Pair(mapped, newThreshold)
     }
 
     private fun mapType(label: String): String = when {
