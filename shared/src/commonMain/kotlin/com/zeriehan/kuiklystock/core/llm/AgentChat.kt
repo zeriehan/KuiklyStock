@@ -87,9 +87,12 @@ object AgentChat {
         }
     }
 
-    /** 执行工具 + 再问一轮拿最终答复 */
+    /** 执行工具 + 再问一轮拿最终答复。执行失败时直接把准确错误返给用户，不靠模型复述（避免模型把失败包装成模糊话术） */
     private fun finishWithTool(query: String, historyText: String, toolLine: String, prefs: SharedPreferencesModule, callback: (String) -> Unit) {
         val result = executeTool(toolLine, prefs)
+        val isFailure = result.contains("未") || result.contains("失败") || result.contains("无法") ||
+            result.contains("不存在") || result.contains("错误") || result.contains("没找到")
+        if (isFailure) { callback(result); return }
         val secondPrompt = buildSecondPrompt(query, historyText, toolLine, result)
         AIJobCenter.sendPrompt(secondPrompt) { r ->
             val text = r?.optString("text").orEmpty()
@@ -175,9 +178,15 @@ object AgentChat {
                     }
                 }
                 "setThemeColor" -> {
-                    val c = args.optString("colorName")
-                    val argb = colorToArgb(c)
-                    if (argb == null) "无法识别颜色「$c」" else AgentActions.setThemeColor(argb, prefs)
+                    var c = args.optString("colorName").ifBlank { args.optString("color") }
+                    var argb = if (c.isNotBlank()) colorToArgb(c) else null
+                    // 字段名/参数格式可能与少样本不一致：从原始 toolLine 里扫颜色词兜底
+                    if (argb == null) {
+                        argb = colorToArgb(toolLine)
+                        c = "（已从描述解析）"
+                    }
+                    if (argb == null) "无法识别颜色，请说清楚要哪种颜色（如红/蓝/绿）"
+                    else AgentActions.setThemeColor(argb, prefs)
                 }
                 "setDarkMode" -> {
                     val on = args.optString("boolean") == "true" || args.optBoolean("boolean", false)
@@ -214,14 +223,20 @@ object AgentChat {
         return null
     }
 
-    private fun colorToArgb(c: String): Long? {
+    private fun colorToArgb(c0: String): Long? {
         val map = listOf(
-            "红色" to 0xFFE54D42L, "红" to 0xFFE54D42L, "橙" to 0xFFFF7A45L, "橙色" to 0xFFFF7A45L,
-            "黄色" to 0xFFF5A623L, "黄" to 0xFFF5A623L, "绿色" to 0xFF1ABE5BL, "绿" to 0xFF1ABE5BL,
-            "青色" to 0xFF23B8FFL, "青" to 0xFF23B8FFL, "蓝色" to 0xFF3B82F6L, "蓝" to 0xFF3B82F6L,
-            "紫色" to 0xFF8B5CF6L, "紫" to 0xFF8B5CF6L, "黑色" to 0xFF222222L, "黑" to 0xFF222222L,
-            "白色" to 0xFFFFFFFFL, "白" to 0xFFFFFFFFL, "粉色" to 0xFFFF6B9DL, "粉" to 0xFFFF6B9DL,
+            "红色" to 0xFFE54D42L, "red" to 0xFFE54D42L, "红" to 0xFFE54D42L,
+            "橙色" to 0xFFFF7A45L, "orange" to 0xFFFF7A45L, "橙" to 0xFFFF7A45L,
+            "黄色" to 0xFFF5A623L, "yellow" to 0xFFF5A623L, "黄" to 0xFFF5A623L,
+            "绿色" to 0xFF1ABE5BL, "green" to 0xFF1ABE5BL, "绿" to 0xFF1ABE5BL,
+            "青色" to 0xFF23B8FFL, "cyan" to 0xFF23B8FFL, "青" to 0xFF23B8FFL,
+            "蓝色" to 0xFF3B82F6L, "blue" to 0xFF3B82F6L, "蓝" to 0xFF3B82F6L,
+            "紫色" to 0xFF8B5CF6L, "purple" to 0xFF8B5CF6L, "紫" to 0xFF8B5CF6L,
+            "黑色" to 0xFF222222L, "black" to 0xFF222222L, "黑" to 0xFF222222L,
+            "白色" to 0xFFFFFFFFL, "white" to 0xFFFFFFFFL, "白" to 0xFFFFFFFFL,
+            "粉色" to 0xFFFF6B9DL, "pink" to 0xFFFF6B9DL, "粉" to 0xFFFF6B9DL,
         )
+        val c = c0.lowercase().replace("色", "").trim()
         return map.firstOrNull { c.contains(it.first) }?.second
     }
 }
