@@ -22,6 +22,7 @@ import com.zeriehan.kuiklystock.components.KRMarkdown.renderMarkdown
 import com.zeriehan.kuiklystock.components.KRTrendChart.KRTrendChart
 import com.zeriehan.kuiklystock.core.StockColor
 import com.zeriehan.kuiklystock.core.StockData
+import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.UserSettings
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.formatPrice
@@ -189,13 +190,30 @@ internal class StockComparePage : BasePager() {
             .setItem(KEY_COMPARE, compareCodes.joinToString(","))
     }
 
-    /** 读取上次持久化的对比股；无则默认 茅台/五粮液。 */
+    /** 读取上次持久化的对比股；无则默认 茅台/五粮液。
+     *  规范化：剔除「严格匹配到的指数」code（上证等指数不是对比标的，混入会占位/渲染异常），
+     *  不依赖 findByCode（它 fallback 上证，会把池外 code 误判/错显成上证）。 */
     private fun loadSavedCompare(): List<String> {
         val raw = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME).getItem(KEY_COMPARE)
-        val list = if (raw != null) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
+        var list = if (raw != null) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
+        // 剔除严格匹配到的指数 code（保留不在池的 code——它可能是尚未并入池的真实个股，靠占位显示）
+        list = list.filter { code ->
+            val hit = StockData.getQuotes().firstOrNull { it.code == code }
+            hit == null || !hit.isIndex
+        }
         return if (list.isNotEmpty()) list else listOf("600519", "000858")
     }
 
+    /** 严格解析对比股 code → Stock：只用行情池精确匹配，**不 fallback 上证**(findByCode 会)，
+     *  也不返回指数。池外 code(尚未并入的真实个股)返回一个以 code 为名/码的占位 Stock，
+     *  避免渲染时被 findByCode 错显成上证指数而"看不到自己加的股"。 */
+    internal fun resolveCompareStock(code: String): Stock {
+        StockData.getQuotes().firstOrNull { it.code == code && !it.isIndex }?.let { return it }
+        return Stock(
+            code = code, name = code, price = 0f, change = 0f, changePercent = 0f,
+            high = 0f, low = 0f, volume = 0f, isIndex = false
+        )
+    }
     /** 打开选股页：通过 pageData 把当前对比 codes 直接传给 picker，不依赖单例（避免单例残留/丢值的隐患）。 */
     internal fun openComparePicker(replaceIndex: Int) {
         ComparePicker.pendingReplaceIndex = replaceIndex
@@ -504,7 +522,7 @@ internal data class CompareChatMsg(val role: String, val text: String)
 /** 上区实现（阶段 #98/#99 过渡）：当前对比股横向分页卡片（名+价紧凑行 + 紧凑走势区）。
  *  走势区高度对标自选展开迷你图(KRMiniTimeSharing 122 高)，紧凑不占大块。 */
 private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
-    val stocks = ctx.compareCodes.map { StockData.findByCode(it) }
+    val stocks = ctx.compareCodes.map { ctx.resolveCompareStock(it) }
     View {
         attr {
             height(206f)  // 卡片 170(名24+间距+走势122) + 标题行 + 内边距；上区紧凑, 走势与自选展开同尺寸
@@ -651,7 +669,7 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
                     borderRadius(10f); padding(8f); marginBottom(6f)
                 }
                 Text { attr { text("试试这样问："); fontSize(UserSettings.fs(11f)); color(Color(0xFF999999)) } }
-                val names = ctx.compareCodes.take(2).map { StockData.findByCode(it).name }
+                val names = ctx.compareCodes.take(2).map { ctx.resolveCompareStock(it).name }
                 val qs = if (names.size >= 2) {
                     listOf("${names[0]} 和 ${names[1]} 谁更值得关注？", "这两只谁短线更强？", "帮我挑一只更稳的", "现在更适合买哪只？")
                 } else listOf("谁更值得关注？", "短线还是长线更适合？", "帮我挑一只更稳的")

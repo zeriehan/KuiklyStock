@@ -695,8 +695,14 @@ internal class MainTabPager : BasePager(), StockNavigator {
     }
 
     /** 把某只股票加入「股票对比」列表（持久化 key 与 StockComparePage 的 kb_compare_codes 一致）。
-     *  去重追加；进对比页时其 pageDidAppear 会自动应用最新列表(完成即生效)。 */
-    internal fun addToCompare(code: String) {
+     *  去重追加；进对比页时其 pageDidAppear 会自动应用最新列表(完成即生效)。指数(大盘)不作为对比标的。 */
+    internal fun addToCompare(stock: Stock) {
+        val code = stock.code
+        if (stock.isIndex) {
+            closeSheet()
+            bridgeModule.toast("指数不支持加入股票对比")
+            return
+        }
         val key = "kb_compare_codes"
         val raw = prefs.getItem(key)
         val list = if (!raw.isNullOrBlank()) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
@@ -818,7 +824,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     sheetItem("查看详细") { ctx.openDetail(stock) }
                     sheetDivider()
                     // 加入股票对比（持久化对比股列表，进对比页自动生效）
-                    sheetItem("⇄ 加对比") { ctx.addToCompare(stock.code) }
+                    sheetItem("⇄ 加对比") { ctx.addToCompare(stock) }
                     // 不感兴趣 / 恢复（按当前是否已被标记切换文案）
                     sheetItem(if (dimmed) "恢复" else "不感兴趣") {
                         if (dimmed) ctx.restoreStock(stock.code) else ctx.hideStock(stock.code)
