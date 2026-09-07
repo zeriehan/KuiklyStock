@@ -436,6 +436,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
                             val d = JSONObject()
                             ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Appearance", d)
                         }
+                        renderSettingRow(ctx, contentW, "关于与致谢", "致谢一起开发它的 WorkBuddy、混元、GLM 及各数据源") {
+                            val d = JSONObject()
+                            ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Credits", d)
+                        }
                         View { attr { height(20f) } }
                     }
                 }
