@@ -267,7 +267,8 @@ private fun ViewContainer<*, *>.renderPickerSelectedChips(ctx: StockPickerPage) 
  *  - query 空 → 按当前 rankTab：index4=全部(全池,不排序)；0~3=涨幅/跌幅/换手/振幅(真实榜 rankOf 或本地排序)。
  */
 private fun ViewContainer<*, *>.renderPickerRankList(ctx: StockPickerPage) {
-    val pool = StockData.getQuotes().filter { !it.isIndex }
+    // 全部 Tab/搜索也含指数：用户要求把指数当个股可选可对比，统一在全部页里可搜可加
+    val pool = StockData.getQuotes()
     val q = ctx.query.trim()
     val showAllTab = q.isNotEmpty() || ctx.rankTab == 4  // 搜索时视为切到"全部"
     val shown: List<Stock> = if (showAllTab) {

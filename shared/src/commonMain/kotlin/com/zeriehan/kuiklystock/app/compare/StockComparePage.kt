@@ -191,24 +191,19 @@ internal class StockComparePage : BasePager() {
     }
 
     /** 读取上次持久化的对比股；无则默认 茅台/五粮液。
-     *  规范化：剔除「严格匹配到的指数」code（上证等指数不是对比标的，混入会占位/渲染异常），
-     *  不依赖 findByCode（它 fallback 上证，会把池外 code 误判/错显成上证）。 */
+     *  不再过滤指数——指数现在作为合法对比标的（用户在"全部"页可选可加）。
+     *  仍用 getQuotes 严格精确匹配（避开 findByCode 对池外 code fallback 上证的坑）。 */
     private fun loadSavedCompare(): List<String> {
         val raw = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME).getItem(KEY_COMPARE)
-        var list = if (raw != null) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
-        // 剔除严格匹配到的指数 code（保留不在池的 code——它可能是尚未并入池的真实个股，靠占位显示）
-        list = list.filter { code ->
-            val hit = StockData.getQuotes().firstOrNull { it.code == code }
-            hit == null || !hit.isIndex
-        }
+        val list = if (raw != null) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
         return if (list.isNotEmpty()) list else listOf("600519", "000858")
     }
 
-    /** 严格解析对比股 code → Stock：只用行情池精确匹配，**不 fallback 上证**(findByCode 会)，
-     *  也不返回指数。池外 code(尚未并入的真实个股)返回一个以 code 为名/码的占位 Stock，
-     *  避免渲染时被 findByCode 错显成上证指数而"看不到自己加的股"。 */
+    /** 严格解析对比股 code → Stock：只用行情池精确匹配，**不 fallback 上证**(findByCode 会)。
+ *  指数作为合法对比标的也在池中精确返回(含"上证指数"等名字)。池外 code(尚未并入的真实个股)
+ *  返回一个以 code 为名/码的占位 Stock，避免渲染时 fallback 错乱。 */
     internal fun resolveCompareStock(code: String): Stock {
-        StockData.getQuotes().firstOrNull { it.code == code && !it.isIndex }?.let { return it }
+        StockData.getQuotes().firstOrNull { it.code == code }?.let { return it }
         return Stock(
             code = code, name = code, price = 0f, change = 0f, changePercent = 0f,
             high = 0f, low = 0f, volume = 0f, isIndex = false

@@ -695,14 +695,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
     }
 
     /** 把某只股票加入「股票对比」列表（持久化 key 与 StockComparePage 的 kb_compare_codes 一致）。
-     *  去重追加；进对比页时其 pageDidAppear 会自动应用最新列表(完成即生效)。指数(大盘)不作为对比标的。 */
+     *  去重追加；进对比页时其 pageDidAppear 会自动应用最新列表(完成即生效)。
+     *  指数也允许加入（用户在"全部"页可把指数当个股加进对比）。 */
     internal fun addToCompare(stock: Stock) {
         val code = stock.code
-        if (stock.isIndex) {
-            closeSheet()
-            bridgeModule.toast("指数不支持加入股票对比")
-            return
-        }
         val key = "kb_compare_codes"
         val raw = prefs.getItem(key)
         val list = if (!raw.isNullOrBlank()) raw.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList()
