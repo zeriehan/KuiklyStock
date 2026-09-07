@@ -52,7 +52,7 @@ internal class StockComparePage : BasePager() {
     internal var currentPage: Int by observable(0)
     /** 每只股票独立的迷你走势周期（"intraday" 分时 / "day" 日K），默认分时 */
     internal var comparePeriods: Map<String, String> by observable(emptyMap())
-    /** 下区对比聊天消息列表（内存，不持久化） */
+    /** 下区对比聊天消息列表（UI 态；持久真源在 ChatStore.COMPARE_CONV，退出重进/冷启动恢复） */
     internal var chatMessages: List<CompareChatMsg> by observable(emptyList())
     /** 输入框文本 */
     internal var cmpInput: String by observable("")
@@ -308,7 +308,7 @@ internal class StockComparePage : BasePager() {
     }
 }
 
-/** 对比页聊天的消息（内存；user/assistant）。 */
+/** 对比页聊天的消息（user/assistant；经 ChatStore.COMPARE_CONV 持久化，见 ChatStore.ChatMessage） */
 internal data class CompareChatMsg(val role: String, val text: String)
 
 /** 上区实现（阶段 #98/#99 过渡）：当前对比股横向分页卡片（名+价紧凑行 + 紧凑走势区）。
