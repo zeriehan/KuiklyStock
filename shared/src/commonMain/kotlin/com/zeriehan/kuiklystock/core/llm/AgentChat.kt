@@ -167,9 +167,9 @@ object AgentChat {
     private fun executeTool(toolLine: String, prefs: SharedPreferencesModule): String {
         return try {
             val obj = ToolArgs.parse(toolLine)
-            // 优先 "name"；为空时模型可能把 name 直接当外层 key（{"addAlert":{...}}），
+            // 优先协议字段（name/tool/function/...）；为空时模型可能把 name 当外层 key（{"addAlert":{...}}），
             // 从 map 的 keys 里挑一个看起来像工具名的 key 当 name
-            var name = canonicalizeToolName(obj.optString("name"))
+            var name = canonicalizeToolName(obj.toolName())
             if (name.isBlank()) name = obj.candidateNames().firstOrNull { canonicalizeToolName(it).isNotBlank() }
                 ?.let { canonicalizeToolName(it) } ?: ""
             when (name) {
@@ -229,9 +229,18 @@ private class ToolArgs private constructor(
         }
         fun candidateNames(): List<String> = toolNameCandidates
 
+        /** 模型把工具名放协议字段（tool/name/function/action）里时取出来 */
+        fun toolName(): String {
+            listOf("name", "tool", "function", "operation", "action", "cmd", "command").forEach { k ->
+                val v = params[k] ?: params[k.lowercase()] ?: ""
+                if (v.isNotBlank()) return v
+            }
+            return ""
+        }
+
         companion object {
             private val NON_TOOL_KEYS = setOf("stock", "type", "threshold", "colorName", "color",
-                "boolean", "args", "parameters", "params", "input", "data", "name")
+                "boolean", "args", "parameters", "params", "input", "data")
 
             fun parse(raw: String): ToolArgs {
                 // 路径1: 标准 JSON（递归拍平所有内嵌对象字段，保留外层 keys 当候选名）
@@ -306,24 +315,26 @@ private class ToolArgs private constructor(
         return null
     }
 
-    /** 把模型可能输出的别名（change_theme_color / set_theme_color 等）规范化到我们的内部名 */
-    private fun canonicalizeToolName(raw: String): String {
-        val n = raw.trim().lowercase()
-        // 已是自己名字
-        if (n in setOf("addwatch", "addcompare", "addalert", "setthemecolor", "setdarkmode")) return raw
-        // watch / 自选
-        if (n.contains("watch") || n.contains("self") || n.contains("favorite") || n.contains("关注")) return "addWatch"
-        if (n.contains("compare") || n.contains("对比")) return "addCompare"
-        // 预警/价格提醒：alert/预警/提醒/价格监控/trigger/notify 都视为 addAlert
-        if (n.contains("alert") || n.contains("预警") || n.contains("提醒") ||
-            n.contains("price") || n.contains("notify") || n.contains("trigger") || n.contains("monitor")) return "addAlert"
-        // 改主题色（兼容 change_color / set_color / color_theme / change_theme / 改颜色 等）
-        if (n.contains("color") || n.contains("theme") || n.contains("色")) return "setThemeColor"
-        // 深色 / 暗黑 / 夜间模式
-        if (n.contains("dark") || n.contains("深色") || n.contains("暗黑") || n.contains("夜间") || n.contains("night")) return "setDarkMode"
-        // 没匹配：原样返（executeTool 会报"未知操作：xxx"）
-        return raw
-    }
+    /** 把模型可能输出的别名（change_theme_color / set_theme_color / tool / name 等）规范化到我们的内部名。
+ *  返回空字符串表示"识别不出来"，调用方应继续找下一个候选（不要把 raw 当 name 用） */
+private fun canonicalizeToolName(raw: String): String {
+    val n = raw.trim().lowercase()
+    if (n.isEmpty()) return ""
+    // 已是自己名字
+    if (n in setOf("addwatch", "addcompare", "addalert", "setthemecolor", "setdarkmode")) return raw
+    // watch / 自选
+    if (n.contains("watch") || n.contains("self") || n.contains("favorite") || n.contains("关注")) return "addWatch"
+    if (n.contains("compare") || n.contains("对比")) return "addCompare"
+    // 预警/价格提醒：alert/预警/提醒/价格监控/trigger/notify 都视为 addAlert
+    if (n.contains("alert") || n.contains("预警") || n.contains("提醒") ||
+        n.contains("price") || n.contains("notify") || n.contains("trigger") || n.contains("monitor")) return "addAlert"
+    // 改主题色（兼容 change_color / set_color / color_theme / change_theme / 改颜色 等）
+    if (n.contains("color") || n.contains("theme") || n.contains("色")) return "setThemeColor"
+    // 深色 / 暗黑 / 夜间模式
+    if (n.contains("dark") || n.contains("深色") || n.contains("暗黑") || n.contains("夜间") || n.contains("night")) return "setDarkMode"
+    // 没匹配：返回空（让上层继续找其他候选）
+    return ""
+}
 
     private fun colorToArgb(c0: String): Long? {
         val map = listOf(
