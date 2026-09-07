@@ -167,7 +167,11 @@ object AgentChat {
     private fun executeTool(toolLine: String, prefs: SharedPreferencesModule): String {
         return try {
             val obj = ToolArgs.parse(toolLine)
-            val name = canonicalizeToolName(obj.optString("name"))
+            // 优先 "name"；为空时模型可能把 name 直接当外层 key（{"addAlert":{...}}），
+            // 从 map 的 keys 里挑一个看起来像工具名的 key 当 name
+            var name = canonicalizeToolName(obj.optString("name"))
+            if (name.isBlank()) name = obj.candidateNames().firstOrNull { canonicalizeToolName(it).isNotBlank() }
+                ?.let { canonicalizeToolName(it) } ?: ""
             when (name) {
                 "addWatch", "addCompare", "addAlert" -> {
                     val stockName = obj.optString("stock")
@@ -198,7 +202,7 @@ object AgentChat {
                     val on = obj.optString("boolean") == "true" || obj.optBoolean("boolean", false)
                     AgentActions.setDark(on, prefs)
                 }
-                else -> "未知操作：$name（请把这个原文发我便于修复：${toolLine.take(200)}）"
+                else -> "未知操作：${if (name.isBlank()) "name 缺失" else name}（请把这个原文发我便于修复：${toolLine.take(200)}）"
             }
         } catch (e: Throwable) {
             "操作执行失败：${e.message ?: "未知错误"}（请把这个原文发我便于修复：${toolLine.take(200)}）"
@@ -217,6 +221,12 @@ object AgentChat {
         fun optBoolean(key: String, default: Boolean): Boolean {
             val v = map[key] ?: map[key.lowercase()] ?: return default
             return v == "true" || v == "1"
+        }
+        /** 排除明显非工具名的 key，剩下的就是候选工具名（模型有时把 name 当外层 key） */
+        fun candidateNames(): List<String> {
+            val nonTool = setOf("stock", "type", "threshold", "colorName", "color",
+                "boolean", "args", "parameters", "params", "input", "data")
+            return map.keys.filter { it.lowercase() !in nonTool }
         }
         companion object {
             fun parse(raw: String): ToolArgs {
