@@ -45,27 +45,29 @@ internal object AgentRouter {
                 if (containsAct(t)) return AgentAction.SetDark(false)
             }
         }
-        // 主题色：换主题色/改成红色/主题改成绿/变成蓝色 等。
-        // 放宽：只要含「改成/换成/调成/设为…」这类改色动作词 + 颜色词，就视为改主题色（"改成红色"也能命中）。
-        // 用动作词限定避免把"收红/拉红"这种行情描述误判成改主题。
+        // 2) 需股票的操作**先于**颜色判断——否则股票名里含颜色字的(如"蓝色光标""红塔证券")
+        //    会被下面颜色分支劫持误判成改主题色。凡能解析出股票目标且带操作动词，优先按股票操作处理。
+        val stock = resolveStock(t)
+        if (stock != null) {
+            // 加自选
+            if ((t.contains("自选")) && (t.contains("加") || t.contains("加入") || t.contains("添加") || t.contains("收藏") || t.contains("放到"))) {
+                return AgentAction.AddWatch(stock)
+            }
+            // 加对比
+            if ((t.contains("对比")) && (t.contains("加") || t.contains("加入") || t.contains("比较"))) {
+                return AgentAction.AddCompare(stock)
+            }
+        }
+        // 设预警（需价格数字 + 方向词；内部自己解析股票）
+        val alert = tryParseAlert(t)
+        if (alert != null) return alert
+
+        // 3) 无明确股票操作 → 才判改主题色。
+        //    "改成红色/换成蓝色/调成绿色" 这里命中；此时若无股票名参与，颜色单字不撞股票。
         colorNameToArgb(t)?.let { (label, argb) ->
             if (t.contains("主题") || t.contains("颜色") || t.contains("配色") || hasRecolorAct(t)) {
                 return AgentAction.SetTheme(label, argb)
             }
-        }
-
-        // 2) 需股票的操作：先解析股票目标
-        // 设预警：必须有价格数字 + 方向词
-        val alert = tryParseAlert(t)
-        if (alert != null) return alert
-
-        // 加自选 / 加对比：需操作动词 + 目标词
-        val stock = resolveStock(t) ?: return null
-        if ((t.contains("自选")) && (t.contains("加") || t.contains("加入") || t.contains("添加") || t.contains("收藏") || t.contains("放到"))) {
-            return AgentAction.AddWatch(stock)
-        }
-        if ((t.contains("对比")) && (t.contains("加") || t.contains("加入") || t.contains("比较"))) {
-            return AgentAction.AddCompare(stock)
         }
         return null
     }
