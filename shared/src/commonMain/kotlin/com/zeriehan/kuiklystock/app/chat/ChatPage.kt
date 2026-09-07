@@ -22,8 +22,7 @@ import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.QuickTipsGate
 import com.zeriehan.kuiklystock.core.StockMention
-import com.zeriehan.kuiklystock.core.AgentRouter
-import com.zeriehan.kuiklystock.core.AgentActions
+import com.zeriehan.kuiklystock.core.llm.AgentChat
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.UserSettings
@@ -276,16 +275,20 @@ internal class ChatPage : BasePager() {
         // 统一走 ChatSync.bump()：本页监听刷新气泡（重建含流式气泡），主框架刷新「最近对话」
         ChatSync.bump()
 
-        // ⚠️ AI 操控 app（Agent）：先识别是否为可执行的明确操作指令（加自选/加对比/设预警/改外观）。
-        //    命中 → 直接执行真实 app 操作并回一句确认，不再请求模型（确定性、不依赖模型输出）。
-        val agent = AgentRouter.route(q)
-        if (agent != null) {
+        // ⚠️ AI 操控 app（Agent）：消息疑似要求执行操作时，走"模型决策"编排——
+        //    由 AI 自己理解自然语言(不靠本地规则枚举)是否要执行工具；需要则执行并再回一轮拿最终答复。
+        if (AgentChat.isLikelyAction(q)) {
             val prefsObj = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
-            val feedback = AgentActions.execute(agent, prefsObj)
+            val hist = ChatStore.messages(code)
+            val tk = token
             if (!destroyed) { streaming = false; streamText = "" }
-            ChatStore.append(code, ChatStore.ChatMessage("assistant", feedback))
-            ChatStore.setPending(code, false)
-            ChatSync.bump()
+            AgentChat.run(q, AgentChat.historyText(hist), prefsObj) { reply ->
+                if (destroyed || tk != streamToken) { ChatStore.setPending(code, false); return@run }
+                val text = reply.ifBlank { "（AI 暂时没有回复，请稍后再试）" }
+                ChatStore.append(code, ChatStore.ChatMessage("assistant", text))
+                ChatStore.setPending(code, false)
+                ChatSync.bump()
+            }
             return
         }
 
