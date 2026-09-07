@@ -22,6 +22,7 @@ import com.zeriehan.kuiklystock.core.UserSettings
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.llm.AIJobCenter
+import com.zeriehan.kuiklystock.core.llm.ChatStore
 
 /**
  * 「股票对比」页（#96）：多股并排对比 + AI 对比解读。
@@ -71,6 +72,12 @@ internal class StockComparePage : BasePager() {
         compareCodes = loadSavedCompare()
         // 每只股默认迷你走势周期为「分时」
         comparePeriods = compareCodes.associateWith { "intraday" }
+        // 恢复对比聊天历史（持久化于 ChatStore.COMPARE_CONV，主框架已 attach 落盘）：
+        // 退出对比页再重进时把上次的对比问答补回，不因页面销毁而丢
+        val cmpHist = ChatStore.messages(ChatStore.COMPARE_CONV)
+        if (cmpHist.isNotEmpty() && chatMessages.isEmpty()) {
+            chatMessages = cmpHist.map { CompareChatMsg(it.role, it.text) }
+        }
         // 拉各股真实行情/分时/K线(各周期)，保证对比数据真
         compareCodes.forEach { code ->
             val st = StockData.findByCode(code)
@@ -180,7 +187,10 @@ internal class StockComparePage : BasePager() {
     /** 发送一条对比问题并请求 AI（引导 chips / 手动输入共用；cmpWaiting 时忽略）。 */
     internal fun sendCompareQuestion(q: String) {
         if (q.isBlank() || cmpWaiting) return
-        chatMessages = chatMessages + CompareChatMsg(role = "user", text = q)
+        val userMsg = CompareChatMsg(role = "user", text = q)
+        chatMessages = chatMessages + userMsg
+        // 落盘（ChatStore 主框架已 attach）→ 退出重进仍保留
+        ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("user", q))
         chatToggle = !chatToggle
         cmpWaiting = true
         val prompt = buildComparePrompt(q)
@@ -190,6 +200,7 @@ internal class StockComparePage : BasePager() {
             val text = resp?.optString("text").orEmpty()
             val reply = if (text.isBlank()) "（AI 未返回，可能是限流或无 Key。请稍后重试。）" else text
             chatMessages = chatMessages + CompareChatMsg(role = "assistant", text = reply)
+            ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("assistant", reply))
             cmpWaiting = false
             chatToggle = !chatToggle
         }

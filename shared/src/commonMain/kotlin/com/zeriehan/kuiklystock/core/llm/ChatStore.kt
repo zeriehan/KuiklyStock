@@ -20,6 +20,13 @@ object ChatStore {
 
     private const val KEY_CHAT = "kb_chat_log"
 
+    /**
+     * 「股票对比」页下区对比 AI 聊天的固定会话 key。
+     * 复用本 store 的持久化（落盘 + 冷启动恢复），但带 `__` 前缀以便与真实股票 code 区分，
+     * 且不进入「最近对话」/分组等主聊天会话列表（见 [isStandaloneConv] 的过滤）。
+     */
+    const val COMPARE_CONV = "__compare__"
+
     /** 未发送的输入框草稿（按会话 code 隔离），独立于聊天记录单独落盘 */
     private const val KEY_DRAFT = "kb_chat_draft"
 
@@ -172,6 +179,9 @@ object ChatStore {
     /** 是否存在该股票对话（用于「最近对话」列表判断） */
     fun hasConversation(code: String): Boolean = conversations[code]?.isNotEmpty() == true
 
+    /** 是否为独立会话（对比聊天等），不进入「最近对话」/分组等面向个股的列表 */
+    private fun isStandaloneConv(code: String): Boolean = code == COMPARE_CONV
+
     /** 追加一条消息（自动落盘 + 超量裁剪） */
     fun append(code: String, msg: ChatMessage) {
         val list = conversations.getOrPut(code) { mutableListOf() }
@@ -188,13 +198,13 @@ object ChatStore {
 
     /** 所有有对话的股票代码（用于「最近对话」列表，避免依赖外部股票表过滤导致漏显） */
     fun conversationCodes(): List<String> =
-        conversations.filter { it.value.isNotEmpty() }.keys.toList()
+        conversations.filter { it.value.isNotEmpty() && !isStandaloneConv(it.key) }.keys.toList()
 
     // ===== 分组 / 置顶 / 重命名 / 删除 =====
 
     /** 有序代码列表：置顶的在前（保持插入序），其余在后 */
     fun orderedCodes(): List<String> {
-        val keys = conversations.keys.filter { it.isNotBlank() }
+        val keys = conversations.keys.filter { it.isNotBlank() && !isStandaloneConv(it) }
         val pinned = keys.filter { isPinned(it) }
         val rest = keys.filter { !isPinned(it) }
         return pinned + rest
