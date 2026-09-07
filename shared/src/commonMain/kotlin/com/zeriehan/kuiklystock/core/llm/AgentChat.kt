@@ -199,7 +199,7 @@ object AgentChat {
                     val on = args.optString("boolean") == "true" || args.optBoolean("boolean", false)
                     AgentActions.setDark(on, prefs)
                 }
-                else -> "未知操作：$name"
+                else -> "未知操作：$name（请把这个原文发我便于修复：${toolLine.take(200)}）"
             }
         } catch (e: Throwable) {
             "操作执行失败：${e.message ?: "未知错误"}"
@@ -236,9 +236,11 @@ object AgentChat {
         // 已是自己名字
         if (n in setOf("addwatch", "addcompare", "addalert", "setthemecolor", "setdarkmode")) return raw
         // watch / 自选
-        if (n.contains("watch") || n.contains("self") || n.contains("favorite")) return "addWatch"
+        if (n.contains("watch") || n.contains("self") || n.contains("favorite") || n.contains("关注")) return "addWatch"
         if (n.contains("compare") || n.contains("对比")) return "addCompare"
-        if (n.contains("alert") || n.contains("预警") || n.contains("提醒")) return "addAlert"
+        // 预警/价格提醒：alert/预警/提醒/价格监控/trigger/notify 都视为 addAlert
+        if (n.contains("alert") || n.contains("预警") || n.contains("提醒") ||
+            n.contains("price") || n.contains("notify") || n.contains("trigger") || n.contains("monitor")) return "addAlert"
         // 改主题色（兼容 change_color / set_color / color_theme / change_theme / 改颜色 等）
         if (n.contains("color") || n.contains("theme") || n.contains("色")) return "setThemeColor"
         // 深色 / 暗黑 / 夜间模式
