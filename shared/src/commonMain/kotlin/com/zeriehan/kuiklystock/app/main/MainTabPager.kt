@@ -79,6 +79,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal val alertDrafts = mutableMapOf<String, String>()
     /** 4 行 Input 的 ref 注册（供 openAlertFor 后延迟 setText 回显草稿） */
     internal val alertInputRefs = mutableMapOf<String, ViewRef<InputView>>()
+    /** 预警行重建计数：草稿增删时 +1，驱动伪占位/占位逻辑按草稿刷新 */
+    internal var alertRowTick: Int by observable(0)
     /** 强制重渲染计数：标签/隐藏/设置变更后 +1（辅助用，真正触发列表重建靠下方 vif 翻转） */
     internal var dataVersion: Int by observable(0)
     /** vif 翻转触发器：最近对话列表据此强制重建（本版本 body 不随 observable 重跑） */
@@ -835,7 +837,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
 
     /** 某行 Input 文本变化时写入该类型草稿 */
     internal fun updateAlertDraft(type: String, text: String) {
+        val wasEmpty = alertDrafts[type].isNullOrEmpty()
         alertDrafts[type] = text
+        // 空↔非空边界才触发伪占位 vif 重建（避免每键都重建抖动）
+        if (wasEmpty != text.isEmpty()) alertRowTick++
         if (type == alertType) alertThresholdText = text
     }
 
@@ -1078,15 +1083,32 @@ internal class MainTabPager : BasePager(), StockNavigator {
                             View { attr { flexDirectionRow(); alignItemsCenter(); marginBottom(8f) }
                                 Text { attr {
                                     width(72f); text(ctx.alertTypeLabel(t)); fontSize(ctx.fs(13f)); color(Color(0xFF444444)) } }
-                                Input {
-                                    ref { ctx.alertInputRefs[t] = it }
-                                    attr {
-                                        flex(1f); height(36f); backgroundColor(Color(0xFFF5F6F8)); borderRadius(8f)
-                                        color(Color(0xFF222222)); fontSize(ctx.fs(14f))
-                                        placeholder(if (t.startsWith("pct")) "如 5（%）" else "如 ${formatPrice(st.price.coerceAtLeast(1f))}")
-                                        placeholderColor(Color(0xFFB4B4B4))
+                                // 输入框（灰底圆角）
+                                View { attr { flex(1f); height(36f); backgroundColor(Color(0xFFF5F6F8)); borderRadius(8f) }
+                                    // 伪占位：浅灰、靠右；仅当草稿空时显示（用户输入后自动消失，靠右不跟左对齐的输入冲突）
+                                    vif({ ctx.alertRowTick >= 0 && ctx.alertDrafts[t].isNullOrEmpty() }) {
+                                        View { attr {
+                                            absolutePosition(left = 10f, right = 10f, top = 0f, bottom = 0f)
+                                            flexDirectionRow(); justifyContentFlexEnd(); alignItemsCenter()
+                                        }
+                                            Text { attr {
+                                                text(if (t.startsWith("pct")) "如 5（%）" else "如 ${formatPrice(st.price.coerceAtLeast(1f))}")
+                                                fontSize(ctx.fs(14f)); color(Color(0xFFB4B4B4))
+                                            } }
+                                        }
                                     }
-                                    event { textDidChange { ctx.updateAlertDraft(t, it.text) } }
+                                    // 真实输入：文字深黑左对齐；外包一层左 padding 让文字不贴最左
+                                    View { attr { flex(1f); height(36f); paddingLeft(10f); paddingRight(10f); justifyContentCenter() }
+                                        Input {
+                                            ref { ctx.alertInputRefs[t] = it }
+                                            attr {
+                                                flex(1f); height(30f)
+                                                backgroundColor(Color(0x00000000))
+                                                color(Color(0xFF222222)); fontSize(ctx.fs(14f)); textAlignLeft()
+                                            }
+                                            event { textDidChange { ctx.updateAlertDraft(t, it.text) } }
+                                        }
+                                    }
                                 }
                             }
                         }
