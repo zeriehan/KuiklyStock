@@ -348,7 +348,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                                 View {
                                     attr {
                                         flexDirectionColumn(); marginTop(12f); padding(10f)
-                                        backgroundColor(Color(0xFFF7F8FA)); borderRadius(8f)
+                                        backgroundColor(Color(0xFFF5F6F8)); borderRadius(8f)
                                     }
                                     // 自定义输入（最少 1 天，天为单位）
                                     View {
@@ -373,7 +373,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
                                                 attr {
                                                     height(30f); padding(left = 14f, right = 14f); marginRight(8f)
                                                     borderRadius(15f)
-                                                    backgroundColor(if (ctx.hideDays == d) Color(ctx.themeColor) else Color(0xFFE6F1FB))
+                                                    // 选中主题色实心 / 未选中主题色浅底(与主题色同源, 不再硬编码浅蓝 E6F1FB 违和)
+                                                    backgroundColor(if (ctx.hideDays == d) Color(ctx.themeColor) else Color(UserSettings.blend(ctx.themeColor, -1L, 0.93f)))
                                                     alignItemsCenter(); justifyContentCenter()
                                                 }
                                                 event {
