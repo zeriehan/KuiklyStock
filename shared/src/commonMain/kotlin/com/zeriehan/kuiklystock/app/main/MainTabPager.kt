@@ -977,24 +977,25 @@ internal class MainTabPager : BasePager(), StockNavigator {
                 }
                 val tabs = listOf("AI", "行情", "自选", "我的")
                 tabs.forEachIndexed { i, name ->
-                    val active = ctx.selectedTab == i
+                    // ⚠️ 不要提取 active 顶层 val — attr 闭包捕获 val 不重跑, selectedTab 变指示条不跟随
+                    // (参考 commit 685fe73 同款响应式坑)。直接在每个 attr 闭包内现读 ctx.selectedTab。
                     View {
                         attr { flex(1f); flexDirectionColumn(); alignItemsCenter(); justifyContentCenter() }
                         event { click { ctx.selectMainTab(i) } }
-                        // 顶部主题色指示条(选中亮/未选中透明)：更贴近图标式导航的"胶囊高亮"
+                        // 顶部主题色指示条(选中亮/未选中透明)
                         View {
                             attr {
                                 width(24f); height(3f); marginBottom(5f); borderRadius(1.5f)
                                 backgroundColor(Color(ctx.themeColor))
-                                opacity(if (active) 1f else 0f)
+                                opacity(if (ctx.selectedTab == i) 1f else 0f)
                             }
                         }
                         Text {
                             attr {
                                 text(name)
                                 fontSize(ctx.fs(12f))
-                                if (active) fontWeightSemisolid()
-                                color(if (active) Color(ctx.themeColor) else Color(0xFF8A8F99))
+                                if (ctx.selectedTab == i) fontWeightSemisolid()
+                                color(if (ctx.selectedTab == i) Color(ctx.themeColor) else Color(0xFF8A8F99))
                             }
                         }
                     }
