@@ -966,27 +966,35 @@ internal class MainTabPager : BasePager(), StockNavigator {
             }
 
             // ===== BottomTabBar =====
+            // 现代克制风格：白底 + 顶部发丝分隔线；选中项=文字主题色加粗+上方主题色胶囊指示，
+            // 不再刷整格淡色底(满且不精致)。字号固定不跳变(避免切换抖动)。
+            // 顶部发丝分隔线
+            View { attr { height(1f); backgroundColor(Color(0xFFF0F0F0)) } }
             View {
-                attr { height(56f); flexDirectionRow(); alignItemsCenter(); backgroundColor(Color.WHITE) }
+                attr {
+                    height(56f); flexDirectionRow(); alignItemsStretch()
+                    backgroundColor(Color.WHITE)
+                }
                 val tabs = listOf("AI", "行情", "自选", "我的")
                 tabs.forEachIndexed { i, name ->
+                    val active = ctx.selectedTab == i
                     View {
-                        attr {
-                            flex(1f); flexDirectionColumn(); alignItemsCenter(); justifyContentCenter()
-                            backgroundColor(if (ctx.selectedTab == i) Color(UserSettings.blend(ctx.themeColor, -1L, 0.86f)) else Color.WHITE)
-                        }
+                        attr { flex(1f); flexDirectionColumn(); alignItemsCenter(); justifyContentCenter() }
                         event { click { ctx.selectMainTab(i) } }
+                        // 顶部主题色指示条(选中亮/未选中透明)：更贴近图标式导航的"胶囊高亮"
+                        View {
+                            attr {
+                                width(24f); height(3f); marginBottom(5f); borderRadius(1.5f)
+                                backgroundColor(Color(ctx.themeColor))
+                                opacity(if (active) 1f else 0f)
+                            }
+                        }
                         Text {
                             attr {
                                 text(name)
-                                fontSize(if (ctx.selectedTab == i) ctx.fs(13f) else ctx.fs(12f))
-                                color(if (ctx.selectedTab == i) Color(ctx.themeColor) else Color(0xFF999999))
-                            }
-                        }
-                        View {
-                            attr {
-                                width(22f); height(3f); marginTop(4f); borderRadius(1.5f); backgroundColor(Color(ctx.themeColor))
-                                opacity(if (ctx.selectedTab == i) 1f else 0f)
+                                fontSize(ctx.fs(12f))
+                                if (active) fontWeightSemisolid()
+                                color(if (active) Color(ctx.themeColor) else Color(0xFF8A8F99))
                             }
                         }
                     }
