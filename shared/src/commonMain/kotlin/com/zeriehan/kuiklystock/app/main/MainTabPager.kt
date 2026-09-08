@@ -195,7 +195,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
             // 只有翻转它们，renderRankList 里现读 StockData.rankOf / renderSectorList 里现读
             // StockData.getSectors 才能拿到新数据（body 与普通 attr 不随非 observable 数据变化重跑）。
             rankToggle = !rankToggle
-            marketSubToggle = !marketSubToggle
+            // ⚠️ 不在这里翻 marketSubToggle：否则每次报价到达都重建整个行情内容区
+            //   (含板块 200 行 × ~13 节点 ≈ 2600 节点)，停在板块页时每次操作后都整页重建→卡。
+            //   大盘实时靠 marketDataTick、个股榜靠 rankToggle 各自重建即可；板块为低频快照，
+            //   仅切子Tab(selectMarketSub)或 loadSectors 完成时单独重建(见下)。
             // 任何真实数据到达即结束"加载中"（大盘指数/行情刷新也走 DataSync）
             mktLoading = false
             // 行情数据 tick：驱动「大盘」子内容强制重建（即使一直停留在大盘子页也随新报价刷新）
@@ -710,7 +713,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
             1 -> {
                 if (StockData.hasRealSectors()) return
                 mktLoading = true
-                StockData.loadSectors { mktLoading = false }
+                // loadSectors 完成(低频,仅首次)才重建板块列表；不让每次报价 DataSync 重建 200 行板块
+                StockData.loadSectors { mktLoading = false; marketSubToggle = !marketSubToggle }
             }
             2 -> {
                 if (StockData.hasRank(stockRankTab)) return
