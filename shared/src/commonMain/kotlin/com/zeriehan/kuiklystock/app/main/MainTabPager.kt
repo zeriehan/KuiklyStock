@@ -986,9 +986,9 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         View {
                             attr {
                                 width(66f)
-                                padding(0f, 5f, bottom = 0f, right = 5f)
+                                padding(0f, 8f, bottom = 0f, right = 8f)
                                 alignItemsCenter(); justifyContentCenter()
-                                borderRadius(15f)
+                                borderRadius(16f)
                                 backgroundColor(
                                     if (ctx.selectedTab == i) Color(UserSettings.blend(ctx.themeColor, -1L, 0.92f))
                                     else Color(0x00000000)
