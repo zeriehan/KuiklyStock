@@ -129,6 +129,8 @@ private fun mini2(v: Double): String {
 internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
 
     var stocks: List<Stock> by observable(emptyList())
+    /** 被「不感兴趣」隐藏的 code 集合：命中则该行降透明度铺灰幕且禁止展开（保留长按弹恢复菜单）。由使用方传入。 */
+    var hiddenCodes: Set<String> by observable(emptySet())
     var onDetailClick: ((Stock) -> Unit)? = null
     var onRowClick: ((Stock) -> Unit)? = null
     /** 长按某行：弹出操作菜单。回调参数含长按点相对 Page 的坐标（pageX/pageY），供菜单定位 */
@@ -196,7 +198,7 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                         // ===== 展开态（行内，vif 瞬时挂载，向上展开、挤开上方行；用户放弃动画）=====
                         // 向上展开：展开块长在折叠行「上方」，底行展开也不会被底部 Tab 遮挡，
                         // 因此无需任何自动滚动 / 偏移计算（此前 postDelayed / layoutFrameDidChange 方案均失效）。
-                        vif({ ctx.expandedIndex == index }) {
+                        vif({ ctx.expandedIndex == index && !ctx.hiddenCodes.contains(stock.code) }) {
                             // 横向分页轮播（pagingEnable 整屏吸附，松手即落定，无中间态）：
                             // Page1=当天分时图；Page2=AI 智能分析；Page3=用户自定义模块（暂为「简况」，后续「我的-设置」可配）。
                             // 外框 + 底部分页圆点；关键信息与「详细」按钮常驻框下方（始终可见）。
@@ -379,6 +381,8 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                             }
                             event {
                             click {
+                                // 不感兴趣的股票：灰幕层已拦截点击，这里再兜底不展开（禁展开，只留长按恢复）
+                                if (ctx.hiddenCodes.contains(stock.code)) return@click
                                 val willExpand = ctx.expandedIndex != index
                                 ctx.expandedIndex = if (willExpand) index else -1
                                 if (willExpand) { ctx.loadAI(index, stock); ctx.currentPage = 0; ctx.loadTrendsFor(stock); ctx.loadFinanceFor(stock) }
@@ -390,19 +394,38 @@ internal class KRStockList : ComposeView<KRStockListAttr, ComposeEvent>() {
                                 ctx.onRowLongPress?.invoke(stock, p.pageX, p.pageY)
                             }
                             }
-                            // 名称 + 代码（名称跟随涨跌配色，与价格/涨跌幅一致）
+                            // 内容（不感兴趣时整体降透明度营造朦胧感；⚠️ 现读 hiddenCodes 而非局部 val）
                             View {
-                                attr { flex(1f); flexDirectionColumn() }
-                                Text { attr { text(stock.name); fontSize(UserSettings.fs(16f)); color(StockColor.text(stock.changePercent)) } }
-                                Text { attr { text(stock.code); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)); marginTop(4f) } }
+                                attr { flex(1f); flexDirectionRow(); alignItemsCenter(); opacity(if (ctx.hiddenCodes.contains(stock.code)) 0.3f else 1f) }
+                                // 名称 + 代码（名称跟随涨跌配色，与价格/涨跌幅一致）
+                                View {
+                                    attr { flex(1f); flexDirectionColumn() }
+                                    Text { attr { text(stock.name); fontSize(UserSettings.fs(16f)); color(StockColor.text(stock.changePercent)) } }
+                                    Text { attr { text(stock.code); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)); marginTop(4f) } }
+                                }
+                                // 最新价（右对齐）
+                                View {
+                                    attr { flex(1f); flexDirectionRow(); justifyContentFlexEnd() }
+                                    Text { attr { text(formatPrice(stock.price)); fontSize(UserSettings.fs(16f)); color(StockColor.text(stock.changePercent)) } }
+                                }
+                                // 涨跌幅徽章
+                                KRStockBadge { attr { changePercent = stock.changePercent } }
                             }
-                            // 最新价（右对齐）
+                        }
+                        // —— 不感兴趣灰幕：铺满整行、禁止展开；长按仍可弹菜单恢复（现读 hiddenCodes 即时显隐）——
+                        vif({ ctx.hiddenCodes.contains(stock.code) }) {
                             View {
-                                attr { flex(1f); flexDirectionRow(); justifyContentFlexEnd() }
-                                Text { attr { text(formatPrice(stock.price)); fontSize(UserSettings.fs(16f)); color(StockColor.text(stock.changePercent)) } }
+                                attr {
+                                    absolutePositionAllZero()
+                                    backgroundColor(Color(0x99F2F3F5))
+                                    flexDirectionRow(); alignItemsCenter(); justifyContentCenter()
+                                }
+                                event {
+                                    click { /* 已标记不感兴趣：禁止展开，长按可恢复 */ }
+                                    longPress { p -> ctx.onRowLongPress?.invoke(stock, p.pageX, p.pageY) }
+                                }
+                                Text { attr { text("不感兴趣"); fontSize(UserSettings.fs(13f)); color(Color(0xFF999999)) } }
                             }
-                            // 涨跌幅徽章
-                            KRStockBadge { attr { changePercent = stock.changePercent } }
                         }
                     }
                 }

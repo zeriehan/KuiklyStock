@@ -459,10 +459,11 @@ internal class MainTabPager : BasePager(), StockNavigator {
     /** 行情列表：返回全部股票（被「不感兴趣」的股票不再消失，改为灰幕覆盖，见 [renderMarketRow]） */
     internal fun visibleQuotes(): List<Stock> = StockData.getQuotes()
 
-    /** 自选列表：仅含被打「自选」标签、未被隐藏、且通过当前分组筛选的股票 */
+    /** 自选列表：仅含被打「自选」标签、且通过当前分组筛选的股票。
+     *  ⚠️ 不再过滤「不感兴趣」的股票——被隐藏的自选股保留在列表，由 KRStockList 以灰幕覆盖显示（而非消失）。 */
     internal fun watchlistStocks(): List<Stock> =
         StockData.getQuotes().filter {
-            it.code in watchlistCodes && !isHidden(it.code) &&
+            it.code in watchlistCodes &&
                 (watchGroupFilter.isEmpty() || watchGroupMap[it.code] == watchGroupFilter)
         }
 
@@ -2212,6 +2213,7 @@ private fun ViewContainer<*, *>.renderWatchlist(ctx: MainTabPager) {
             KRStockList {
                 attr { flex(1f) }
                 stocks = ctx.watchlistStocks()
+                hiddenCodes = ctx.hiddenMap.keys  // 不感兴趣的股灰幕覆盖 + 禁止展开（不再从列表消失）
                 onRowClick = { /* 展开/收起内部处理 */ }
                 onDetailClick = { ctx.openDetail(it) }
                 onRowLongPress = { stock, x, y -> ctx.openSheet(stock, x, y) }
@@ -2383,7 +2385,6 @@ private fun ViewContainer<*, *>.renderMarketLeaders(ctx: MainTabPager, w: Float)
  * 长按时菜单按钮变为「恢复」。这样既保留板块整体涨跌幅的连贯性，又让不感兴趣状态一目了然。
  */
 internal fun ViewContainer<*, *>.renderMarketRow(nav: StockNavigator, stock: Stock) {
-    val dimmed = nav.isHidden(stock.code)
     View {
         attr {
             height(64f); flexDirectionRow(); alignItemsCenter()
@@ -2394,8 +2395,10 @@ internal fun ViewContainer<*, *>.renderMarketRow(nav: StockNavigator, stock: Sto
             longPress { p -> nav.openSheet(stock, p.pageX, p.pageY) }
         }
         // 内容（不感兴趣时整体降透明度，营造朦胧感）
+        // ⚠️ 现读 nav.isHidden（不要提成局部 val）：hiddenMap(observable) 变化时 attr 闭包自动重跑，
+        //    即时出现/消失灰幕，无需依赖外层列表 toggle 重建（行情个股榜不随 bumpList 重建）。
         View {
-            attr { flex(1f); flexDirectionRow(); alignItemsCenter(); opacity(if (dimmed) 0.3f else 1f) }
+            attr { flex(1f); flexDirectionRow(); alignItemsCenter(); opacity(if (nav.isHidden(stock.code)) 0.3f else 1f) }
             // 名称 + 代码（名称跟随涨跌配色，与价格一致）
             View {
                 attr { flex(1f); flexDirectionColumn() }
@@ -2417,7 +2420,7 @@ internal fun ViewContainer<*, *>.renderMarketRow(nav: StockNavigator, stock: Sto
             KRStockBadge { attr { changePercent = stock.changePercent } }
         }
         // 朦胧"布"：不感兴趣时铺一层半透明灰白覆盖（不再消失，仅淡化）
-        vif({ dimmed }) {
+        vif({ nav.isHidden(stock.code) }) {
             View {
                 attr {
                     absolutePositionAllZero()
