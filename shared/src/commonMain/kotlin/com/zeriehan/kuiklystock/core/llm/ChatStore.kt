@@ -2,6 +2,7 @@ package com.zeriehan.kuiklystock.core.llm
 
 import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.zeriehan.kuiklystock.core.StockData
+import com.zeriehan.kuiklystock.core.currentTimeMillis
 
 /**
  * AI 聊天会话存储（按股票代码隔离），**已持久化**到 SharedPreferences。
@@ -251,7 +252,7 @@ object ChatStore {
     fun groupName(id: String): String = groups.find { it.id == id }?.name ?: "未分组"
 
     fun createGroup(name: String): ConvGroup {
-        val g = ConvGroup("g${System.currentTimeMillis()}", name.trim().ifBlank { "新分组" })
+        val g = ConvGroup("g${currentTimeMillis()}", name.trim().ifBlank { "新分组" })
         groups.add(g); saveMeta(); return g
     }
 

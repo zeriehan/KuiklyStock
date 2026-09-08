@@ -18,6 +18,7 @@ import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.Sector
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.StockColor
+import com.zeriehan.kuiklystock.core.currentTimeMillis
 import com.zeriehan.kuiklystock.core.UserStockStore
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
@@ -84,7 +85,7 @@ internal class SectorDetailPage : BasePager(), StockNavigator {
 
     /** 标记/恢复「不感兴趣」：加/移除灰幕标记并落盘，翻转列表重建 */
     private fun toggleHide(code: String) {
-        hiddenMap = if (hiddenMap.containsKey(code)) hiddenMap - code else hiddenMap + (code to System.currentTimeMillis())
+        hiddenMap = if (hiddenMap.containsKey(code)) hiddenMap - code else hiddenMap + (code to currentTimeMillis())
         UserStockStore.saveHidden(acquireModule(SharedPreferencesModule.MODULE_NAME), hiddenMap)
         sectorListToggle = !sectorListToggle
     }

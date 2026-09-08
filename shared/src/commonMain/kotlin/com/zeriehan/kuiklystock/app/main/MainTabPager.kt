@@ -25,6 +25,7 @@ import com.zeriehan.kuiklystock.core.QuickTipsGate
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.Sector
 import com.zeriehan.kuiklystock.core.StockColor
+import com.zeriehan.kuiklystock.core.currentTimeMillis
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.UserStockStore
@@ -273,186 +274,186 @@ internal class MainTabPager : BasePager(), StockNavigator {
     private fun ViewContainer<*, *>.renderContentArea(ctx: MainTabPager) {
         // 内容卡宽度（Scroller 默认不拉伸子元素，需显式宽度以铺满、避免右侧留白）
         val contentW = ctx.pagerData.pageViewWidth - 24f
-                // ---- Tab0 AI 聊天（最近对话入口）----
+        // ---- Tab0 AI 聊天（最近对话入口）----
+        View {
+            attr {
+                flexDirectionColumn()
+                if (ctx.selectedTab == 0) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
+            }
+            Scroller {
+                attr { flex(1f); flexDirectionColumn(); padding(12f) }
+                // 标题栏只渲染一次，避免 vif 双分支重建导致「最近对话」重复
+                renderRecentsHeader(ctx, contentW)
+                // 「股票对比」入口：进入多股对比页（上区股票轮播 + 下区对比 AI 聊天）
                 View {
                     attr {
-                        flexDirectionColumn()
-                        if (ctx.selectedTab == 0) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
+                        flexDirectionRow(); alignItemsCenter()
+                        marginBottom(8f); borderRadius(10f); padding(10f)
+                        backgroundColor(Color(0xFFFFF4E0)); width(contentW)
                     }
-                    Scroller {
-                        attr { flex(1f); flexDirectionColumn(); padding(12f) }
-                        // 标题栏只渲染一次，避免 vif 双分支重建导致「最近对话」重复
-                        renderRecentsHeader(ctx, contentW)
-                        // 「股票对比」入口：进入多股对比页（上区股票轮播 + 下区对比 AI 聊天）
-                        View {
-                            attr {
-                                flexDirectionRow(); alignItemsCenter()
-                                marginBottom(8f); borderRadius(10f); padding(10f)
-                                backgroundColor(Color(0xFFFFF4E0)); width(contentW)
-                            }
-                            event { click { ctx.openCompare() } }
-                            View { attr { width(20f); height(20f); borderRadius(4f); backgroundColor(Color(UserSettings.themeColor)); marginRight(8f); justifyContentCenter(); alignItemsCenter() }
-                                Text { attr { text("⇄"); fontSize(13f); color(Color.WHITE); fontWeightSemiBold() } }
-                            }
-                            Text { attr { text("股票对比"); fontSize(ctx.fs(15f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
-                            Text { attr { text("多股并排 · AI 对比解读"); fontSize(ctx.fs(12f)); color(Color(0xFF999999)); marginLeft(8f) } }
-                            View { attr { flex(1f) } }
-                            Text { attr { text("›"); fontSize(20f); color(Color(0xFFBBBBBB)) } }
-                        }
-                        vif({ ctx.convToggle }) { val c = this; c.renderRecents(ctx, contentW) }
-                        vif({ !ctx.convToggle }) { val c = this; c.renderRecents(ctx, contentW) }
+                    event { click { ctx.openCompare() } }
+                    View { attr { width(20f); height(20f); borderRadius(4f); backgroundColor(Color(UserSettings.themeColor)); marginRight(8f); justifyContentCenter(); alignItemsCenter() }
+                        Text { attr { text("⇄"); fontSize(13f); color(Color.WHITE); fontWeightSemiBold() } }
                     }
+                    Text { attr { text("股票对比"); fontSize(ctx.fs(15f)); fontWeightSemisolid(); color(Color(0xFF222222)) } }
+                    Text { attr { text("多股并排 · AI 对比解读"); fontSize(ctx.fs(12f)); color(Color(0xFF999999)); marginLeft(8f) } }
+                    View { attr { flex(1f) } }
+                    Text { attr { text("›"); fontSize(20f); color(Color(0xFFBBBBBB)) } }
                 }
+                vif({ ctx.convToggle }) { val c = this; c.renderRecents(ctx, contentW) }
+                vif({ !ctx.convToggle }) { val c = this; c.renderRecents(ctx, contentW) }
+            }
+        }
 
-                // ---- Tab1 行情 ----
+        // ---- Tab1 行情 ----
+        View {
+            attr {
+                flexDirectionColumn()
+                if (ctx.selectedTab == 1) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
+            }
+            // ⚠️ 行情页不再包 vif(listToggle)：否则 pageDidAppear 返回时翻 listToggle → 重建行情页(板块200行)卡。
+            //   行情页实时刷新靠内部细粒度: 大盘 marketDataTick、板块 loadSectors onDone、个股榜 loadRank/rankToggle；
+            //   不依赖 listToggle(那主要服务自选等)。行情页常驻 + 惰性块 + 内部 toggle，返回不重建板块。
+            renderMarket(ctx)
+        }
+
+        // ---- Tab2 自选 ----
+        View {
+            attr {
+                flexDirectionColumn()
+                if (ctx.selectedTab == 2) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
+            }
+            vif({ ctx.listToggle }) { val c = this; c.renderWatchlist(ctx) }
+            vif({ !ctx.listToggle }) { val c = this; c.renderWatchlist(ctx) }
+        }
+
+        // ---- Tab3 我的（设置）----
+        View {
+            attr {
+                flexDirectionColumn()
+                if (ctx.selectedTab == 3) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
+            }
+            Scroller {
+                attr { flex(1f); flexDirectionColumn(); backgroundColor(if (ctx.darkOn) Color(0xFF1A1B1E) else Color(0xFFF2F3F5)); padding(12f) }
+
+                // 不感兴趣管理
+                Text { attr { text("不感兴趣"); fontSize(ctx.fs(13f)); color(if (ctx.darkOn) Color(0xFF9AA0A6) else Color(0xFF999999)); marginBottom(8f) } }
+                // —— 自动恢复周期（可展开自定义天数）——
                 View {
-                    attr {
-                        flexDirectionColumn()
-                        if (ctx.selectedTab == 1) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
-                    }
-                    // ⚠️ 行情页不再包 vif(listToggle)：否则 pageDidAppear 返回时翻 listToggle → 重建行情页(板块200行)卡。
-                    //   行情页实时刷新靠内部细粒度: 大盘 marketDataTick、板块 loadSectors onDone、个股榜 loadRank/rankToggle；
-                    //   不依赖 listToggle(那主要服务自选等)。行情页常驻 + 惰性块 + 内部 toggle，返回不重建板块。
-                    renderMarket(ctx)
-                }
-
-                // ---- Tab2 自选 ----
-                View {
-                    attr {
-                        flexDirectionColumn()
-                        if (ctx.selectedTab == 2) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
-                    }
-                    vif({ ctx.listToggle }) { val c = this; c.renderWatchlist(ctx) }
-                    vif({ !ctx.listToggle }) { val c = this; c.renderWatchlist(ctx) }
-                }
-
-                // ---- Tab3 我的（设置）----
-                View {
-                    attr {
-                        flexDirectionColumn()
-                        if (ctx.selectedTab == 3) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
-                    }
-                    Scroller {
-                        attr { flex(1f); flexDirectionColumn(); backgroundColor(if (ctx.darkOn) Color(0xFF1A1B1E) else Color(0xFFF2F3F5)); padding(12f) }
-
-                        // 不感兴趣管理
-                        Text { attr { text("不感兴趣"); fontSize(ctx.fs(13f)); color(if (ctx.darkOn) Color(0xFF9AA0A6) else Color(0xFF999999)); marginBottom(8f) } }
-                        // —— 自动恢复周期（可展开自定义天数）——
-                        View {
-                            attr { flexDirectionColumn(); padding(14f); backgroundColor(Color.WHITE); borderRadius(10f); width(contentW) }
-                            View {
-                                attr { flexDirectionRow(); alignItemsCenter() }
-                                event { click { ctx.toggleHideDaysExpanded() } }
-                                Text { attr { text("自动恢复周期"); fontSize(ctx.fs(15f)); color(Color(0xFF222222)) } }
-                                View { attr { flex(1f) } }
-                                Text { attr { text("${ctx.hideDays} 天"); fontSize(ctx.fs(14f)); color(Color(ctx.themeColor)) } }
-                                Text {
-                                    attr {
-                                        text(if (ctx.hideDaysExpanded) "  ▲" else "  >")
-                                        fontSize(ctx.fs(15f)); color(Color(0xFFCCCCCC)); marginLeft(6f)
-                                    }
-                                }
-                            }
-                            vif({ ctx.hideDaysExpanded }) {
-                                View {
-                                    attr {
-                                        flexDirectionColumn(); marginTop(12f); padding(10f)
-                                        backgroundColor(Color(0xFFF5F6F8)); borderRadius(8f)
-                                    }
-                                    // 自定义输入（最少 1 天，天为单位）
-                                    View {
-                                        attr { flexDirectionRow(); alignItemsCenter(); padding(top = 2f, bottom = 6f) }
-                                        Text { attr { text("自定义（最少 1 天）："); fontSize(ctx.fs(13f)); color(Color(0xFF666666)) } }
-                                        View { attr { flex(1f) } }
-                                        Input {
-                                            attr {
-                                                width(72f); height(34f); fontSize(ctx.fs(15f)); color(Color(0xFF222222))
-                                                backgroundColor(Color.WHITE); borderRadius(6f)
-                                                placeholder(""); placeholderColor(Color(0xFFBBBBBB))
-                                            }
-                                            event { textDidChange { ctx.hideDaysInput = it.text } }
-                                        }
-                                        Text { attr { text(" 天"); fontSize(ctx.fs(14f)); color(Color(0xFF222222)); marginLeft(6f) } }
-                                    }
-                                    // 快捷选项
-                                    View {
-                                        attr { flexDirectionRow(); alignItemsCenter(); padding(bottom = 8f) }
-                                        listOf(3, 7, 14, 30).forEach { d ->
-                                            View {
-                                                attr {
-                                                    height(30f); padding(left = 14f, right = 14f); marginRight(8f)
-                                                    borderRadius(15f)
-                                                    // 选中主题色实心 / 未选中主题色浅底(与主题色同源, 不再硬编码浅蓝 E6F1FB 违和)
-                                                    backgroundColor(if (ctx.hideDays == d) Color(ctx.themeColor) else Color(UserSettings.blend(ctx.themeColor, -1L, 0.93f)))
-                                                    alignItemsCenter(); justifyContentCenter()
-                                                }
-                                                event {
-                                                    click {
-                                                        ctx.applyHideDays(d)
-                                                        ctx.hideDaysExpanded = false
-                                                        ctx.bridgeModule.toast("已设为 ${d} 天")
-                                                    }
-                                                }
-                                                Text {
-                                                    attr {
-                                                        text("${d}天")
-                                                        fontSize(ctx.fs(13f))
-                                                        color(if (ctx.hideDays == d) Color.WHITE else Color(ctx.themeColor))
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    // 确定（应用自定义输入）
-                                    View {
-                                        attr { flexDirectionRow(); justifyContent(FlexJustifyContent.FLEX_END) }
-                                        View {
-                                            attr {
-                                                height(32f); padding(left = 18f, right = 18f); borderRadius(16f)
-                                                backgroundColor(Color(ctx.themeColor)); alignItemsCenter(); justifyContentCenter()
-                                            }
-                                            event {
-                                                click {
-                                                    val parsed = ctx.hideDaysInput.toIntOrNull()?.coerceAtLeast(1) ?: ctx.hideDays
-                                                    ctx.applyHideDays(parsed)
-                                                    ctx.hideDaysExpanded = false
-                                                    ctx.bridgeModule.toast("已设为 ${parsed} 天")
-                                                }
-                                            }
-                                            Text { attr { text("确定"); fontSize(ctx.fs(14f)); color(Color.WHITE) } }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // —— 隐藏股票入口：点击跳转到独立页面集中管理，列表本身不再铺在「我的」页 ——
-                        vif({ ctx.mineToggle }) { val c = this; c.renderHiddenEntry(ctx, contentW) }
-                        vif({ !ctx.mineToggle }) { val c = this; c.renderHiddenEntry(ctx, contentW) }
-
-                        // —— 个性化设置 ——
+                    attr { flexDirectionColumn(); padding(14f); backgroundColor(Color.WHITE); borderRadius(10f); width(contentW) }
+                    View {
+                        attr { flexDirectionRow(); alignItemsCenter() }
+                        event { click { ctx.toggleHideDaysExpanded() } }
+                        Text { attr { text("自动恢复周期"); fontSize(ctx.fs(15f)); color(Color(0xFF222222)) } }
+                        View { attr { flex(1f) } }
+                        Text { attr { text("${ctx.hideDays} 天"); fontSize(ctx.fs(14f)); color(Color(ctx.themeColor)) } }
                         Text {
                             attr {
-                                text("个性化设置")
-                                fontSize(ctx.fs(13f))
-                                color(if (ctx.darkOn) Color(0xFF9AA0A6) else Color(0xFF999999))
-                                marginBottom(8f); marginTop(20f)
+                                text(if (ctx.hideDaysExpanded) "  ▲" else "  >")
+                                fontSize(ctx.fs(15f)); color(Color(0xFFCCCCCC)); marginLeft(6f)
                             }
                         }
-                        renderSettingRow(ctx, contentW, "迷你卡片", "分时走势 / AI 分析 / 简况，可自由开关") {
-                            val d = JSONObject()
-                            ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ExpandSettings", d)
+                    }
+                    vif({ ctx.hideDaysExpanded }) {
+                        View {
+                            attr {
+                                flexDirectionColumn(); marginTop(12f); padding(10f)
+                                backgroundColor(Color(0xFFF5F6F8)); borderRadius(8f)
+                            }
+                            // 自定义输入（最少 1 天，天为单位）
+                            View {
+                                attr { flexDirectionRow(); alignItemsCenter(); padding(top = 2f, bottom = 6f) }
+                                Text { attr { text("自定义（最少 1 天）："); fontSize(ctx.fs(13f)); color(Color(0xFF666666)) } }
+                                View { attr { flex(1f) } }
+                                Input {
+                                    attr {
+                                        width(72f); height(34f); fontSize(ctx.fs(15f)); color(Color(0xFF222222))
+                                        backgroundColor(Color.WHITE); borderRadius(6f)
+                                        placeholder(""); placeholderColor(Color(0xFFBBBBBB))
+                                    }
+                                    event { textDidChange { ctx.hideDaysInput = it.text } }
+                                }
+                                Text { attr { text(" 天"); fontSize(ctx.fs(14f)); color(Color(0xFF222222)); marginLeft(6f) } }
+                            }
+                            // 快捷选项
+                            View {
+                                attr { flexDirectionRow(); alignItemsCenter(); padding(bottom = 8f) }
+                                listOf(3, 7, 14, 30).forEach { d ->
+                                    View {
+                                        attr {
+                                            height(30f); padding(left = 14f, right = 14f); marginRight(8f)
+                                            borderRadius(15f)
+                                            // 选中主题色实心 / 未选中主题色浅底(与主题色同源, 不再硬编码浅蓝 E6F1FB 违和)
+                                            backgroundColor(if (ctx.hideDays == d) Color(ctx.themeColor) else Color(UserSettings.blend(ctx.themeColor, -1L, 0.93f)))
+                                            alignItemsCenter(); justifyContentCenter()
+                                        }
+                                        event {
+                                            click {
+                                                ctx.applyHideDays(d)
+                                                ctx.hideDaysExpanded = false
+                                                ctx.bridgeModule.toast("已设为 ${d} 天")
+                                            }
+                                        }
+                                        Text {
+                                            attr {
+                                                text("${d}天")
+                                                fontSize(ctx.fs(13f))
+                                                color(if (ctx.hideDays == d) Color.WHITE else Color(ctx.themeColor))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // 确定（应用自定义输入）
+                            View {
+                                attr { flexDirectionRow(); justifyContent(FlexJustifyContent.FLEX_END) }
+                                View {
+                                    attr {
+                                        height(32f); padding(left = 18f, right = 18f); borderRadius(16f)
+                                        backgroundColor(Color(ctx.themeColor)); alignItemsCenter(); justifyContentCenter()
+                                    }
+                                    event {
+                                        click {
+                                            val parsed = ctx.hideDaysInput.toIntOrNull()?.coerceAtLeast(1) ?: ctx.hideDays
+                                            ctx.applyHideDays(parsed)
+                                            ctx.hideDaysExpanded = false
+                                            ctx.bridgeModule.toast("已设为 ${parsed} 天")
+                                        }
+                                    }
+                                    Text { attr { text("确定"); fontSize(ctx.fs(14f)); color(Color.WHITE) } }
+                                }
+                            }
                         }
-                        renderSettingRow(ctx, contentW, "外观与个性化", "主题色、字体大小、深色模式") {
-                            val d = JSONObject()
-                            ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Appearance", d)
-                        }
-                        renderSettingRow(ctx, contentW, "关于与致谢", "致谢一起开发它的 WorkBuddy、混元、GLM 及各数据源") {
-                            val d = JSONObject()
-                            ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Credits", d)
-                        }
-                        View { attr { height(20f) } }
                     }
                 }
+                // —— 隐藏股票入口：点击跳转到独立页面集中管理，列表本身不再铺在「我的」页 ——
+                vif({ ctx.mineToggle }) { val c = this; c.renderHiddenEntry(ctx, contentW) }
+                vif({ !ctx.mineToggle }) { val c = this; c.renderHiddenEntry(ctx, contentW) }
+
+                // —— 个性化设置 ——
+                Text {
+                    attr {
+                        text("个性化设置")
+                        fontSize(ctx.fs(13f))
+                        color(if (ctx.darkOn) Color(0xFF9AA0A6) else Color(0xFF999999))
+                        marginBottom(8f); marginTop(20f)
+                    }
+                }
+                renderSettingRow(ctx, contentW, "迷你卡片", "分时走势 / AI 分析 / 简况，可自由开关") {
+                    val d = JSONObject()
+                    ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ExpandSettings", d)
+                }
+                renderSettingRow(ctx, contentW, "外观与个性化", "主题色、字体大小、深色模式") {
+                    val d = JSONObject()
+                    ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Appearance", d)
+                }
+                renderSettingRow(ctx, contentW, "关于与致谢", "致谢一起开发它的 WorkBuddy、混元、GLM 及各数据源") {
+                    val d = JSONObject()
+                    ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Credits", d)
+                }
+                View { attr { height(20f) } }
+            }
+        }
     }
     private fun nowMs(): Long = Utils.currentBridgeModule().currentTimeStamp()
 
@@ -785,7 +786,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
 
     /** 新建自选分组（弹窗确认后调用），返回新 id */
     internal fun createWatchGroup(name: String): String {
-        val id = "g${System.currentTimeMillis()}"
+        val id = "g${currentTimeMillis()}"
         watchGroups = watchGroups + UserStockStore.StockGroup(id, name.trim().ifBlank { "新分组" })
         UserStockStore.saveWatchGroups(prefs, watchGroups)
         listToggle = !listToggle

@@ -1,6 +1,7 @@
 package com.zeriehan.kuiklystock.core.llm
 
 import com.zeriehan.kuiklystock.core.KLineBar
+import com.zeriehan.kuiklystock.core.currentTimeMillis
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.formatPrice
@@ -60,7 +61,7 @@ class GLMFlashClient(private val fallback: LLMClient) : LLMClient {
     ) {
         val prompt = buildChatPrompt(stock, question, history, freeMode)
         // 流式会话 id：shared 轮询宿主缓存用它定位；带时间戳避免并发/重进冲突
-        val sid = "llm_${System.currentTimeMillis()}"
+        val sid = "llm_${currentTimeMillis()}"
         var finalized = false
         fun finish(text: String) {
             if (finalized) return
