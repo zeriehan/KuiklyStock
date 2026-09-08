@@ -966,8 +966,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
             }
 
             // ===== BottomTabBar =====
-            // 现代克制风格：白底 + 顶部发丝分隔线；选中项=文字主题色加粗+上方主题色胶囊指示，
-            // 不再刷整格淡色底(满且不精致)。字号固定不跳变(避免切换抖动)。
+            // 克制精致：白底 + 顶部发丝分隔线；选中项=文字套浅主题色圆角胶囊底(像分段控件/一线金融App)，
+            // 去掉了生硬的短横条。胶囊只在文字四周，不刷整格底，干净不默认。
             // 顶部发丝分隔线
             View { attr { height(1f); backgroundColor(Color(0xFFF0F0F0)) } }
             View {
@@ -977,25 +977,27 @@ internal class MainTabPager : BasePager(), StockNavigator {
                 }
                 val tabs = listOf("AI", "行情", "自选", "我的")
                 tabs.forEachIndexed { i, name ->
-                    // ⚠️ 不要提取 active 顶层 val — attr 闭包捕获 val 不重跑, selectedTab 变指示条不跟随
-                    // (参考 commit 685fe73 同款响应式坑)。直接在每个 attr 闭包内现读 ctx.selectedTab。
+                    // ⚠️ attr 闭包内现读 ctx.selectedTab(不提前提顶层 val, 否则不重跑, 见 685fe73 坑)
                     View {
                         attr { flex(1f); flexDirectionColumn(); alignItemsCenter(); justifyContentCenter() }
                         event { click { ctx.selectMainTab(i) } }
-                        // 顶部主题色指示条(选中亮/未选中透明)
+                        // 文字胶囊底：选中=浅主题色圆角底+主题色文字加粗；未选中=透明底+中性灰文字
                         View {
                             attr {
-                                width(24f); height(3f); marginBottom(5f); borderRadius(1.5f)
-                                backgroundColor(Color(ctx.themeColor))
-                                opacity(if (ctx.selectedTab == i) 1f else 0f)
+                                padding(14f, 5f, bottom = 14f, right = 5f)
+                                borderRadius(15f)
+                                backgroundColor(
+                                    if (ctx.selectedTab == i) Color(UserSettings.blend(ctx.themeColor, -1L, 0.92f))
+                                    else Color(0x00000000)
+                                )
                             }
-                        }
-                        Text {
-                            attr {
-                                text(name)
-                                fontSize(ctx.fs(12f))
-                                if (ctx.selectedTab == i) fontWeightSemisolid()
-                                color(if (ctx.selectedTab == i) Color(ctx.themeColor) else Color(0xFF8A8F99))
+                            Text {
+                                attr {
+                                    text(name)
+                                    fontSize(ctx.fs(12f))
+                                    if (ctx.selectedTab == i) fontWeightSemisolid()
+                                    color(if (ctx.selectedTab == i) Color(ctx.themeColor) else Color(0xFF8A8F99))
+                                }
                             }
                         }
                     }
