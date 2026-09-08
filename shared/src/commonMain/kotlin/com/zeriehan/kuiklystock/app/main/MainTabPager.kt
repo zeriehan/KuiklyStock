@@ -985,10 +985,9 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         // 固定胶囊宽(66f)保证 4 个等大, 文字在胶囊内水平居中, 避免"AI"窄/其它宽的参差
                         View {
                             attr {
-                                width(66f)
-                                padding(0f, 8f, bottom = 0f, right = 8f)
+                                width(66f); height(40f)
                                 alignItemsCenter(); justifyContentCenter()
-                                borderRadius(16f)
+                                borderRadius(20f)
                                 backgroundColor(
                                     if (ctx.selectedTab == i) Color(UserSettings.blend(ctx.themeColor, -1L, 0.92f))
                                     else Color(0x00000000)
@@ -997,7 +996,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                             Text {
                                 attr {
                                     text(name)
-                                    fontSize(ctx.fs(12f))
+                                    fontSize(ctx.fs(13f))
                                     if (ctx.selectedTab == i) fontWeightSemisolid()
                                     color(if (ctx.selectedTab == i) Color(ctx.themeColor) else Color(0xFF8A8F99))
                                 }
