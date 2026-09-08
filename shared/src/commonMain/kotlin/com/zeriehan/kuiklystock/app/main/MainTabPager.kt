@@ -982,9 +982,12 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         attr { flex(1f); flexDirectionColumn(); alignItemsCenter(); justifyContentCenter() }
                         event { click { ctx.selectMainTab(i) } }
                         // 文字胶囊底：选中=浅主题色圆角底+主题色文字加粗；未选中=透明底+中性灰文字
+                        // 固定胶囊宽(66f)保证 4 个等大, 文字在胶囊内水平居中, 避免"AI"窄/其它宽的参差
                         View {
                             attr {
-                                padding(14f, 5f, bottom = 14f, right = 5f)
+                                width(66f)
+                                padding(0f, 5f, bottom = 0f, right = 5f)
+                                alignItemsCenter(); justifyContentCenter()
                                 borderRadius(15f)
                                 backgroundColor(
                                     if (ctx.selectedTab == i) Color(UserSettings.blend(ctx.themeColor, -1L, 0.92f))
