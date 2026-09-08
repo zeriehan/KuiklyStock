@@ -9,7 +9,6 @@ import com.tencent.kuikly.core.module.SharedPreferencesModule
  *   "trend"=分时走势 / "ai"=AI 智能分析 / "brief"=简况。默认三项全开。
  * - themeColor：主题强调色（Int，0xAARRGGBB），用于顶栏、选中态、主按钮、分页圆点等。
  * - fontScale：字体缩放系数（1.0 / 1.15 / 1.3）。
- * - darkMode：深色模式开关（实验性，目前影响页面底色与顶栏）。
  *
  * 设计为「内存单一真相源 + load/save 桥接」：每次打开相关页面先 load，
  * 变更后 save；其它页面读取前也应 load 一次保证最新。
@@ -19,7 +18,6 @@ internal object UserSettings {
     const val KEY_EXPAND = "kb_expand"
     const val KEY_THEME = "kb_theme"
     const val KEY_FONT = "kb_font"
-    const val KEY_DARK = "kb_dark"
     const val KEY_COLOR_MODE = "kb_color_mode"
 
     // 展开组件键
@@ -42,7 +40,6 @@ internal object UserSettings {
     var expand: MutableSet<String> = mutableSetOf(EXPAND_TREND, EXPAND_AI, EXPAND_BRIEF, EXPAND_FINANCE)
     var themeColor: Long = 0xFFFF5A5F
     var fontScale: Float = 1.0f
-    var darkMode: Boolean = false
     /** 涨跌配色：0=A股红涨绿跌（默认）；1=欧美红跌绿涨。影响所有涨跌红/绿标注（含 K线蜡烛） */
     var colorMode: Int = 0
 
@@ -55,8 +52,6 @@ internal object UserSettings {
         if (th.isNotBlank()) th.toLongOrNull()?.let { themeColor = it }
         val fs = prefs.getItem(KEY_FONT)
         if (fs.isNotBlank()) fs.toFloatOrNull()?.let { fontScale = it }
-        val dk = prefs.getItem(KEY_DARK)
-        if (dk.isNotBlank()) darkMode = dk == "1"
         val cm = prefs.getItem(KEY_COLOR_MODE)
         if (cm.isNotBlank()) cm.toIntOrNull()?.let { colorMode = it.coerceIn(0, 1) }
     }
@@ -71,10 +66,6 @@ internal object UserSettings {
 
     fun saveFont(prefs: SharedPreferencesModule) {
         prefs.setItem(KEY_FONT, fontScale.toString())
-    }
-
-    fun saveDark(prefs: SharedPreferencesModule) {
-        prefs.setItem(KEY_DARK, if (darkMode) "1" else "0")
     }
 
     fun saveColorMode(prefs: SharedPreferencesModule) {
@@ -137,5 +128,5 @@ internal object UserSettings {
     }
 
     /** 当前设置指纹（用于判断「返回主框架时是否需要重塑主题」） */
-    fun signature(): String = "$themeColor|$fontScale|$darkMode"
+    fun signature(): String = "$themeColor|$fontScale|$colorMode"
 }

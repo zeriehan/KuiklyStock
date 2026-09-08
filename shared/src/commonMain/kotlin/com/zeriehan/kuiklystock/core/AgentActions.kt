@@ -49,19 +49,82 @@ internal object AgentActions {
         return "已为「${stock.name}」设置预警：${label}${if (type.startsWith("pct")) "$threshold%" else "$threshold"}，行情刷新命中会提醒你"
     }
 
-    /** 切换深色/浅色（返回是否切到深色） */
-    fun setDark(dark: Boolean, prefsP: SharedPreferencesModule): String {
-        val pre = prefsP
-        UserSettings.darkMode = dark
-        UserSettings.saveDark(pre)
-        return if (dark) "已为你切换到深色模式，重新回到主界面即可看到" else "已为你切换到浅色模式"
-    }
-
     /** 设主题色（argb Long）。返回确认 */
     fun setThemeColor(argb: Long, prefsP: SharedPreferencesModule): String {
         val pre = prefsP
         UserSettings.themeColor = argb
         UserSettings.saveTheme(pre)
         return "已把主题色改成你指定的颜色"
+    }
+
+    /** 设置字体大小（scale：0.85 小 / 1.0 标准 / 1.15 大 / 1.3 特大）。返回确认 */
+    fun setFontScale(scale: Float, prefsP: SharedPreferencesModule): String {
+        val pre = prefsP
+        val s = when {
+            scale <= 0.9f -> 0.85f
+            scale < 1.07f -> 1.0f
+            scale < 1.22f -> 1.15f
+            else -> 1.3f
+        }
+        UserSettings.fontScale = s
+        UserSettings.saveFont(pre)
+        val label = fontLabel(s)
+        return "已把字体大小调整为「$label」"
+    }
+
+    /** 开关某个迷你卡片组件（key=trend分时走势/ai AI分析/brief简况/finance基本面）。返回确认 */
+    fun toggleMiniCard(key: String, on: Boolean, prefsP: SharedPreferencesModule): String {
+        val pre = prefsP
+        if (on) UserSettings.expand.add(key) else UserSettings.expand.remove(key)
+        UserSettings.saveExpand(pre)
+        val label = miniCardLabel(key)
+        return if (on) "已开启展开卡里的「$label」，返回列表点开股票即可看到" else "已关闭展开卡里的「$label」"
+    }
+
+    /** 设置涨跌配色：0=A股红涨绿跌 / 1=欧美红跌绿涨。返回确认 */
+    fun setColorModeVal(mode: Int, prefsP: SharedPreferencesModule): String {
+        val pre = prefsP
+        UserSettings.colorMode = mode.coerceIn(0, 1)
+        UserSettings.saveColorMode(pre)
+        return if (UserSettings.colorMode == 0) "已切换为 A股配色（红涨绿跌）" else "已切换为 欧美配色（红跌绿涨）"
+    }
+
+    /** 设置「不感兴趣」股票的自动恢复天数。返回确认 */
+    fun setHideDays(days: Int, prefsP: SharedPreferencesModule): String {
+        val pre = prefsP
+        val d = days.coerceIn(1, 90)
+        UserStockStore.saveHideDays(pre, d)
+        return "已把「不感兴趣」股票的自动恢复周期设为 $d 天"
+    }
+
+    /** 恢复全部被隐藏（不感兴趣）的股票。返回确认 */
+    fun restoreHiddenAll(prefsP: SharedPreferencesModule): String {
+        val pre = prefsP
+        val n = UserStockStore.loadHidden(pre).size
+        if (n == 0) return "当前没有标记为「不感兴趣」的股票"
+        UserStockStore.saveHidden(pre, emptyMap())
+        return "已恢复全部 $n 只「不感兴趣」的股票"
+    }
+
+    /** 恢复单只被隐藏（不感兴趣）的股票。stockName=用户给的名字用于提示。返回确认 */
+    fun restoreHiddenOne(code: String, nameHint: String, prefsP: SharedPreferencesModule): String {
+        val pre = prefsP
+        val hid = UserStockStore.loadHidden(pre).toMutableMap()
+        if (code !in hid) return "「$nameHint」不在已隐藏的列表里"
+        hid.remove(code)
+        UserStockStore.saveHidden(pre, hid)
+        return "已把「$nameHint」从「不感兴趣」里恢复，它会重新出现在行情/自选列表"
+    }
+
+    private fun fontLabel(s: Float): String = when (s) {
+        0.85f -> "小"; 1.0f -> "标准"; 1.15f -> "大"; else -> "特大"
+    }
+
+    private fun miniCardLabel(key: String): String = when (key) {
+        UserSettings.EXPAND_TREND -> "分时走势"
+        UserSettings.EXPAND_AI -> "AI 智能分析"
+        UserSettings.EXPAND_BRIEF -> "简况"
+        UserSettings.EXPAND_FINANCE -> "基本面"
+        else -> key
     }
 }

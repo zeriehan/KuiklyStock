@@ -5,6 +5,7 @@ import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.zeriehan.kuiklystock.core.AgentActions
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.StockData
+import com.zeriehan.kuiklystock.core.UserSettings
 
 /**
  * 「AI 决定动作」的 Agent 编排（模型决策协议版）。
@@ -29,7 +30,11 @@ object AgentChat {
 2. addCompare：把股票加入股票对比列表。args: {"stock":"..."}
 3. addAlert：给股票设价格预警。args: {"stock":"...","type":"跌破/涨破/当日涨幅≥/当日跌幅≥","threshold":数字}
 4. setThemeColor：改主题色。args: {"colorName":"红/橙/黄/绿/青/蓝/紫/黑/白/粉"}
-5. setDarkMode：切换深色/浅色。args: {"boolean":true或false}"""
+5. setFontScale：改字体大小。args: {"level":"小/标准/大/特大"}（level 必填）
+6. toggleMiniCard：开关「展开卡」里的某个迷你组件（行情/自选列表点开股票会弹出）。args: {"component":"分时走势/AI 智能分析/简况/基本面","on":true或false}
+7. setColorMode：改涨跌配色。args: {"mode":"A股"或"欧美"}（A股=红涨绿跌，欧美=红跌绿涨）
+8. setHideDays：设置「不感兴趣」股票的自动恢复天数。args: {"days":数字}
+9. restoreHidden：恢复被「不感兴趣」隐藏的股票。args: {"scope":"全部"}，或只恢复某只 {"stock":"贵州茅台"}"""
 
     /** 是否疑似要求执行 app 操作：只用于选路（宽松即可；误判走 agent 模型也只会正常答） */
     fun isLikelyAction(text: String): Boolean {
@@ -41,9 +46,21 @@ object AgentChat {
         val recolor = (t.contains("改成") || t.contains("换成") || t.contains("调成") || t.contains("主题") || t.contains("换") || t.contains("改")) &&
             (t.contains("红") || t.contains("橙") || t.contains("黄") || t.contains("绿") || t.contains("蓝") ||
                 t.contains("紫") || t.contains("黑") || t.contains("白") || t.contains("粉") || t.contains("青"))
-        val theme = (t.contains("深色") || t.contains("浅色") || t.contains("暗黑") || t.contains("夜间") || t.contains("白天")) &&
-            (t.contains("模式") || t.contains("改成") || t.contains("换成") || t.contains("调成") || t.contains("切换") || t.contains("开"))
-        return stockAct || recolor || theme
+        // 字体大小（用户要求调字号）
+        val fontAct = (t.contains("字体") || t.contains("字号")) &&
+            (t.contains("改") || t.contains("调") || t.contains("换") || t.contains("设") || t.contains("大") || t.contains("小"))
+        // 迷你卡片/展开组件 开关
+        val miniCard = (t.contains("迷你") || t.contains("卡片") || t.contains("展开") || t.contains("走势卡") || t.contains("分析卡")) &&
+            (t.contains("开") || t.contains("关"))
+        // 涨跌配色（A股/欧美、红涨绿跌/红跌绿涨）
+        val colorModeAct = (t.contains("涨跌") || t.contains("配色") || t.contains("红涨") || t.contains("红跌") ||
+            t.contains("绿跌") || t.contains("绿涨")) &&
+            (t.contains("改") || t.contains("换") || t.contains("调") || t.contains("设") || t.contains("成") ||
+                t.contains("A股") || t.contains("欧美"))
+        // 恢复隐藏 / 不感兴趣 / 自动恢复周期
+        val hiddenAct = (t.contains("不感兴趣") || t.contains("隐藏") || t.contains("自动恢复") ||
+            (t.contains("恢复") && t.contains("股票")))
+        return stockAct || recolor || fontAct || miniCard || colorModeAct || hiddenAct
     }
 
     fun historyText(history: List<ChatStore.ChatMessage>): String {
@@ -119,7 +136,7 @@ object AgentChat {
         sb.append("  - 用户说'跌100%'或'跌幅100'或明确说'百分之'才用当日跌幅≥（pctDown）。**没有%或百分之，绝不是百分比。**\n")
         sb.append("  - '当日跌幅≥5%'这类才走 type=当日跌幅≥/当日涨幅≥，threshold=5。\n\n")
         sb.append("判断与输出规则（极其重要）：\n")
-        sb.append("- 若用户消息是要执行上述任一 App 操作（加自选/加对比/设价格预警/改主题色/切深色浅色），你**必须只输出一行 ").append(TAG).append("{json}**，形如：\n")
+        sb.append("- 若用户消息是要执行上述任一 App 操作（加自选/加对比/设价格预警/改主题色/调字号/开关迷你卡/换涨跌配色/设隐藏恢复天数/恢复隐藏股票），你**必须只输出一行 ").append(TAG).append("{json}**，形如：\n")
         sb.append("  · 用户“把茅台加进自选”→ ").append(TAG).append("""{"name":"addWatch","args":{"stock":"贵州茅台"}}""").append("\n")
         sb.append("  · 用户“宁德时代加入对比”→ ").append(TAG).append("""{"name":"addCompare","args":{"stock":"宁德时代"}}""").append("\n")
         sb.append("  · 用户“茅台跌破1500提醒我”→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"贵州茅台","type":"跌破","threshold":1500}}""").append("\n")
@@ -127,7 +144,11 @@ object AgentChat {
         sb.append("  · 用户“涨100提醒我”→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"贵州茅台","type":"涨破","threshold":1416}}""").append("（现价1316+100）\n")
         sb.append("  · 用户“茅台当日跌幅≥5%提醒我”→ ").append(TAG).append("""{"name":"addAlert","args":{"stock":"贵州茅台","type":"当日跌幅≥","threshold":5}}""").append("\n")
         sb.append("  · 用户“改成红色”→ ").append(TAG).append("""{"name":"setThemeColor","args":{"colorName":"红"}}""").append("\n")
-        sb.append("  · 用户“换深色”→ ").append(TAG).append("""{"name":"setDarkMode","args":{"boolean":true}}""").append("\n")
+        sb.append("  · 用户“字体调大一点”→ ").append(TAG).append("""{"name":"setFontScale","args":{"level":"大"}}""").append("\n")
+        sb.append("  · 用户“把展开卡里的AI分析关掉”→ ").append(TAG).append("""{"name":"toggleMiniCard","args":{"component":"AI 智能分析","on":false}}""").append("\n")
+        sb.append("  · 用户“涨跌配色换成欧美”→ ").append(TAG).append("""{"name":"setColorMode","args":{"mode":"欧美"}}""").append("\n")
+        sb.append("  · 用户“不感兴趣的股票7天后自动恢复”→ ").append(TAG).append("""{"name":"setHideDays","args":{"days":7}}""").append("\n")
+        sb.append("  · 用户“把贵州茅台从不感兴趣里恢复”→ ").append(TAG).append("""{"name":"restoreHidden","args":{"stock":"贵州茅台"}}""").append("\n")
         sb.append("  json 里 name/args 必须准确；股票尽量用中文全名（茅台→贵州茅台）。\n")
         sb.append("- 若用户消息**不是**要执行操作（就是问股票/闲聊/要分析），才用自然中文正常回答，**绝不输出 ").append(TAG).append("**。\n\n")
         if (hist.isNotBlank()) sb.append(hist).append("\n\n")
@@ -145,7 +166,11 @@ object AgentChat {
         sb.append("  - addCompare（加对比）args: {\"stock\":\"中文名\"}\n")
         sb.append("  - addAlert（设预警）args: {\"stock\":\"...\",\"type\":\"跌破/涨破/当日涨幅≥/当日跌幅≥\",\"threshold\":数字}\n")
         sb.append("  - setThemeColor（改主题色）args: {\"colorName\":\"红/橙/黄/绿/青/蓝/紫/黑/白/粉\"}\n")
-        sb.append("  - setDarkMode（切深色浅色）args: {\"boolean\":true或false}\n\n")
+        sb.append("  - setFontScale（改字号）args: {\"level\":\"小/标准/大/特大\"}\n")
+        sb.append("  - toggleMiniCard（开关展开卡组件）args: {\"component\":\"分时走势/AI 智能分析/简况/基本面\",\"on\":true或false}\n")
+        sb.append("  - setColorMode（涨跌配色）args: {\"mode\":\"A股\"或\"欧美\"}\n")
+        sb.append("  - setHideDays（隐藏恢复天数）args: {\"days\":数字}\n")
+        sb.append("  - restoreHidden（恢复隐藏股票）args: {\"scope\":\"全部\"} 或 {\"stock\":\"中文名\"}\n\n")
         sb.append("现在只输出一行 ").append(TAG).append("{json}，不要任何其它文字、不要解释、不要代码块。")
         return sb.toString()
     }
@@ -229,9 +254,42 @@ object AgentChat {
                     if (argb == null) "无法识别颜色，请说清楚要哪种颜色（如红/蓝/绿）"
                     else AgentActions.setThemeColor(argb, prefs)
                 }
-                "setDarkMode" -> {
-                    val on = obj.optString("boolean") == "true" || obj.optBoolean("boolean", false)
-                    AgentActions.setDark(on, prefs)
+                "setFontScale" -> {
+                    var level = obj.optString("level").ifBlank { obj.optString("size") }
+                    if (level.isBlank()) level = toolLine // 兜底从原始文本扫档位词
+                    val scale = fontLevelToScale(level)
+                    AgentActions.setFontScale(scale, prefs)
+                }
+                "toggleMiniCard" -> {
+                    var comp = obj.optString("component").ifBlank { obj.optString("name") }
+                    if (comp.isBlank()) comp = toolLine // 兜底扫
+                    val on = obj.optString("on") == "true" || obj.optBoolean("on", true)
+                    val key = miniCardComponentToKey(comp)
+                    if (key == null) "无法识别要开关的迷你卡组件，请说 分时走势/AI 智能分析/简况/基本面"
+                    else AgentActions.toggleMiniCard(key, on, prefs)
+                }
+                "setColorMode" -> {
+                    val m = obj.optString("mode").ifBlank { obj.optString("colorMode") }
+                    val mode = when {
+                        m.contains("欧") || m.contains("美") || m.contains("红跌") || m.contains("绿涨") || m.contains("1") -> 1
+                        else -> 0
+                    }
+                    AgentActions.setColorModeVal(mode, prefs)
+                }
+                "setHideDays" -> {
+                    val days = obj.optDouble("days").let { if (it.isNaN()) 7.0 else it }.toInt()
+                    AgentActions.setHideDays(days, prefs)
+                }
+                "restoreHidden" -> {
+                    val scopeAll = obj.optString("scope").contains("全部") || obj.optBoolean("all", false)
+                    if (scopeAll) {
+                        AgentActions.restoreHiddenAll(prefs)
+                    } else {
+                        val nm = obj.optString("stock").ifBlank { obj.optString("name") }
+                        val st = if (nm.isNotBlank()) resolveStock(nm) else null
+                        if (st == null) "未找到股票「$nm」，无法单独恢复。也可以说\"恢复全部不感兴趣的股票\"。"
+                        else AgentActions.restoreHiddenOne(st.code, st.name, prefs)
+                    }
                 }
                 else -> "未知操作：${if (name.isBlank()) "name 缺失" else name}（请把这个原文发我便于修复：${toolLine.take(200)}）"
             }
@@ -393,20 +451,57 @@ private fun canonicalizeToolName(raw: String): String {
     val n = raw.trim().lowercase()
     if (n.isEmpty()) return ""
     // 已是自己名字
-    if (n in setOf("addwatch", "addcompare", "addalert", "setthemecolor", "setdarkmode")) return raw
+    if (n in setOf("addwatch", "addcompare", "addalert", "setthemecolor", "setfontscale",
+            "toggleminicard", "setcolormode", "sethidedays", "restorehidden")) return raw
     // watch / 自选
     if (n.contains("watch") || n.contains("self") || n.contains("favorite") || n.contains("关注")) return "addWatch"
     if (n.contains("compare") || n.contains("对比")) return "addCompare"
     // 预警/价格提醒：alert/预警/提醒/价格监控/trigger/notify 都视为 addAlert
     if (n.contains("alert") || n.contains("预警") || n.contains("提醒") ||
         n.contains("price") || n.contains("notify") || n.contains("trigger") || n.contains("monitor")) return "addAlert"
+    // 涨跌配色（color+mode 优先于纯 color，避免配色误归主题色）
+    if ((n.contains("color") && n.contains("mode")) || n.contains("涨跌") ||
+        n.contains("配色") || n.contains("colormode") || n.contains("红涨") || n.contains("红跌")) return "setColorMode"
     // 改主题色（兼容 change_color / set_color / color_theme / change_theme / 改颜色 等）
     if (n.contains("color") || n.contains("theme") || n.contains("色")) return "setThemeColor"
-    // 深色 / 暗黑 / 夜间模式
-    if (n.contains("dark") || n.contains("深色") || n.contains("暗黑") || n.contains("夜间") || n.contains("night")) return "setDarkMode"
+    // 字体大小
+    if (n.contains("font") || n.contains("字体") || n.contains("字号") || n.contains("fontsize")) return "setFontScale"
+    // 迷你卡片/展开卡组件开关
+    if (n.contains("minicard") || n.contains("minichart") || n.contains("expand") ||
+        n.contains("迷你") || n.contains("卡片") || n.contains("展开")) return "toggleMiniCard"
+    // 隐藏股票：设恢复天数 vs 恢复
+    if (n.contains("hide") && (n.contains("day") || n.contains("天") || n.contains("period") || n.contains("周期"))) return "setHideDays"
+    if (n.contains("restore") || n.contains("recover") || n.contains("不感兴趣") || n.contains("恢复")) return "restoreHidden"
+    if (n.contains("hide") || n.contains("hidden")) return "restoreHidden"
     // 没匹配：返回空（让上层继续找其他候选）
     return ""
 }
+
+    /** 字体档位词面 → scale（0.85 小 / 1.0 标准 / 1.15 大 / 1.3 特大）。无法识别默认标准 */
+    private fun fontLevelToScale(level: String): Float {
+        val l = level.lowercase()
+        return when {
+            l.contains("特大") || l.contains("超大") || l.contains("很大") -> 1.3f
+            l.contains("小") -> 0.85f
+            l.contains("大") -> 1.15f
+            l.contains("标准") || l.contains("中") || l.contains("normal") -> 1.0f
+            else -> l.toFloatOrNull()?.let { f ->
+                when { f <= 0.9f -> 0.85f; f < 1.07f -> 1.0f; f < 1.22f -> 1.15f; else -> 1.3f }
+            } ?: 1.0f
+        }
+    }
+
+    /** 迷你卡组件词面 → UserSettings.expand 的 key。无法识别返回 null */
+    private fun miniCardComponentToKey(c: String): String? {
+        val s = c.lowercase()
+        return when {
+            s.contains("分时") || s.contains("走势") || s.contains("trend") -> UserSettings.EXPAND_TREND
+            s.contains("分析") || s.contains("ai") || s.contains("智能") -> UserSettings.EXPAND_AI
+            s.contains("简况") || s.contains("brief") -> UserSettings.EXPAND_BRIEF
+            s.contains("基本面") || s.contains("财务") || s.contains("finance") || s.contains("f10") -> UserSettings.EXPAND_FINANCE
+            else -> null
+        }
+    }
 
     private fun colorToArgb(c0: String): Long? {
         val map = listOf(

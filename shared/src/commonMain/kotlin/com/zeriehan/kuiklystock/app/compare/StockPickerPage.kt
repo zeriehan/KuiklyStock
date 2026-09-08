@@ -101,7 +101,7 @@ internal class StockPickerPage : BasePager() {
     override fun body(): ViewBuilder {
         val ctx = this
         return {
-            attr { flexDirectionColumn(); backgroundColor(if (UserSettings.darkMode) Color(0xFF1A1B1E) else Color(0xFFF2F3F5)) }
+            attr { flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
 
             // ===== 顶部栏 =====
             View {
@@ -156,7 +156,7 @@ private fun ViewContainer<*, *>.renderPickerSearch(ctx: StockPickerPage) {
         View {
             attr {
                 height(40f); borderRadius(20f); paddingLeft(14f); paddingRight(14f); margin(left=12f, right=12f)
-                backgroundColor(Color(if (UserSettings.darkMode) 0xFF26272AL else 0xFFF2F3F5L)); flexDirectionRow(); alignItemsCenter()
+                backgroundColor(Color(0xFFF2F3F5L)); flexDirectionRow(); alignItemsCenter()
             }
             Text { attr { text("🔍"); fontSize(UserSettings.fs(14f)); color(Color(0xFF999999)); marginRight(6f) } }
             Input {

@@ -92,8 +92,6 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal var mineToggle: Boolean by observable(false)
     /** 主题强调色（observable 镜像 UserSettings.themeColor）：所有主题色 attr 闭包读它即随个性化重绘 */
     internal var themeColor: Long by observable(UserSettings.themeColor)
-    /** 深色模式（observable 镜像 UserSettings.darkMode）：页面底色等读它即随个性化重绘 */
-    internal var darkOn: Boolean by observable(false)
     /** 字体缩放镜像（observable）：所有字号经 ctx.fs() 读取，字号一变即触发依赖闭包重绘 */
     internal var fontScale: Float by observable(1.0f)
     /** 内容区重建触发器：字号/主题等从设置页返回时翻转，强制整体（含 KRStockList）销毁重建 */
@@ -177,9 +175,8 @@ internal class MainTabPager : BasePager(), StockNavigator {
         ChatStore.attach(prefs)
         // 注入 AI 分析缓存持久化句柄：冷启动后详情页直接读磁盘缓存，不再每次等网络
         AIAnalysisStore.attach(prefs)
-        // 同步个性化镜像（主题色 / 深色模式 / 字体），供本页相关 attr 闭包读取
+        // 同步个性化镜像（主题色 / 字体 / 涨跌配色），供本页相关 attr 闭包读取
         themeColor = UserSettings.themeColor
-        darkOn = UserSettings.darkMode
         fontScale = UserSettings.fontScale
         lastFontScale = UserSettings.fontScale
         lastColorMode = UserSettings.colorMode
@@ -229,7 +226,6 @@ internal class MainTabPager : BasePager(), StockNavigator {
         loadState()
         // 从个性化设置页返回时同步主题镜像，触发本页主题色 / 底色重绘
         themeColor = UserSettings.themeColor
-        darkOn = UserSettings.darkMode
         // 字体：同步可观察镜像（依赖 fs() 的闭包即时重绘），
         // 并在字号确实变化时翻转 reseed，强制「内容区」（含 KRStockList 等跨组件子节点）
         // 整体销毁重建——否则普通 var 的 fontScale 不会触发已有闭包重算，app 内字不会变小。
@@ -264,7 +260,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
         watchGroups = UserStockStore.loadWatchGroups(prefs)
         watchGroupMap = UserStockStore.loadWatchGroupMap(prefs)
         priceAlerts = AlertStore.load(prefs)
-        // 载入个性化设置：主题色 / 字体 / 深色模式（渲染前保证最新）
+        // 载入个性化设置：主题色 / 字体 / 涨跌配色（渲染前保证最新）
         UserSettings.load(prefs)
     }
 
@@ -334,10 +330,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
                 if (ctx.selectedTab == 3) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
             }
             Scroller {
-                attr { flex(1f); flexDirectionColumn(); backgroundColor(if (ctx.darkOn) Color(0xFF1A1B1E) else Color(0xFFF2F3F5)); padding(12f) }
+                attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)); padding(12f) }
 
                 // 不感兴趣管理
-                Text { attr { text("不感兴趣"); fontSize(ctx.fs(13f)); color(if (ctx.darkOn) Color(0xFF9AA0A6) else Color(0xFF999999)); marginBottom(8f) } }
+                Text { attr { text("不感兴趣"); fontSize(ctx.fs(13f)); color(Color(0xFF999999)); marginBottom(8f) } }
                 // —— 自动恢复周期（可展开自定义天数）——
                 View {
                     attr { flexDirectionColumn(); padding(14f); backgroundColor(Color.WHITE); borderRadius(10f); width(contentW) }
@@ -435,7 +431,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     attr {
                         text("个性化设置")
                         fontSize(ctx.fs(13f))
-                        color(if (ctx.darkOn) Color(0xFF9AA0A6) else Color(0xFF999999))
+                        color(Color(0xFF999999))
                         marginBottom(8f); marginTop(20f)
                     }
                 }
@@ -443,7 +439,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
                     val d = JSONObject()
                     ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ExpandSettings", d)
                 }
-                renderSettingRow(ctx, contentW, "外观与个性化", "主题色、字体大小、深色模式") {
+                renderSettingRow(ctx, contentW, "外观与个性化", "主题色、字体大小、涨跌配色") {
                     val d = JSONObject()
                     ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("Appearance", d)
                 }
@@ -959,7 +955,7 @@ internal class MainTabPager : BasePager(), StockNavigator {
             ctx.hiddenMap; ctx.watchlistCodes; ctx.hideDays; ctx.dataVersion
             // 内容卡宽度（Scroller 默认不拉伸子元素，需显式宽度以铺满、避免右侧留白）
             val contentW = ctx.pagerData.pageViewWidth - 24f
-            attr { flexDirectionColumn(); backgroundColor(if (ctx.darkOn) Color(0xFF1A1B1E) else Color.WHITE) }
+            attr { flexDirectionColumn(); backgroundColor(Color.WHITE) }
 
             // ===== TopBar =====
             View {
@@ -1945,7 +1941,7 @@ internal fun ViewContainer<*, *>.renderSectorRow(ctx: MainTabPager, sector: Sect
             View {
                 attr {
                     flex(1f); height(6f); marginLeft(8f); marginRight(8f); borderRadius(3f)
-                    backgroundColor(if (ctx.darkOn) Color(0xFF2A2B2F) else Color(0xFFF0F0F0))
+                    backgroundColor(Color(0xFFF0F0F0))
                     flexDirectionRow(); alignItemsCenter()
                 }
                 View {

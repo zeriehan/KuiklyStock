@@ -288,7 +288,7 @@ internal class ChatPage : BasePager() {
                 ChatStore.append(code, ChatStore.ChatMessage("assistant", text))
                 ChatStore.setPending(code, false)
                 ChatSync.bump()
-                // 外观/收藏类操作的可见性提示：改主题/深色/加自选/加对比/设预警这些在 ChatPage 内不一定看得到
+                // 外观/收藏类操作的可见性提示：改主题/字号/加自选/加对比/设预警这些在 ChatPage 内不一定看得到
                 // （改主题要回主界面才刷；加自选/对比/预警在自选/对比/预警区也需回主界面），提示用户操作已生效。
                 if (!destroyed) bridgeModule.toast("已执行。外观/收藏类改动请返回主界面查看。")
             }

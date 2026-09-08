@@ -56,7 +56,7 @@ internal class ExpandSettingsPage : BasePager() {
         return {
             attr {
                 flexDirectionColumn()
-                backgroundColor(if (UserSettings.darkMode) Color(0xFF1A1B1E) else Color(0xFFF2F3F5))
+                backgroundColor(Color(0xFFF2F3F5))
             }
 
             // ===== 返回栏（顶栏用主题色）=====

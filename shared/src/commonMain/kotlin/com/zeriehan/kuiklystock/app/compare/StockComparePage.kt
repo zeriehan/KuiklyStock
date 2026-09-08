@@ -414,7 +414,7 @@ internal class StockComparePage : BasePager() {
     override fun body(): ViewBuilder {
         val ctx = this
         return {
-            attr { flexDirectionColumn(); backgroundColor(if (UserSettings.darkMode) Color(0xFF1A1B1E) else Color(0xFFF2F3F5)) }
+            attr { flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
 
             // ===== 顶部返回栏 =====
             View {
@@ -752,7 +752,7 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
         View {
             attr {
                 height(ctx.keyboardH)
-                backgroundColor(if (UserSettings.darkMode) Color(0xFF1A1B1E) else Color(0xFFF2F3F5))
+                backgroundColor(Color(0xFFF2F3F5))
             }
         }
     }

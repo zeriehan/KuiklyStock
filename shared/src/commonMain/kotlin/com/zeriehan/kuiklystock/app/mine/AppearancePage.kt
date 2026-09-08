@@ -20,7 +20,6 @@ import com.zeriehan.kuiklystock.core.UserSettings
  * 提供三类个性化：
  * - 主题色：一组预设强调色，应用于顶栏、选中态、主按钮、分页圆点等（即时生效，返回主框架即重塑）。
  * - 字体大小：标准 / 大 / 特大，作用于本页、展开组件页与股票展开卡片文字。
- * - 深色模式：实验性开关，切换页面底色与顶栏（卡片仍白底以保证可读）。
  *
  * 渲染约定（沿用项目铁律）：body 不随 observable 重跑，列表用 `vif(uiToggle)` 双分支翻转，
  * viewDidLoad 载好初始状态后翻转强制重建；色板选中态 / 字体选中态 / 开关由对应 observable
@@ -32,7 +31,6 @@ internal class AppearancePage : BasePager() {
     internal var selTheme: Long by observable(UserSettings.themeColor)
     /** 0=标准 1=大 2=特大 */
     internal var selFont: Int by observable(0)
-    internal var darkOn: Boolean by observable(false)
     /** 涨跌配色：0=A股红涨绿跌 1=欧美红跌绿涨 */
     internal var selColorMode: Int by observable(0)
     internal var uiToggle: Boolean by observable(false)
@@ -51,7 +49,6 @@ internal class AppearancePage : BasePager() {
             1.3f -> 3
             else -> 1
         }
-        darkOn = UserSettings.darkMode
         selColorMode = UserSettings.colorMode
         uiToggle = !uiToggle
     }
@@ -70,12 +67,6 @@ internal class AppearancePage : BasePager() {
         uiToggle = !uiToggle
     }
 
-    internal fun toggleDark() {
-        UserSettings.darkMode = !UserSettings.darkMode
-        UserSettings.saveDark(prefs)
-        darkOn = !darkOn
-    }
-
     internal fun pickColorMode(mode: Int) {
         UserSettings.colorMode = mode
         UserSettings.saveColorMode(prefs)
@@ -88,7 +79,7 @@ internal class AppearancePage : BasePager() {
         return {
             attr {
                 flexDirectionColumn()
-                backgroundColor(if (UserSettings.darkMode) Color(0xFF1A1B1E) else Color(0xFFF2F3F5))
+                backgroundColor(Color(0xFFF2F3F5))
             }
 
             // ===== 返回栏（顶栏用主题色）=====
@@ -124,9 +115,9 @@ internal class AppearancePage : BasePager() {
     }
 }
 
-/** 渲染外观设置列表（主题色 / 字体 / 深色模式 / 实时预览） */
+/** 渲染外观设置列表（主题色 / 字体 / 涨跌配色 / 实时预览） */
 private fun ViewContainer<*, *>.renderAppearanceList(ctx: AppearancePage, contentW: Float) {
-    val headerColor = if (UserSettings.darkMode) Color(0xFF9AA0A6) else Color(0xFF999999)
+    val headerColor = Color(0xFF999999)
 
     // —— 主题色 ——
     Text { attr { text("主题色"); fontSize(UserSettings.fs(13f)); color(headerColor); marginBottom(8f) } }
@@ -176,39 +167,6 @@ private fun ViewContainer<*, *>.renderAppearanceList(ctx: AppearancePage, conten
                         fontSize(UserSettings.fs(15f))
                         color(if (ctx.selFont == i) Color.WHITE else Color(0xFF333333))
                     }
-                }
-            }
-        }
-    }
-
-    // —— 深色模式 ——
-    View {
-        attr {
-            flexDirectionRow(); alignItemsCenter(); marginTop(10f)
-            padding(14f); backgroundColor(Color.WHITE); borderRadius(10f); width(contentW)
-        }
-        View {
-            attr { flex(1f); flexDirectionColumn() }
-            Text { attr { text("深色模式"); fontSize(UserSettings.fs(15f)); color(Color(0xFF222222)) } }
-            Text {
-                attr {
-                    text("开启后整体背景变暗（实验性）")
-                    fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)); marginTop(4f)
-                }
-            }
-        }
-        // 自定义开关
-        View {
-            attr {
-                width(44f); height(24f); borderRadius(12f); flexDirectionRow()
-                backgroundColor(if (ctx.darkOn) Color(ctx.selTheme) else Color(0xFFD0D3D8))
-                marginTop(2f)
-            }
-            event { click { ctx.toggleDark() } }
-            View {
-                attr {
-                    width(20f); height(20f); borderRadius(10f); backgroundColor(Color.WHITE)
-                    marginTop(2f); marginLeft(if (ctx.darkOn) 22f else 2f)
                 }
             }
         }
