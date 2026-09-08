@@ -122,6 +122,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal var mktLoading: Boolean by observable(false)
     /** 行情数据到达 tick：DataSync 每次翻转，驱动「大盘」子内容(指数/热度/领涨领跌)强制重建读最新真实报价 */
     internal var marketDataTick: Boolean by observable(false)
+    /** 板块子页是否曾进入过：首次 selectMarketSub(1) 置 true 触发板块块 vif 首次构建(200行重,避免opacity0也建)；之后常驻显隐不重建 */
+    internal var sectorBuilt: Boolean by observable(false)
+    /** 个股子页是否曾进入过：同 sectorBuilt，首次进入个股才构建榜单块 */
+    internal var rankBuilt: Boolean by observable(false)
 
     // ===== 板块页交互状态（搜索 / 关注置顶）=====
     /** 关注板块 code 集合（持久化，载入于 viewDidLoad） */
@@ -306,8 +310,10 @@ internal class MainTabPager : BasePager(), StockNavigator {
                         flexDirectionColumn()
                         if (ctx.selectedTab == 1) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
                     }
-                    vif({ ctx.listToggle }) { val c = this; c.renderMarket(ctx) }
-                    vif({ !ctx.listToggle }) { val c = this; c.renderMarket(ctx) }
+                    // ⚠️ 行情页不再包 vif(listToggle)：否则 pageDidAppear 返回时翻 listToggle → 重建行情页(板块200行)卡。
+                    //   行情页实时刷新靠内部细粒度: 大盘 marketDataTick、板块 loadSectors onDone、个股榜 loadRank/rankToggle；
+                    //   不依赖 listToggle(那主要服务自选等)。行情页常驻 + 惰性块 + 内部 toggle，返回不重建板块。
+                    renderMarket(ctx)
                 }
 
                 // ---- Tab2 自选 ----
@@ -696,14 +702,14 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal fun selectMarketSub(i: Int) {
         if (i == marketSubTab) return
         marketSubTab = i
-        marketSubToggle = !marketSubToggle
-        rankToggle = !rankToggle // 复位个股子榜视图（避免跨 Tab 残留旧榜单）
+        // 惰性首建标记：首次进入板块/个股子页时置位，触发对应块 vif 首次构建(200行板块只建一次)；
+        // 之后子 Tab 内容常驻、靠 opacity/flex 显隐切换，不再每次切 Tab 重建整容器 → 切 Tab/返回不卡。
+        if (i == 1) sectorBuilt = true
+        if (i == 2) rankBuilt = true
         // 真实数据懒加载：切到「板块」拉真实行业板块、切到「个股」拉真实榜单。
-        // 异步到达后由 DataSync.bump 翻转重建，用户看到的是真实内容而非 mock 那几个。
         when (i) {
             0 -> {
-                // 大盘：除刷新指数/种子外，还要拉真实榜单(新浪)把非指数真实股票并入池——
-                // 市场热度/领涨领跌 读池内非指数股票，不拉榜单则池里只有 base 种子(mock) → 首次进大盘热度/领涨错。
+                // 大盘：除刷新指数/种子外，还要拉真实榜单(新浪)把非指数真实股票并入池
                 mktLoading = true
                 StockData.refresh()
                 StockData.loadIndices { /* 各自 bump 清 loading */ }
@@ -712,15 +718,15 @@ internal class MainTabPager : BasePager(), StockNavigator {
                 StockData.loadRank(2)
             }
             1 -> {
-                if (StockData.hasRealSectors()) return
+                if (StockData.hasRealSectors()) { mktLoading = false; return }
                 mktLoading = true
-                // loadSectors 完成(低频,仅首次)才重建板块列表；不让每次报价 DataSync 重建 200 行板块
+                // loadSectors 完成(低频,仅首次)后刷新板块列表(不随每次报价 DataSync 重建 200 行板块)
                 StockData.loadSectors { mktLoading = false; marketSubToggle = !marketSubToggle }
             }
             2 -> {
-                if (StockData.hasRank(stockRankTab)) return
+                if (StockData.hasRank(stockRankTab)) { mktLoading = false; return }
                 mktLoading = true
-                StockData.loadRank(stockRankTab) { mktLoading = false }
+                StockData.loadRank(stockRankTab) { mktLoading = false; rankToggle = !rankToggle }
             }
         }
     }
@@ -1587,36 +1593,74 @@ private fun ViewContainer<*, *>.renderMarket(ctx: MainTabPager) {
     vif({ !ctx.marketSubToggle }) { val c = this; c.renderMarketContent(ctx) }
 }
 
-/** 行情内容（子 Tab 栏 + 滚动区），闭包内现读 marketSubTab，翻转即整体重建，高亮与列表同步 */
+/** 行情滚动区顶部提示：数据源标注(实时/演示) + 拉取中提示。放各子 Tab 滚动区顶部显示 */
+private fun ViewContainer<*, *>.renderMarketScrollTopHint(ctx: MainTabPager) {
+    Text {
+        attr {
+            text(if (StockData.isReal()) "数据来源：腾讯·新浪实时行情" else "当前为本地演示数据，联网后自动切换为实时行情")
+            fontSize(ctx.fs(11f)); color(Color(0xFFAAAAAA)); margin(10f)
+        }
+    }
+    vif({ ctx.mktLoading }) {
+        View {
+            attr {
+                flexDirectionRow(); alignItemsCenter(); justifyContentCenter()
+                padding(10f); marginBottom(6f); backgroundColor(Color(0xFFE8F3FC))
+            }
+            Text { attr { text("加载中…"); fontSize(ctx.fs(12f)); color(Color(0xFF3478F6)) } }
+        }
+    }
+}
+
+/**
+ * 行情内容（子 Tab 栏 + 大盘/板块/个股 三常驻块）。
+ * 关键(根治切 Tab/返回卡顿)：三个子页各自独立滚动块，用 flex/opacity 随 marketSubTab 显隐，
+ * 不随切 Tab 重建容器——板块 200 行只在首次切到(sectorBuilt)时 vif 构建一次，之后切换只显隐不重建。
+ * 大盘(默认tab0)总显示；数据到达刷新靠：大盘 marketDataTick、板块 loadSectors onDone 翻 marketSubToggle(低频)、
+ * 个股榜 loadRank onDone 翻 rankToggle。注意 attr 闭包内现读 marketSubTab(勿提外层 val)。
+ */
 private fun ViewContainer<*, *>.renderMarketContent(ctx: MainTabPager) {
     renderMarketSubTabs(ctx)
-    Scroller {
-        attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
-        // 数据来源标注：让用户一眼分清「实时行情」还是「离线演示数据」，避免误判
-        Text {
+    // ===== 大盘块（tab0，默认常驻显示）=====
+    View {
+        attr {
+            flexDirectionColumn()
+            if (ctx.marketSubTab == 0) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
+        }
+        Scroller {
+            attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
+            renderMarketScrollTopHint(ctx)
+            // 大盘内容：marketDataTick 双分支，报价每到达即重建读最新真实价
+            vif({ ctx.marketDataTick }) { val c = this; c.renderMarketIndex(ctx) }
+            vif({ !ctx.marketDataTick }) { val c = this; c.renderMarketIndex(ctx) }
+        }
+    }
+    // ===== 板块块（tab1，惰性首建；200行只建一次，之后显隐不重建）=====
+    vif({ ctx.sectorBuilt }) {
+        View {
             attr {
-                text(if (StockData.isReal()) "数据来源：腾讯·新浪实时行情" else "当前为本地演示数据，联网后自动切换为实时行情")
-                fontSize(ctx.fs(11f)); color(Color(0xFFAAAAAA)); margin(10f)
+                flexDirectionColumn()
+                if (ctx.marketSubTab == 1) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
+            }
+            Scroller {
+                attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
+                renderMarketScrollTopHint(ctx)
+                renderSectorList(ctx)
             }
         }
-        // 板块/个股真实数据拉取中提示（随 mktLoading 显隐）
-        vif({ ctx.mktLoading }) {
-            View {
-                attr {
-                    flexDirectionRow(); alignItemsCenter(); justifyContentCenter()
-                    padding(10f); marginBottom(6f); backgroundColor(Color(0xFFE8F3FC))
-                }
-                Text { attr { text("加载中…"); fontSize(ctx.fs(12f)); color(Color(0xFF3478F6)) } }
+    }
+    // ===== 个股块（tab2，惰性首建）=====
+    vif({ ctx.rankBuilt }) {
+        View {
+            attr {
+                flexDirectionColumn()
+                if (ctx.marketSubTab == 2) { flex(1f); opacity(1f) } else { flex(0f); height(0f); opacity(0f) }
             }
-        }
-        when (ctx.marketSubTab) {
-            // 大盘：包 marketDataTick 双分支——行情数据(报价)每到达一次即重建，读最新真实价刷新
-            0 -> {
-                vif({ ctx.marketDataTick }) { val c = this; c.renderMarketIndex(ctx) }
-                vif({ !ctx.marketDataTick }) { val c = this; c.renderMarketIndex(ctx) }
+            Scroller {
+                attr { flex(1f); flexDirectionColumn(); backgroundColor(Color(0xFFF2F3F5)) }
+                renderMarketScrollTopHint(ctx)
+                renderRankArea(ctx)
             }
-            1 -> renderSectorList(ctx)
-            2 -> renderRankArea(ctx)
         }
     }
 }
