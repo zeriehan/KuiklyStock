@@ -43,9 +43,11 @@ internal class SectorDetailPage : BasePager(), StockNavigator {
     /** vif 翻转触发器：标记/恢复后强制重建成分股列表（body 不随 observable 重跑） */
     private var sectorListToggle: Boolean by observable(false)
 
-    // ===== 真实行业板块（BKxxxx）异步成分股状态 =====
+    // ===== 真实行业板块（BKxxxx / 新浪 new_/gn_）异步成分股状态 =====
     /** 板块代码（body 从 params 读取前为占位） */
     private var sectorCode: String = ""
+    /** 已尝试过拉成分股的板块（成功或失败都记，避免每次进出反复网络请求致卡顿） */
+    private val attemptedFetch = mutableSetOf<String>()
     /** 响应式板块信息：真实板块成分股拉取完成后更新，驱动头部与列表重读 */
     private var curSector: Sector? by observable(null)
     private var curStocks: List<Stock> by observable(emptyList())
@@ -59,13 +61,16 @@ internal class SectorDetailPage : BasePager(), StockNavigator {
     /** 重新解析板块 + 成分股到响应式状态（从 params 或重拉后调用） */
     private fun resolveSector(code: String) {
         sectorCode = code
+        // ⚠️ 真实板块 code 现为新浪 new_/gn_(东财BK不可达已弃), 不能只看 BK 前缀。
+        //    mock 兜底板块 code 为 sw_ 前缀且自带成分(def.constituents), 无需也不应网络拉取。
         val s = StockData.findSectorByCode(code)
-            ?: Sector(code, if (code.startsWith("BK")) "行业板块" else "未找到板块", 0f, emptyList())
+            ?: Sector(code, if (code.startsWith("sw_")) "未找到板块" else "行业板块", 0f, emptyList())
         curSector = s
         curStocks = StockData.getSectorStocks(s)
         sectorListToggle = !sectorListToggle
-        // 真实行业板块且成分尚未拉取：触发拉取，完成后回调里再 resolve 一次
-        if (code.startsWith("BK") && s.constituentCodes.isEmpty()) {
+        // 真实板块(非 sw_ mock)且成分尚未拉取过：触发拉取；已尝试(成功或失败)则不再重拉
+        if (!code.startsWith("sw_") && s.constituentCodes.isEmpty() && code !in attemptedFetch) {
+            attemptedFetch.add(code)
             StockData.loadSectorStocks(code) { resolveSector(code) }
         }
     }
@@ -161,7 +166,7 @@ internal class SectorDetailPage : BasePager(), StockNavigator {
                 vif({ ctx.curStocks.isEmpty() }) {
                     Text {
                         attr {
-                            text(if (ctx.sectorCode.startsWith("BK")) "正在加载板块成分股…" else "该板块暂无成分股数据")
+                            text(if (!ctx.sectorCode.startsWith("sw_")) "正在加载板块成分股…" else "该板块暂无成分股数据")
                             fontSize(13f); color(Color(0xFF999999)); marginTop(16f); marginLeft(12f)
                         }
                     }
