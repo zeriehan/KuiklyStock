@@ -513,8 +513,9 @@ internal class MainTabPager : BasePager(), StockNavigator {
     internal fun toggleFollowSector(code: String) {
         followSectors = if (followSectors.contains(code)) followSectors - code else followSectors + code
         UserStockStore.saveFollowSectors(prefs, followSectors)
-        sectorToggle = !sectorToggle
-        DataSync.bump()
+        // ⚠️ 不再翻 sectorToggle：点星标只需该行星标 attr 现读 followSectors 自动 ★↔☆，
+        //   翻转 sectorToggle 会重建整个 renderSectorBody(200行板块)→ 卡。关注后列表
+        //   置顶/顺序下次切Tab/搜索/返回时自然重排，可接受。
     }
 
     /** 板块搜索关键字变化（输入清空/键入），翻转板块页重建以实时过滤 */
