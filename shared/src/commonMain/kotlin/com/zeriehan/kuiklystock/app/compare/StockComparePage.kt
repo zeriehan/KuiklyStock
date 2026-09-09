@@ -286,7 +286,9 @@ internal class StockComparePage : BasePager() {
         // 直接 bridgeModule.llmAnalyze(当前页桥) 在页面切走/返回/后台时会失效 → 回调空 → 误报"无key/限流"。
         AIJobCenter.sendPrompt(prompt, stream = false, sid = "") { resp ->
             val text = resp?.optString("text").orEmpty()
-            val reply = if (text.isBlank()) "（AI 未返回，可能是限流或无 Key。请稍后重试。）" else text
+            // 真实 GLM 未返回（限流/网络/无 Key）：不把用户晾在"限流"提示上，
+            // 改为本地规则生成诚实兜底（与主聊天 MockLLMClient 同理念，自带"离线兜底"标记，不假装是真 AI）
+            val reply = if (text.isBlank()) buildCompareFallback(q) else text
             // ⚠️ 回调先安全落盘单例（本页可能已销毁，绝不在回调里直接写 chatMessages observable，
             // 那会因页面已销毁而丢失后台回复）。落盘 + setPending(false) + bump 驱动 UI。
             ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("assistant", reply))
@@ -376,7 +378,7 @@ internal class StockComparePage : BasePager() {
     /** 发送前退出多选态：避免勾选索引与新消息列表语义错位 */
     internal fun exitCmpSelectIfNeeded() { if (cmpSelectMode) exitCmpSelect() }
 
-    /** 构造对比 prompt：列出当前对比股的名称/代码/实时价/涨跌/近 N 日 K 线摘要 + 用户问题 */
+    /** 构造对比 prompt：列出当前对比股的名称/代码/实时价/涨跌/近 N 日涨跌幅与区间（精炼，省 token 降低限流）+ 用户问题 */
     private fun buildComparePrompt(question: String): String {
         val sb = StringBuilder("你是一名资深证券分析师。用户正在进行多股对比分析，请基于以下对比股数据专业、客观地回答用户问题。\n\n")
         sb.append("【对比股数据】\n")
@@ -384,15 +386,16 @@ internal class StockComparePage : BasePager() {
             val st = StockData.findByCode(code)
             sb.append("${i + 1}. ${st.name}($code)\n")
             sb.append("   实时价：${formatPrice(st.price)}  涨跌：${formatPercent(st.changePercent)}\n")
-            val bars = StockData.getKLine(st, "日", 20)
+            // 精炼：只给区间高/低 + 近 10 日期间涨跌，不再逐日列收盘序列 —— 对比问题不依赖逐日价格，
+            // 全列每只 20 个数字会撑大 prompt、触发免费池限流
+            val bars = StockData.getKLine(st, "日", 10)
             if (bars.isNotEmpty()) {
                 val closes = bars.map { it.close }
                 val periodChg = if (closes.size >= 2 && closes.first() > 0f)
                     (closes.last() - closes.first()) / closes.first() * 100f else 0f
-                sb.append("   近 ${bars.size} 日涨跌幅：${signChg(periodChg)}%；近期收盘：${closes.takeLast(20).joinToString(", ") { formatPrice(it) }}\n")
                 val hi = bars.maxOfOrNull { it.high } ?: 0f
                 val lo = bars.minOfOrNull { it.low } ?: 0f
-                sb.append("   近 ${bars.size} 日区间：高 ${formatPrice(hi)} / 低 ${formatPrice(lo)}\n")
+                sb.append("   近 ${bars.size} 日涨跌幅：${signChg(periodChg)}%  区间：高 ${formatPrice(hi)} / 低 ${formatPrice(lo)}\n")
             }
             sb.append("\n")
         }
@@ -409,6 +412,39 @@ internal class StockComparePage : BasePager() {
         val i = abs.toInt()
         val d = ((abs - i) * 100).toInt().coerceIn(0, 99)
         return sign + i + "." + (if (d < 10) "0$d" else d.toString())
+    }
+
+    /**
+     * 真实 GLM 未返回时的本地诚实兜底：基于当前对比股实时行情，用规则给出一份
+     * 「谁当日更强/更弱 + 参与思路」。与主聊天回退 Mock 同理念：不给用户"限流"死胡同，
+     * 但开头就声明是离线兜底、不假装是真 AI。
+     */
+    private fun buildCompareFallback(question: String): String {
+        val stocks = compareCodes.mapNotNull { code ->
+            StockData.getQuotes().firstOrNull { it.code == code } ?: return@mapNotNull null
+        }
+        val sb = StringBuilder()
+        sb.appendLine("【对比 AI · 离线兜底】")
+        sb.appendLine("")
+        sb.appendLine("（AI 服务本次未返回，先按你这几只股的实时行情给你一份本地快照参考。联网恢复后追问可获得更深入的真实分析。）")
+        sb.appendLine("")
+        if (stocks.isEmpty()) {
+            sb.appendLine("暂无有效行情，请稍后再试。")
+            return sb.toString()
+        }
+        val sorted = stocks.sortedByDescending { it.changePercent }
+        val strongest = sorted.first()
+        val weakest = sorted.last()
+        sorted.forEachIndexed { i, s ->
+            val dir = if (s.changePercent >= 0f) "涨" else "跌"
+            sb.appendLine("${i + 1}. ${s.name}(${s.code}) 现价 ${formatPrice(s.price)}，今日${dir}${formatPercent(kotlin.math.abs(s.changePercent))}")
+        }
+        sb.appendLine("")
+        sb.appendLine("当日强弱：${strongest.name} 领涨，${weakest.name} 相对偏弱。")
+        sb.appendLine("参与思路（仅供参考，不构成投资建议）：多股比较先看谁的量价与趋势更配合；追强势需防高位回落，接弱势宜等企稳信号，切勿单凭单日涨跌下结论。")
+        sb.appendLine("")
+        sb.appendLine("你的问题：$question")
+        return sb.toString()
     }
 
     override fun body(): ViewBuilder {
@@ -689,7 +725,7 @@ private fun ViewContainer<*, *>.renderCompareChat(ctx: StockComparePage) {
                                     flex(1f)
                                     if (i > 0) marginLeft(6f)
                                     padding(7f); paddingLeft(10f); paddingRight(10f); borderRadius(14f)
-                                    backgroundColor(Color(UserSettings.themeTint(0.12f)))
+                                    backgroundColor(Color(UserSettings.themeTint(0.85f)))
                                     justifyContentCenter(); alignItemsCenter()
                                 }
                                 event { click { ctx.sendCompareQuestion(q) } }

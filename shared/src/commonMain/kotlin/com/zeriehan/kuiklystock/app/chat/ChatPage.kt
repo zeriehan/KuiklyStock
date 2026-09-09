@@ -636,7 +636,7 @@ internal class ChatPage : BasePager() {
                                     if (i > 0) marginLeft(6f)
                                     padding(7f); paddingLeft(10f); paddingRight(10f)
                                     borderRadius(14f)
-                                    backgroundColor(Color(UserSettings.themeTint(0.12f)))
+                                    backgroundColor(Color(UserSettings.themeTint(0.85f)))
                                     justifyContentCenter(); alignItemsCenter()
                                 }
                                 event { click { ctx.ask(q) } }
