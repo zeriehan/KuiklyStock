@@ -24,6 +24,7 @@ import com.zeriehan.kuiklystock.core.StockColor
 import com.zeriehan.kuiklystock.core.StockData
 import com.zeriehan.kuiklystock.core.Stock
 import com.zeriehan.kuiklystock.core.UserSettings
+import com.zeriehan.kuiklystock.core.currentTimeMillis
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.QuickTipsGate
@@ -65,6 +66,10 @@ internal class StockComparePage : BasePager() {
     internal var cmpInput: String by observable("")
     /** 是否正在等 AI 回复 */
     internal var cmpWaiting: Boolean by observable(false)
+    /** 流式态：是否有一条"正在生长"的 AI 气泡（首段 delta 到达前为空；流式逐字蹦） */
+    internal var cmpStreaming: Boolean by observable(false)
+    /** 流式态当前累计文本（attr 现读，随 pumpStream 增量就地增长，不重建列表） */
+    internal var cmpStreamText: String by observable("")
     /** 聊天区域 vif 重建触发器（消息变更/等待态变更时翻转以更新列表） */
     internal var chatToggle: Boolean by observable(false)
     internal lateinit var cmpInputRef: ViewRef<InputView>
@@ -282,13 +287,24 @@ internal class StockComparePage : BasePager() {
         ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("user", q))
         ChatSync.bump()  // 本页监听 → syncCompFromStore 立即显示 user 气泡 + 思考中
         val prompt = buildComparePrompt(q)
-        // 走 AIJobCenter（常驻根页桥，同主聊天/GLMFlashClient）：对比页是 push 的子页面，
-        // 直接 bridgeModule.llmAnalyze(当前页桥) 在页面切走/返回/后台时会失效 → 回调空 → 误报"无key/限流"。
-        AIJobCenter.sendPrompt(prompt, stream = false, sid = "") { resp ->
+        val sid = "cmp_${currentTimeMillis()}"
+        // 进入流式态（本页存活时）：消息列表重建出一条"正在生长"的 AI 气泡
+        if (!compDestroyed) { cmpStreaming = true; cmpStreamText = "" }
+        // 流式轮询泵：绑当前前台页/常驻根页定时器，周期性拉宿主累计文本喂给 cmpStreamText（逐字蹦，attr 现读就地增长）
+        AIJobCenter.pumpStream(sid, 160) { text, _ ->
+            if (!compDestroyed) cmpStreamText = text
+            // finished 由下方 done 回调统一收尾落盘，不在此重复
+        }
+        // 走 AIJobCenter（常驻根页桥）。stream=true 触发宿主流式 glmChatStream：遍历同一
+        // glm-4-flash→4.5→4.7 候选链、且【无非流式那条 15s 整体硬超时】——首字出来就逐段等，
+        // 不会再把"慢但能用的 glm-4-flash"在免费池高峰误杀成空(旧非流式正是对比页总报限流/退Mock 的根因)。
+        AIJobCenter.sendPrompt(prompt, stream = true, sid = sid) { resp ->
             val text = resp?.optString("text").orEmpty()
-            // 真实 GLM 未返回（限流/网络/无 Key）：不把用户晾在"限流"提示上，
-            // 改为本地规则生成诚实兜底（与主聊天 MockLLMClient 同理念，自带"离线兜底"标记，不假装是真 AI）
+            // 真实 GLM 全候选仍失败/未返回 → 本地诚实兜底（与主聊天回退 Mock 同理念，
+            // 自带"离线兜底"标记、不假装是真 AI）
             val reply = if (text.isBlank()) buildCompareFallback(q) else text
+            // 结束流式态（本页存活才清 UI 状态；本页已销毁则仅写单例）
+            if (!compDestroyed) { cmpStreaming = false; cmpStreamText = "" }
             // ⚠️ 回调先安全落盘单例（本页可能已销毁，绝不在回调里直接写 chatMessages observable，
             // 那会因页面已销毁而丢失后台回复）。落盘 + setPending(false) + bump 驱动 UI。
             ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("assistant", reply))
@@ -869,7 +885,33 @@ private fun ViewContainer<*, *>.renderCompareChatMsgs(ctx: StockComparePage) {
                 }
             }
         }
-        if (ctx.cmpWaiting) {
+        // 等待/流式态：AI 正在生成。
+        // - 流式态(cmpStreaming)：渲染一条"正在生长"的 AI 气泡，attr 现读 cmpStreamText 就地逐字增长(尾光标)，
+        //   空时显示"正在思考…"占位；流结束后 done 转成真实 markdown 气泡。故这里不解析 Markdown，留给 done 阶段。
+        vif({ ctx.cmpStreaming }) {
+            View {
+                attr {
+                    flexDirectionRow(); alignItemsCenter(); marginBottom(8f)
+                    justifyContent(FlexJustifyContent.FLEX_START)
+                }
+                View {
+                    attr {
+                        maxWidth((ctx.pagerData.pageViewWidth - 60f))
+                        flexDirectionColumn()
+                        backgroundColor(Color(0xFFF7F8FA)); borderRadius(8f); padding(8f)
+                    }
+                    Text {
+                        attr {
+                            text(if (ctx.cmpStreamText.isNotEmpty()) ctx.cmpStreamText + "▍" else "正在思考…")
+                            fontSize(UserSettings.fs(13f)); color(Color(0xFF222222))
+                            maxWidth((ctx.pagerData.pageViewWidth - 60f) - 16f)
+                        }
+                    }
+                }
+            }
+        }
+        // 非流式等待占位：仅当 cmpWaiting 但没进流式态(如退出重进、后台请求还在跑)时显示
+        vif({ ctx.cmpWaiting && !ctx.cmpStreaming }) {
             Text { attr { text("AI 思考中…"); fontSize(UserSettings.fs(12f)); color(Color(0xFF999999)) } }
         }
     }
