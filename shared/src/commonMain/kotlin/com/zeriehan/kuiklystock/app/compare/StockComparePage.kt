@@ -28,6 +28,7 @@ import com.zeriehan.kuiklystock.core.currentTimeMillis
 import com.zeriehan.kuiklystock.core.formatPercent
 import com.zeriehan.kuiklystock.core.formatPrice
 import com.zeriehan.kuiklystock.core.QuickTipsGate
+import com.zeriehan.kuiklystock.core.llm.AgentChat
 import com.zeriehan.kuiklystock.core.llm.AIJobCenter
 import com.zeriehan.kuiklystock.core.llm.ChatStore
 import com.zeriehan.kuiklystock.core.llm.ChatSync
@@ -140,32 +141,38 @@ internal class StockComparePage : BasePager() {
      *  实现"选股页完成即自动生效"，无需在对比页手动点「应用选股」。 */
     override fun pageDidAppear() {
         super.pageDidAppear()
-        // 读持久化最新对比股；若与当前不同则应用（幂等，避免每次 appear 都重复重建）
-        val saved = loadSavedCompare()
-        if (saved != compareCodes && saved.isNotEmpty()) {
-            compareCodes = saved
-            comparePeriods = saved.associateWith { "intraday" }
-            // 新加入/变化的对比股：立即拉真实行情入池(含名字/价), 避免占位 fallback
-            StockData.loadCodesQuotes(saved.toSet())
-            // 对新列表补拉各周期数据
-            saved.forEach { code ->
-                val st = StockData.findByCode(code)
-                if (!st.isIndex) {
-                    StockData.loadTrends(st) { uiToggle = !uiToggle }
-                    StockData.loadKline(st, "日", 80) { uiToggle = !uiToggle }
-                    StockData.loadKline(st, "周", 60) { uiToggle = !uiToggle }
-                    StockData.loadKline(st, "月", 60) { uiToggle = !uiToggle }
-                    StockData.loadKline(st, "年", 60) { uiToggle = !uiToggle }
-                }
-            }
-            uiToggle = !uiToggle
-            bridgeModule.toast("已应用对比股")
-        }
+        // 读持久化最新对比股并应用（幂等，变化才重建）——实现“选股页完成即自动生效”；
+        // Agent 在本页内执行「加入对比」后也走同一刷新路径
+        reloadCompareFromPrefs()
         // 重新出现(返回本页/重进前台)：期间后台若已把 AI 回复落盘，重新同步一次（配合 ChatSync 监听双保险）
         syncCompFromStore()
         // 进页/重新出现都滚到底（最新消息可见），避免停留在历史最旧处
         cmpScrollRetry = 0
         com.tencent.kuikly.core.timer.setTimeout(pagerId, 120) { if (!compDestroyed) scrollCompToBottom() }
+    }
+
+    /** 从持久化重读最新对比股列表并应用（幂等：与当前一致则不动）。
+     *  供 pageDidAppear（选股页返回/重进前台）与 Agent 回调（本页内执行「加入对比」）共用。 */
+    private fun reloadCompareFromPrefs() {
+        val saved = loadSavedCompare()
+        if (saved == compareCodes || saved.isEmpty()) return
+        compareCodes = saved
+        comparePeriods = saved.associateWith { "intraday" }
+        // 新加入/变化的对比股：立即拉真实行情入池(含名字/价), 避免占位 fallback
+        StockData.loadCodesQuotes(saved.toSet())
+        // 对新列表补拉各周期数据
+        saved.forEach { code ->
+            val st = StockData.findByCode(code)
+            if (!st.isIndex) {
+                StockData.loadTrends(st) { uiToggle = !uiToggle }
+                StockData.loadKline(st, "日", 80) { uiToggle = !uiToggle }
+                StockData.loadKline(st, "周", 60) { uiToggle = !uiToggle }
+                StockData.loadKline(st, "月", 60) { uiToggle = !uiToggle }
+                StockData.loadKline(st, "年", 60) { uiToggle = !uiToggle }
+            }
+        }
+        uiToggle = !uiToggle
+        bridgeModule.toast("已应用对比股")
     }
 
     /** 页面销毁：解除监听 + 标记已销毁，后续回调只写单例(不碰本页 observable) */
@@ -286,6 +293,31 @@ internal class StockComparePage : BasePager() {
         // 用户消息落盘（先落盘再 bump，避免依赖本页存活）
         ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("user", q))
         ChatSync.bump()  // 本页监听 → syncCompFromStore 立即显示 user 气泡 + 思考中
+
+        // ⚠️ AI 操控 app（Agent）：与主聊天 ChatPage 同协议同工具集——消息疑似要求执行操作
+        //    (加自选/加对比/设预警/改主题色/调字号/开关迷你卡/换涨跌配色/设隐藏恢复/恢复隐藏)时，
+        //    走 AgentChat 模型决策编排：由 AI 理解自然语言决定是否调工具，执行真实操作后再回一轮拿最终答复。
+        //    非操作类（正常对比分析提问）才走下面的对比流式问答。
+        if (AgentChat.isLikelyAction(q)) {
+            val prefsObj = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
+            val hist = ChatStore.messages(ChatStore.COMPARE_CONV)
+            AgentChat.run(q, AgentChat.historyText(hist), prefsObj) { reply ->
+                val text = reply.ifBlank { "（AI 暂时没有回复，请稍后再试）" }
+                // 与流式路径一致：安全落盘单例（本页可能已销毁）+ setPending(false) + bump 驱动 UI
+                ChatStore.append(ChatStore.COMPARE_CONV, ChatStore.ChatMessage("assistant", text))
+                ChatStore.setPending(ChatStore.COMPARE_CONV, false)
+                ChatSync.bump()
+                if (compDestroyed) {
+                    AIJobCenter.toast("对比 AI 已回复，点开查看")
+                } else {
+                    // Agent 可能在本页内执行了「加入对比」等写持久层的操作：
+                    // 从持久化重读对比股并应用，让上区立即出现新对比股（不必退出重进）
+                    reloadCompareFromPrefs()
+                }
+            }
+            return
+        }
+
         val prompt = buildComparePrompt(q)
         val sid = "cmp_${currentTimeMillis()}"
         // 进入流式态（本页存活时）：消息列表重建出一条"正在生长"的 AI 气泡
