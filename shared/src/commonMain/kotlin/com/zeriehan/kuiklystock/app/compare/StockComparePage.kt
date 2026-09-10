@@ -553,15 +553,18 @@ internal class StockComparePage : BasePager() {
                         width(menuW); backgroundColor(Color.WHITE); borderRadius(12f); flexDirectionColumn()
                     }
                     val idx = ctx.cmpMsgMenuIndex!!
-                    ctx.cmpMsgMenuItem("复制") { ctx.copyCmpText(ctx.cmpMsgMenuText); ctx.closeCmpMsgMenu() }
-                    ctx.cmpMsgDivider()
-                    ctx.cmpMsgMenuItem("删除") { ctx.deleteCmpMsg(idx); ctx.closeCmpMsgMenu() }
-                    ctx.cmpMsgDivider()
-                    ctx.cmpMsgMenuItem("选取文字") { ctx.bridgeModule.showSelectableText("选取文字", ctx.cmpMsgMenuText); ctx.closeCmpMsgMenu() }
-                    ctx.cmpMsgDivider()
-                    ctx.cmpMsgMenuItem("多选") { ctx.enterCmpSelect(idx) }
-                    ctx.cmpMsgDivider()
-                    ctx.cmpMsgMenuItem("取消") { ctx.closeCmpMsgMenu() }
+                    // ⚠️ 裸调用（不带 ctx.）：让菜单项经【就近 receiver】挂进上面的白卡 View。
+                    // 之前写成 ctx.cmpMsgMenuItem(...) 会把菜单项挂到页面根容器（ctx），白卡成了空壳(0高不可见)、
+                    // 菜单项被追加到根 column 末尾(页面外)，表现为「只有灰遮罩、菜单不出现」。
+                    cmpMsgMenuItem("复制") { ctx.copyCmpText(ctx.cmpMsgMenuText); ctx.closeCmpMsgMenu() }
+                    cmpMsgDivider()
+                    cmpMsgMenuItem("删除") { ctx.deleteCmpMsg(idx); ctx.closeCmpMsgMenu() }
+                    cmpMsgDivider()
+                    cmpMsgMenuItem("选取文字") { ctx.bridgeModule.showSelectableText("选取文字", ctx.cmpMsgMenuText); ctx.closeCmpMsgMenu() }
+                    cmpMsgDivider()
+                    cmpMsgMenuItem("多选") { ctx.enterCmpSelect(idx) }
+                    cmpMsgDivider()
+                    cmpMsgMenuItem("取消") { ctx.closeCmpMsgMenu() }
                 }
             }
 
