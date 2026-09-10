@@ -1,36 +1,47 @@
 # KuiklyStock — AI 股票行情 + AI 股票问答 App
 
-> **参赛项目**：2026 腾讯犀牛鸟开源人才计划 · KuiklyUI 实战（截止 2026-09-14）
-> **形态**：一个 App，底部四 Tab —— **AI 聊天 / 行情 / 自选 / 我的**（默认停行情）
+> **参赛项目**：2026 腾讯犀牛鸟开源人才计划 · KuiklyUI 实战（截止 2026-09-14）  
+> **形态**：一个 App，底部四 Tab —— **AI 聊天 / 行情 / 自选 / 我的**（默认停行情）  
 > **本仓库文档导航**：README（总览/当前状态/怎么跑）· `架构说明.md`（技术架构）· `亮点与创新.md`（可讲亮点）· `比赛自评与答辩要点.md`（评分自证）· `演示口播脚本.md` + `演示镜头时间轴录制卡.md`（演示视频）
 
 ---
 
 ## 一、当前状态（截至 2026-09-09）
 
-**两大任务均已收官，真机跑通（华为/vivo 验证）：**
+**两大任务均已收官，真机跑通 （安卓由vivo验证）：**
 
 - **Task 01 · AI 行情原型**：行情（大盘 / 板块 / 个股榜单）/ 自选 / 个股与板块详情 / 多股对比 / 开始选股，全链路真实可演示。
 - **Task 02 · AI 股票问答**：真流式逐字输出、富文本、提及股可点承接、量化徽章、图表"选一点问 AI"、开始选股，闭环可演示。
 
 **核心能力**（点到即止，详见 `亮点与创新.md`）：
+
 - **真实数据**：腾讯（报价/K线/分时）+ 新浪（榜单/板块/成分）+ 东方财富（F10）；mock 仅离线兜底并诚实标注。
 - **真实大模型**：智谱 GLM Flash 免费池，SSE 真流式、候选模型降级、15s 超时兜底；无 Key/限流回退本地 Mock。
 - **AI Agent（最强亮点）**：自然语言直接执行 App 操作——改主题色、改字号/涨跌配色、开关迷你卡、设隐藏恢复天数、恢复隐藏股、加自选/对比/设预警；协议层 JSON 容错 + 别名映射 + 语义兜底全闭环。
-- **图表"看哪根问哪根"**：分时/K 线点选点位 → 十字光标 → 带着点位上下文跳聊天自动问 AI。
+- **图表实时问股**：分时/K 线点选点位 → 十字光标 → 带着点位上下文跳聊天自动问 AI。
 - **量化结论徽章**：AI 分析直给"操作建议(买/持/卖) + 风险(低/中/高)"双徽章。
-
-> 注：早前实验性的**深色模式已移除**（做的效果不佳），外观设置现为 主题色 / 字体大小 / 涨跌配色（红涨绿跌 ↔ 红跌绿涨）。
 
 ---
 
 ## 二、怎么跑 / 构建
 
 - 用 **Android Studio**（≥ 2024.2.1）+ Kuikly 插件，Gradle JDK **17**。打开 `KuiklyStock` 根目录 → Run `androidApp`，入口 `MainTab`。
-- **运行验证**：只在 Android Studio Build→Rebuild→Run 真机验证（华为/vivo），不要主动打 debug APK。
-- **真实 GLM**：`local.properties` 写 `GLM_API_KEY=你的key`（已 gitignore）；不写则自动用离线 Mock，演示不受阻。
+- **运行验证**：只在 Android Studio Build→Rebuild→Run 真机验证。
 - **命令行编译**：`./gradlew --stop` 后 `./gradlew :shared:compileDebugKotlinAndroid`（判 UP-TO-DATE 加 `--rerun-tasks`）；宿主改动用 `:androidApp:compileDebugKotlin`。
-- **git push 走 SSH**：`GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" git push git@github.com:zeriehan/KuiklyStock.git main`。
+
+### 克隆下来怎么跑（换台机器 / 别人接手）
+
+1. **前置**：JDK **17**；Android SDK（`compileSdk 34` + 对应 build-tools）；Android Studio ≥ 2024.2.1（可选，命令行也能构建）。首次构建需联网拉 Gradle 8.5 / AGP / Kuikly 依赖。
+2. **自己建 `local.properties`**（该文件不入库，放在仓库根目录）：
+   ```properties
+   sdk.dir=/path/to/Android/Sdk   # Windows 如 D:\\Android\\Sdk；也可改用环境变量 ANDROID_HOME
+   GLM_API_KEY=你的智谱Key         # 可选：不填也能编译运行，AI 自动走本地兜底，界面/交互不受影响
+   ```
+   （Key 也可用环境变量 `GLM_API_KEY` 传入；源码内零密钥。）
+3. **构建 / 运行**：根目录 `./gradlew :androidApp:assembleDebug` → 产物在 `androidApp/build/outputs/apk/debug/`；或直接用 AS 打开 Run。
+   - macOS / Linux 若报 `permission denied`：`chmod +x gradlew`（或 `sh gradlew ...`）。
+4. **要签名包**：AS → Build → Generate Signed Bundle / APK，用**自己的** keystore（keystore 不入库）。
+5. **要不要真 AI**：填了 `GLM_API_KEY` 走真模型（glm-4-flash 优先，失败自动降级）；没填/失败则回退本地兜底——**不崩、也不假装是真 AI**。
 
 ---
 
@@ -50,7 +61,7 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/   （shared 49 个 .kt；
     ├── detail/       StockDetailPage / SectorDetailPage
     ├── compare/      StockComparePage / StockPickerPage
     ├── mine/         AppearancePage / ExpandSettingsPage / HiddenStocksPage / CreditsPage / FullTextPage
-    └── quotes/       HeatPoolPage / QuotesPage(旧验证页,无入口)
+    └── quotes/       HeatPoolPage / QuotesPage
 ```
 
 **路由页（@Page，KSP 自动注册）**：`MainTab` / `QuotesPage` / `StockDetail` / `SectorDetail` / `Chat` / `HeatPool` / `StockCompare` / `StockPicker` / `Appearance` / `ExpandSettings` / `HiddenStocks` / `Credits` / `FullText`。
@@ -59,14 +70,14 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/   （shared 49 个 .kt；
 
 ## 四、组件速览（自研可复用，数据驱动）
 
-| 组件 | 职责 |
-|---|---|
-| KRStockList（KRTable） | 行情/自选列表 + 行内展开分页轮播（分时/AI分析/简况/基本面，按 `UserSettings.expand` 开关）|
-| KRKLineChart / KRTrendChart / KRMiniTimeSharing | 专业 K线(+指标/缩放) / 迷你走势 / 迷你分时 |
-| KRChatMiniChart | AI 回复内嵌迷你走势图（分时/日/周/月/年K 可切）+ 十字光标选点 |
-| KRMarkdown | Markdown 富文本渲染（RichText+Span，含可点股票名）|
-| KRStockCard / KRStockBadge / KRRefreshButton | 提及股窄卡 / 涨跌徽标 / 下拉刷新 |
-| AiVerdict | AI 结论「风险+买卖」双徽章解析与渲染 |
+| 组件                                              | 职责                                                            |
+| ----------------------------------------------- | ------------------------------------------------------------- |
+| KRStockList（KRTable）                            | 行情/自选列表 + 行内展开分页轮播（分时/AI分析/简况/基本面，按 `UserSettings.expand` 开关） |
+| KRKLineChart / KRTrendChart / KRMiniTimeSharing | 专业 K线(+指标/缩放) / 迷你走势 / 迷你分时                                   |
+| KRChatMiniChart                                 | AI 回复内嵌迷你走势图（分时/日/周/月/年K 可切）+ 十字光标选点                          |
+| KRMarkdown                                      | Markdown 富文本渲染（RichText+Span，含可点股票名）                          |
+| KRStockCard / KRStockBadge / KRRefreshButton    | 提及股窄卡 / 涨跌徽标 / 下拉刷新                                           |
+| AiVerdict                                       | AI 结论「风险+买卖」双徽章解析与渲染                                          |
 
 ---
 
