@@ -455,6 +455,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         for (model in GLMConfig.MODEL_CANDIDATES) {
             val text = try {
                 glmChat(prompt, key, model)
+            } catch (e: GlmAuthException) {
+                // Key 无效/无权限：换模型也是同一个 Key，没必要再试，直接回退本地兜底
+                Log.e("KRBridge", "GLM Key 无效或无权限（${e.message}），停止候选链，回退本地兜底")
+                return ""
             } catch (e: Throwable) {
                 Log.w("KRBridge", "模型 $model 请求异常，尝试下一个候选", e)
                 null
@@ -467,6 +471,17 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         }
         Log.e("KRBridge", "全部候选模型均失败，回退 Mock")
         return ""
+    }
+
+    /** 智谱鉴权类业务错误码（1000 鉴权失败 / 1001 header 鉴权失败） */
+    private val AUTH_ERROR_CODES = setOf("1000", "1001")
+
+    /** 是否鉴权失败：HTTP 401/403，或响应体里出现鉴权类错误码 */
+    private fun isAuthFailure(code: Int, body: String?): Boolean {
+        if (code == HttpURLConnection.HTTP_UNAUTHORIZED || code == HttpURLConnection.HTTP_FORBIDDEN) return true
+        val b = body.orEmpty()
+        return b.contains("\"code\":\"1000\"") || b.contains("\"code\":\"1001\"") ||
+            b.contains("\"code\":1000") || b.contains("\"code\":1001")
     }
 
     /**
@@ -504,13 +519,16 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             if (code != HttpURLConnection.HTTP_OK) {
                 val err = conn.errorStream?.bufferedReader()?.readText()
                 Log.e("KRBridge", "GLM[$model] HTTP $code: $err")
+                if (isAuthFailure(code, err)) throw GlmAuthException("HTTP $code")
                 return null
             }
 
             val json = JSONObject(conn.inputStream.bufferedReader().readText())
             // 业务错误也可能以 200 返回，统一识别
             json.optJSONObject("error")?.let {
-                Log.e("KRBridge", "GLM[$model] error ${it.optString("code")}: ${it.optString("message")}")
+                val errCode = it.optString("code")
+                Log.e("KRBridge", "GLM[$model] error $errCode: ${it.optString("message")}")
+                if (errCode in AUTH_ERROR_CODES) throw GlmAuthException("error code $errCode")
                 return null
             }
             val choices = json.optJSONArray("choices") ?: return null
@@ -544,6 +562,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             } catch (e: Throwable) {
                 // 产内容前失败 → 该模型不可用，试下一个；已在产内容中途失败 → 保留已产部分收尾，
                 // 不跳到下一个候选（避免两段不同模型的文本被拼接成乱文）。
+                if (e is GlmAuthException && !produced) {
+                    Log.e("KRBridge", "GLM Key 无效或无权限（${e.message}），停止候选链，回退本地兜底")
+                    return null
+                }
                 if (produced) {
                     Log.w("KRBridge", "模型 $model 流式中途失败，保留已产内容收尾", e)
                     return acc
@@ -596,6 +618,7 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             if (code != HttpURLConnection.HTTP_OK) {
                 val err = conn.errorStream?.bufferedReader()?.readText()
                 Log.e("KRBridge", "GLM[$model] stream HTTP $code: $err")
+                if (isAuthFailure(code, err)) throw GlmAuthException("stream HTTP $code")
                 throw IllegalStateException("GLM stream HTTP $code")
             }
 
@@ -1277,3 +1300,10 @@ private fun httpGetJson(url: String, referer: String): JSONObject? {
         null
     }
 }
+
+/**
+ * GLM 鉴权类失败（Key 无效 / 无权限 / 已被停用）。
+ * 换模型候选也没用（同一个 Key），宿主直接停止候选链，快速回退本地兜底，
+ * 避免「填了别家 Key 或填错 Key」时白等 3 个模型的超时。
+ */
+private class GlmAuthException(message: String) : Exception(message)

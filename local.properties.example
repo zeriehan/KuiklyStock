@@ -1,0 +1,10 @@
+## 示例配置：复制本文件为 local.properties（放仓库根目录）即可。
+## local.properties 不入库（每台机器的 SDK 路径不同，且个人 Key 不该进仓库）。
+
+## Android SDK 路径。Android Studio 打开工程时会自动写入这一行；
+## 只跑命令行构建时才需要自己写，也可以改用环境变量 ANDROID_HOME / ANDROID_SDK_ROOT。
+sdk.dir=D\:\\Android\\Sdk
+
+## 可选：用自己的智谱 GLM Key 覆盖仓库里共享的那个。
+## 不写这一行也能用（走 glm.default.properties 的共享 Key）。
+# GLM_API_KEY=你自己的智谱Key

@@ -1,7 +1,7 @@
 # KuiklyStock — AI 股票行情 + AI 股票问答 App
 
-> **参赛**：2026 腾讯犀牛鸟开源人才计划 · KuiklyUI 实战（截止 2026-09-14）
-> **形态**：一个 App，底部四个 Tab，AI 聊天 / 行情 / 自选 / 我的（冷启动停「行情」）
+> **参赛**：2026 腾讯犀牛鸟开源人才计划 · KuiklyUI 实战（截止 2026-09-14）  
+> **形态**：一个 App，底部四个 Tab，AI 聊天 / 行情 / 自选 / 我的（冷启动停「行情」）  
 > **文档导航**：README（总览 · 怎么跑）· `架构说明.md`（技术架构）· `亮点与创新.md`（可讲亮点）· `比赛自评与答辩要点.md`（评分自证）· `演示口播脚本.md` + `演示镜头时间轴录制卡.md`（演示视频用）
 
 ---
@@ -31,17 +31,18 @@
 
 ### 克隆下来怎么跑（换台机器 / 别人接手）
 
+**评审最简单的路径：clone → 用 Android Studio 打开 → Run。** 不用申请 Key、不用建任何配置文件，AI 直接是真模型（仓库里带了一个共享的智谱 GLM 免费池 Key，见 `glm.default.properties`）。
+
 1. **前置**：JDK **17**；Android SDK（`compileSdk 34` + 对应 build-tools）；Android Studio（可选，命令行也能构建）。首次构建要联网拉 Gradle 8.5 / AGP / Kuikly 依赖。
-2. **自己建 `local.properties`**（这个文件不入库，放在仓库根目录）：
-   ```properties
-   sdk.dir=/path/to/Android/Sdk   # Windows 如 D:\\Android\\Sdk；也可改用环境变量 ANDROID_HOME
-   GLM_API_KEY=你的智谱Key         # 可选：不填也能编译运行，AI 自动走本地兜底，界面和交互不受影响
-   ```
-   （Key 也可以用环境变量 `GLM_API_KEY` 传；源码里没有任何密钥。）
+2. **`local.properties`（可选）**：Android Studio 打开工程时会自动生成它，里面只有一行 `sdk.dir`。**只在两种情况需要动它**：
+   - 纯命令行构建、AS 又没生成过：照着 `local.properties.example` 复制一份，填上自己的 SDK 路径（也可以改用环境变量 `ANDROID_HOME`）；
+   - 想用自己的 AI Key：加一行 `GLM_API_KEY=你的智谱Key` 覆盖仓库里的共享 Key。
+   这个文件不入库（每台机器 SDK 路径不同，个人 Key 也不该进仓库）。
 3. **构建 / 运行**：根目录 `./gradlew :androidApp:assembleDebug`，产物在 `androidApp/build/outputs/apk/debug/`；或者直接用 AS 打开 Run。
    - macOS / Linux 若报 `permission denied`，执行 `chmod +x gradlew`（或 `sh gradlew ...`）。
 4. **要签名包**：AS → Build → Generate Signed Bundle / APK，用自己的 keystore（不入库）。
-5. **要不要真 AI**：填了 `GLM_API_KEY` 就走真模型（glm-4-flash 优先，失败自动降级）；没填或者全失败就回退本地兜底，不会崩，也不会假装是真 AI。
+5. **AI 这块要留意**：本项目**只适配了智谱 GLM 的协议**，填别家的 Key 不会生效（会走本地兜底，不会崩）。Key 缺失、限流、超时都会自动回退本地兜底，界面和交互照常。
+   - Key 读取优先级：`local.properties` → 环境变量 `GLM_API_KEY` → 仓库里的 `glm.default.properties`。
 
 ---
 
@@ -70,21 +71,21 @@ shared/src/commonMain/kotlin/com/zeriehan/kuiklystock/   （shared 49 个 .kt；
 
 ## 四、组件速览（自研可复用，数据驱动）
 
-| 组件 | 职责 |
-| --- | --- |
-| KRStockList（KRTable） | 行情 / 自选列表 + 行内展开分页轮播（分时 / AI 分析 / 简况 / 基本面，按 `UserSettings.expand` 开关） |
-| KRKLineChart / KRTrendChart / KRMiniTimeSharing | 专业 K 线（含指标 / 缩放）/ 迷你走势 / 迷你分时 |
-| KRChatMiniChart | AI 回复内嵌迷你走势图（分时 / 日 / 周 / 月 / 年 K 可切）+ 十字光标选点 |
-| KRMarkdown | Markdown 富文本渲染（RichText + Span，股票名可点） |
-| KRStockCard / KRStockBadge / KRRefreshButton | 提及股窄卡 / 涨跌徽标 / 下拉刷新 |
-| AiVerdict | AI 结论「风险 + 买卖」双徽章的解析与渲染 |
+| 组件                                              | 职责                                                                     |
+| ----------------------------------------------- | ---------------------------------------------------------------------- |
+| KRStockList（KRTable）                            | 行情 / 自选列表 + 行内展开分页轮播（分时 / AI 分析 / 简况 / 基本面，按 `UserSettings.expand` 开关） |
+| KRKLineChart / KRTrendChart / KRMiniTimeSharing | 专业 K 线（含指标 / 缩放）/ 迷你走势 / 迷你分时                                          |
+| KRChatMiniChart                                 | AI 回复内嵌迷你走势图（分时 / 日 / 周 / 月 / 年 K 可切）+ 十字光标选点                          |
+| KRMarkdown                                      | Markdown 富文本渲染（RichText + Span，股票名可点）                                  |
+| KRStockCard / KRStockBadge / KRRefreshButton    | 提及股窄卡 / 涨跌徽标 / 下拉刷新                                                    |
+| AiVerdict                                       | AI 结论「风险 + 买卖」双徽章的解析与渲染                                                |
 
 ---
 
 ## 五、关键工程约定（接手 / 续做必读）
 
 - **涨红跌绿**：涨 `0xFFE54D42`、跌 `0xFF1ABE5B`、平灰。配色统一走 `StockColor.text()` / `UserSettings.up/down()`，别写死。
-- **源码零密钥**：GLM Key 走 `local.properties` → `BuildConfig.GLM_API_KEY`，不入库。
+- **Key 在宿主侧注入**：GLM Key 经 `local.properties`（本机覆盖）或仓库里的 `glm.default.properties`（共享默认）→ `BuildConfig.GLM_API_KEY`。shared 里没有任何密钥字符串。
 - **个性化手动和 AI 都能改**：主题色、字号、涨跌配色、迷你卡组件可在「我的 → 外观 / 迷你卡片」改，也能直接让 AI 改（见 Agent）。
 - **板块源是新浪**：板块 code 形如 `new_/gn_`。凡对板块 code 做前缀判断的地方都要匹配新浪格式，别假设东财的 `BK`。
 - **响应式**：`observable` 变了只重跑读过它的 `vif`/`attr` 闭包，不重跑 `body`。行内「是否隐藏 / 选中」这类判断要在 attr 闭包里现读 observable，别提到局部 val。

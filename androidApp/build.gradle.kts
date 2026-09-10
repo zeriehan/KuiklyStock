@@ -6,18 +6,23 @@ plugins {
 }
 
 /**
- * 读取 AI 大模型 API Key，优先级：local.properties > 环境变量 > 空串。
- * local.properties 已在 .gitignore 中，密钥不会进入版本库；
- * 取不到时为空串，App 会自动回退本地 Mock 分析，不影响功能演示。
+ * 读取 AI 大模型 API Key，优先级：
+ *   1. local.properties 的 GLM_API_KEY（本机覆盖，该文件不入库）
+ *   2. 环境变量 GLM_API_KEY（便于 CI）
+ *   3. glm.default.properties 里的共享 Key（随仓库提供，让评审 clone 下来零配置就能用真 AI）
+ *   4. 都没有则为空串，App 自动回退本地 Mock，功能演示不受影响。
+ * 想换自己的 Key：在 local.properties 里覆盖即可，不用改仓库里的默认文件。
  */
 val glmApiKey: String = run {
-    val props = Properties()
-    val localFile = rootProject.file("local.properties")
-    if (localFile.exists()) {
-        localFile.inputStream().use { props.load(it) }
+    fun readKey(file: java.io.File): String? {
+        if (!file.exists()) return null
+        val props = Properties()
+        file.inputStream().use { props.load(it) }
+        return props.getProperty("GLM_API_KEY")?.takeIf { it.isNotBlank() }
     }
-    props.getProperty("GLM_API_KEY")
-        ?: System.getenv("GLM_API_KEY")
+    readKey(rootProject.file("local.properties"))
+        ?: System.getenv("GLM_API_KEY")?.takeIf { it.isNotBlank() }
+        ?: readKey(rootProject.file("glm.default.properties"))
         ?: ""
 }
 
