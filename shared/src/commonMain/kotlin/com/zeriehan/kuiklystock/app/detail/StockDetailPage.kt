@@ -357,7 +357,7 @@ internal class StockDetailPage : BasePager() {
                 // 行情源不支持的市场（老三板/退市等）说明横幅：下方走势为本地模拟示意，非真实数据
                 vif({ unsafe }) {
                     View {
-                        attr { margin(12f); padding(10f, 12f); backgroundColor(Color(0xFFFDF6E3)); borderRadius(10f) }
+                        attr { margin(12f); padding(top = 10f, left = 12f, bottom = 10f, right = 12f); backgroundColor(Color(0xFFFDF6E3)); borderRadius(10f) }
                         Text { attr { text("该股票当前行情源暂不支持（老三板 / 退市等）：以下走势为本地模拟示意，非真实数据"); fontSize(12f); color(Color(0xFF8A6D3B)) } }
                     }
                 }

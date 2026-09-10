@@ -1526,7 +1526,7 @@ private fun ViewContainer<*, *>.renderRecents(ctx: MainTabPager, contentW: Float
                     View { attr { flexDirectionRow(); alignItemsCenter() }
                         Text { attr { text(name); fontSize(ctx.fs(15f)); color(Color(0xFF222222)) } }
                         vif({ pinned }) {
-                            View { attr { marginLeft(6f); backgroundColor(Color(0xFFF0F1F3)); padding(2f, 4f); borderRadius(4f) }
+                            View { attr { marginLeft(6f); backgroundColor(Color(0xFFF0F1F3)); padding(top = 2f, left = 4f, bottom = 2f, right = 4f); borderRadius(4f) }
                                 Text { attr { text("置顶"); fontSize(ctx.fs(10f)); color(Color(0xFF999999)) } }
                             }
                         }

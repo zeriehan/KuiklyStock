@@ -444,7 +444,7 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
                         View {
                             attr {
                                 flexDirectionRow(); alignItemsCenter()
-                                marginTop(6f); padding(6f, 8f); borderRadius(8f)
+                                marginTop(6f); padding(top = 6f, left = 8f, bottom = 6f, right = 8f); borderRadius(8f)
                                 backgroundColor(Color(0xFFEEF1F5))
                             }
                             Text {

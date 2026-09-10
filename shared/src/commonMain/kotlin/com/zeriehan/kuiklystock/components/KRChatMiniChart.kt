@@ -300,7 +300,7 @@ internal class KRChatMiniChart : ComposeView<ComposeAttr, ComposeEvent>() {
                         View {
                             attr {
                                 flexDirectionRow(); alignItemsCenter(); marginTop(6f)
-                                padding(6f, 8f); borderRadius(8f)
+                                padding(top = 6f, left = 8f, bottom = 6f, right = 8f); borderRadius(8f)
                                 backgroundColor(Color(0xFFEEF1F5))
                             }
                             Text {
@@ -312,7 +312,9 @@ internal class KRChatMiniChart : ComposeView<ComposeAttr, ComposeEvent>() {
                             View { attr { flex(1f) } }
                             View {
                                 attr {
-                                    height(24f); padding(0f, 10f); borderRadius(12f)
+                                    // ⚠️ padding 四边必须显式对称：只写 padding(0f, 10f) 时 right/bottom 为 0，
+                                    // 文字被顶向右侧并被裁掉（「就这点问」不居中）。四边同值 + 居中三件套才正。
+                                    height(24f); padding(top = 0f, left = 10f, bottom = 0f, right = 10f); borderRadius(12f)
                                     backgroundColor(Color(UserSettings.themeColor))
                                     alignItemsCenter(); justifyContentCenter()
                                 }
