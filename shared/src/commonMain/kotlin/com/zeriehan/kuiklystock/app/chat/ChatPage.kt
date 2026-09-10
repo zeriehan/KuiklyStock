@@ -820,6 +820,8 @@ internal class ChatPage : BasePager() {
         }
     }
 
+    /** 给文件级渲染扩展用：按当前会话上下文清洗 AI 文本（内部取当前股票代码作默认图表代码；自由问答无默认） */
+    internal fun chartSanitize(text: String): String = sanitizeChartText(text, if (freeMode) "" else stock.code)
 }
 
 /** 渲染消息列表：作为 vif 内容闭包，renderToggle 翻转时整体重建，确保发消息后气泡刷新 */
@@ -852,7 +854,7 @@ private fun ViewContainer<*, *>.renderMessages(ctx: ChatPage) {
                     attr {
                         // attr 内现读 streamText：observable 变化只重跑本 attr，文字就地增长
                         text(
-                            if (ctx.streamText.isNotEmpty()) ctx.streamText + "-"
+                            if (ctx.streamText.isNotEmpty()) ctx.chartSanitize(ctx.streamText) + "-"
                             else "正在思考…"
                         )
                         fontSize(UserSettings.fs(14f))
@@ -984,7 +986,9 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
                 // AI 气泡：先尝试解析末尾【AI观点】结论行(投资建议/风险徽章用)；解析到→正文剥离该行并渲染徽章
                 val parsed = parseAiVerdict(text)
                 val aiVerdict = parsed.first
-                val bodyText = parsed.second
+                // 兜底清洗：模型偶尔不守约定，把走势图写成 Markdown 图片/链接（App 加载不了网络图片，
+                // 会显示成一串难看字符且丢掉迷你图）。先把这类链接还原成 [KCHART:代码:周期] 指令。
+                val bodyText = ctx.chartSanitize(parsed.second)
                 // 把文本按 [KCHART:...] 指令拆成「文本段 + 迷你图段」分别渲染。
                 // 无图指令时等价于原单段 KRMarkdown 渲染；流式态不在此解析(见 renderMessages 注释，留给 done 阶段)。
                 val segments = parseChatSegments(bodyText)
@@ -1076,3 +1080,76 @@ private fun ViewContainer<*, *>.bubble(ctx: ChatPage, index: Int, role: String, 
     }
 
     private val KCHART_RE = Regex("\\[KCHART:([^\\]:]+):(intraday|day|week|month|year)\\]")
+
+    /** Markdown 链接/图片：[文字](url) 或 ![文字](url) */
+    private val MD_LINK_RE = Regex("!?\\[([^\\]]*)\\]\\(([^)]*)\\)")
+    /** 裸网址 */
+    private val BARE_URL_RE = Regex("https?://[^\\s)]+")
+    /** 文本里的 6 位股票代码 */
+    private val FIRST_CODE_RE = Regex("(\\d{6})")
+
+    /** 兜底清洗 AI 文本里"跑偏"的走势图写法：模型偶尔把图表写成 Markdown 图片/链接
+     *  （如「[xx 今天的K线图](https://.../xxx_day.png)」）——App 无法加载网络图片，直接显示既难看又丢了迷你图。
+     *  规则：
+     *   1) 链接/图片的 URL 或文字像走势图 → 还原成约定的 [KCHART:代码:周期]（代码须能在行情池里解析到，否则用 defaultCode；推不出则只留文字）
+     *   2) 其它 Markdown 链接 → 只留链接文字，去掉 URL
+     *   3) 残留的裸网址 → 删除 */
+    private fun sanitizeChartText(text: String, defaultCode: String): String {
+        if (text.isEmpty()) return text
+        val s = MD_LINK_RE.replace(text) { m ->
+            val alt = m.groupValues[1]
+            val blob = alt + " " + m.groupValues[2]
+            if (looksLikeChart(blob)) {
+                // 先取链接文字里的代码，再取 URL 里的；再退而按链接文字里的股票名定位；最后用 defaultCode。
+                // 代码必须能在行情池解析到，避免把 CDN 数字串(如 …1252524120…)当代码。
+                val code = firstResolvableCode(alt, blob)
+                    .ifBlank { codeFromName(alt) }
+                    .ifBlank { defaultCode }
+                if (code.length == 6 && code.all { it.isDigit() } && resolveChartStock(code) != null)
+                    "[KCHART:$code:${inferChartPeriod(blob)}]"
+                else alt.trim()
+            } else alt.trim()
+        }
+        return BARE_URL_RE.replace(s, "")
+    }
+
+    /** 在若干文本里找第一个"能在行情池解析到"的 6 位代码；找不到返回空 */
+    private fun firstResolvableCode(vararg sources: String): String {
+        sources.forEach { src ->
+            CODE_RE.findAll(src).forEach { m ->
+                val c = m.groupValues[1]
+                if (resolveChartStock(c) != null) return c
+            }
+        }
+        return ""
+    }
+
+    /** 文本里出现的股票名 → 代码（按名称长度降序，避免"平安"撞"平安银行"） */
+    private fun codeFromName(text: String): String {
+        if (text.isBlank()) return ""
+        return StockData.getQuotes().filter { it.name.length >= 2 }
+            .sortedByDescending { it.name.length }
+            .firstOrNull { text.contains(it.name) }?.code.orEmpty()
+    }
+
+    /** 是否像走势图：图片扩展名，或明确图表词（不把 day/week 这类弱词单独算，避免误判普通链接） */
+    private fun looksLikeChart(s: String): Boolean {
+        val l = s.lowercase()
+        return IMG_EXT.any { l.contains(it) } || CHART_STRONG.any { l.contains(it) }
+    }
+
+    /** 从文本/URL 关键词推断周期，默认 day（"今天/今日K线"→day） */
+    private fun inferChartPeriod(s: String): String {
+        val l = s.lowercase()
+        return when {
+            l.contains("month") || l.contains("月") -> "month"
+            l.contains("week") || l.contains("周") -> "week"
+            l.contains("year") || l.contains("年") -> "year"
+            l.contains("intraday") || l.contains("trend") || l.contains("min") || l.contains("分时") -> "intraday"
+            else -> "day"
+        }
+    }
+
+    private val CODE_RE = Regex("(\\d{6})")
+    private val IMG_EXT = listOf(".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
+    private val CHART_STRONG = listOf("kline", "k-line", "trend", "chart", "sinaimg", "gtimg", "分时", "走势", "k线")

@@ -613,6 +613,17 @@ internal class StockComparePage : BasePager() {
 /** 对比页聊天的消息（user/assistant；经 ChatStore.COMPARE_CONV 持久化，见 ChatStore.ChatMessage） */
 internal data class CompareChatMsg(val role: String, val text: String)
 
+/** 清洗 AI 文本里偶发的 Markdown 图片/链接：App 无法加载网络图片，原文会显示成一串难看字符。
+ *  对比页不支持 [KCHART] 迷你图，故只做"去掉 URL、保留链接文字"的降噪处理。 */
+private fun stripAiLinks(text: String): String {
+    if (text.isEmpty()) return text
+    val s = MD_LINK_RE.replace(text) { m -> m.groupValues[1].trim() }
+    return BARE_URL_RE.replace(s, "")
+}
+
+private val MD_LINK_RE = Regex("!?\\[([^\\]]*)\\]\\(([^)]*)\\)")
+private val BARE_URL_RE = Regex("https?://[^\\s)]+")
+
 /** 上区实现（阶段 #98/#99 过渡）：当前对比股横向分页卡片（名+价紧凑行 + 紧凑走势区）。
  *  走势区高度对标自选展开迷你图(KRMiniTimeSharing 122 高)，紧凑不占大块。 */
 private fun ViewContainer<*, *>.renderCompareUpper(ctx: StockComparePage) {
@@ -903,8 +914,9 @@ private fun ViewContainer<*, *>.renderCompareChatMsgs(ctx: StockComparePage) {
                         }
                     } else {
                         // assistant: Markdown 渲染（复用聊天富文本）
+                        // 先清洗模型偶发的 Markdown 图片/网址（App 无法加载网络图片，只会显示难看的链接串）
                         renderMarkdown(
-                            text = msg.text,
+                            text = stripAiLinks(msg.text),
                             contentW = (ctx.pagerData.pageViewWidth - 60f) - 16f,
                             textColor = Color(0xFF222222),
                             accent = Color(UserSettings.themeColor),
@@ -937,7 +949,7 @@ private fun ViewContainer<*, *>.renderCompareChatMsgs(ctx: StockComparePage) {
                     }
                     Text {
                         attr {
-                            text(if (ctx.cmpStreamText.isNotEmpty()) ctx.cmpStreamText + "▍" else "正在思考…")
+                            text(if (ctx.cmpStreamText.isNotEmpty()) stripAiLinks(ctx.cmpStreamText) + "▍" else "正在思考…")
                             fontSize(UserSettings.fs(13f)); color(Color(0xFF222222))
                             maxWidth((ctx.pagerData.pageViewWidth - 60f) - 16f)
                         }
