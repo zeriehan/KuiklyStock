@@ -6,6 +6,20 @@
 
 ---
 
+## 功能展示
+
+**演示视频**：待补。B 站上传后，把链接替换到这一行（视频里走了一遍行情、AI 聊天逐字输出、AI Agent 操作 App、图表选点问 AI）。
+
+下面四张是主要功能截图，点开可以看大图。
+
+| AI 聊天 + AI Agent | 个股详情 |
+| --- | --- |
+| ![AI 聊天与 Agent](docs/screenshots/01-ai-chat-and-agent.jpg) | ![个股详情](docs/screenshots/02-stock-detail.jpg) |
+| **多股对比** | **自选与个性化** |
+| ![多股对比](docs/screenshots/03-compare.jpg) | ![自选](docs/screenshots/04-watchlist.jpg) |
+
+---
+
 ## 一、当前状态（2026-09-10 · 已收工）
 
 **两大任务都已收官，真机跑通（安卓由 vivo 验证），演示视频已录。**
