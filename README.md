@@ -8,7 +8,9 @@
 
 ## 功能展示
 
-**演示视频**：待补。B 站上传后，把链接替换到这一行（视频里走了一遍行情、AI 聊天逐字输出、AI Agent 操作 App、图表选点问 AI）。
+**演示视频**：[B 站 · KuiklyStock 功能演示](https://www.bilibili.com/video/BV1PWYE6LEke)，约 5 分半，走了一遍行情、AI 聊天逐字输出、AI Agent 操作 App、图表选点问 AI。
+
+**直接装到手机上试**：[KuiklyStock-debug.apk](KuiklyStock-debug.apk)，约 4.9 MB。下载后允许「未知来源应用」即可安装，打开就能用，AI 部分需要联网。这是 debug 构建的可安装包，功能和源码一致。
 
 下面四张是主要功能截图，点开可以看大图。
 
