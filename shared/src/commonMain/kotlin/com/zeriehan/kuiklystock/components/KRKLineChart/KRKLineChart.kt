@@ -782,10 +782,15 @@ internal class KRKLineChart : ComposeView<ComposeAttr, ComposeEvent>() {
         // 底部日期/时间标签
         val label = if (isTimeSharing()) timeSharing.getOrNull(hoverIdx)?.time ?: ""
         else bars.getOrNull(hoverIdx)?.date ?: ""
-        if (label.isNotEmpty()) {
-            val bw = (label.length * 7f) + 10f
+        if (label.isNotEmpty() && w > 0f) {
+            // ⚠️ 根数极少时画布比日期标签还窄：北交所年K 只有 2-3 根（沪深年K 只有 1 根），
+            // canvas 宽 w = n*9+16 可低到 25~43px，而标签 bw = len*7+10 约 45px → (w - bw) 为负，
+            // coerceIn(0f, 负数) 下界大于上界，直接抛 "Cannot coerce value to an empty range"
+            // （表现就是点一下K线整个页面黑屏重启）。
+            // 两道处理：标签宽先压到不超过画布，再把上界抬到不小于 0，保证区间非空。
+            val bw = ((label.length * 7f) + 10f).coerceAtMost(w)
             var bx = cx - bw / 2f
-            bx = bx.coerceIn(0f, w - bw)
+            bx = bx.coerceIn(0f, (w - bw).coerceAtLeast(0f))
             fillRect(c, bx, dateTop, bw, 14f, Color(0xFF555555))
             c.fillStyle(Color.WHITE)
             c.fillText(label, bx + 5f, dateTop + 10f)
