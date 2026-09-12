@@ -1048,8 +1048,10 @@ private fun buildStocksJson(diff: JSONArray): String {
 }
 
 /**
- * 拉取个股历史 K线（东方财富 push2his kline）。返回 { "kline": "[{date,open,close,high,low,volume},...]" }（最老→最新）
+ * 拉取个股历史 K线。返回 { "kline": "[{date,open,close,high,low,volume},...]" }（最老→最新）
  * shared 传 { "secid": "1.601318", "klt": 101, "count": 80 }；klt: 101日/102周/103月/104年（fqt=1 前复权）
+ *
+ * 分源：沪深走腾讯 fqkline（前复权、真机可达）；北交所走新浪，原因见 [fetchSinaKline]。
  */
 private fun fetchKline(params: String?, callback: KuiklyRenderCallback?) {
     val empty = mapOf("kline" to "[]")
@@ -1061,57 +1063,154 @@ private fun fetchKline(params: String?, callback: KuiklyRenderCallback?) {
     val count = p.optInt("count", 80).coerceIn(10, 500)
     thread(name = "em-kline") {
         val result = try {
-            // 腾讯历史K线（沙箱与真机均可达；push2his 东财历史域在某些网络不可达）。
-            // secid "1.601318"/"0.000858" → 腾讯 "sh601318"/"sz000858"
-            val dot = secid.indexOf('.')
-            val market = if (dot > 0) secid.substring(0, dot) else "1"
-            val code = if (dot > 0) secid.substring(dot + 1) else secid
-            val prefix = txMarketPrefix(market)
-            val periodKey = when (klt) { 102 -> "week"; 103 -> "month"; 104 -> "year"; else -> "day" }
-            val fqKey = "qfq" + when (klt) { 102 -> "week"; 103 -> "month"; else -> "day" } // qfqweek/qfqmonth/qfqday
-            val url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get" +
-                "?param=$prefix$code,$periodKey,,,$count,qfq"
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
-                setRequestProperty("User-Agent", "Mozilla/5.0")
-                setRequestProperty("Referer", "https://gu.qq.com/")
-            }
-            try {
-                if (conn.responseCode != HttpURLConnection.HTTP_OK) {
-                    Log.e("KRBridge", "TX kline HTTP ${conn.responseCode}")
-                    "[]"
-                } else {
-                    val json = JSONObject(conn.inputStream.bufferedReader().readText())
-                    val root = json.optJSONObject("data")?.optJSONObject("$prefix$code")
-                    val arr = root?.optJSONArray(fqKey) ?: JSONArray()
-                    val out = JSONArray()
-                    // 腾讯每根: ["2026-09-02", open, close, high, low, volume]
-                    for (i in 0 until arr.length()) {
-                        val row = arr.optJSONArray(i) ?: continue
-                        if (row.length() < 5) continue
-                        val close = row.optDouble(2)
-                        if (close <= 0.0) continue
-                        out.put(
-                            JSONObject().apply {
-                                put("date", row.optString(0))
-                                put("open", row.optDouble(1))
-                                put("close", close)
-                                put("high", row.optDouble(3))
-                                put("low", row.optDouble(4))
-                                put("volume", if (row.length() > 5) row.optDouble(5) else 0.0)
-                            }
-                        )
-                    }
-                    out.toString()
-                }
-            } finally {
-                conn.disconnect()
-            }
+            // 腾讯 fqkline 不提供北交所历史K线（新旧代码都只回当天 1 根），故北交所整段改走新浪。
+            if (secid.startsWith("bj")) fetchSinaKline(secid, klt, count)
+            else fetchTxKline(secid, klt, count)
         } catch (e: Throwable) {
             Log.e("KRBridge", "fetchKline failed", e)
             "[]"
         }
         Handler(Looper.getMainLooper()).post { callback?.invoke(mapOf("kline" to result)) }
+    }
+}
+
+/**
+ * 沪深历史K线（腾讯 fqkline，前复权）。返回归一化 JSON 数组字符串，失败返回 "[]"。
+ * secid "1.601318"/"0.000858" → 腾讯 "sh601318"/"sz000858"
+ */
+private fun fetchTxKline(secid: String, klt: Int, count: Int): String {
+    val dot = secid.indexOf('.')
+    val market = if (dot > 0) secid.substring(0, dot) else "1"
+    val code = if (dot > 0) secid.substring(dot + 1) else secid
+    val prefix = txMarketPrefix(market)
+    val periodKey = when (klt) { 102 -> "week"; 103 -> "month"; 104 -> "year"; else -> "day" }
+    // ⚠️ 腾讯只在 日/周/月 上给 qfqX；年K 只回 "year"（无 qfqyear，且仅当年 1 根）。
+    // 旧写法把 104 落到 else → 读成 "qfqday"，年K 恒空；这里按 periodKey 拼，读不到再回退读同名裸字段。
+    val fqKey = "qfq$periodKey"
+    val url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get" +
+        "?param=$prefix$code,$periodKey,,,$count,qfq"
+    val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"; connectTimeout = 8000; readTimeout = 8000
+        setRequestProperty("User-Agent", "Mozilla/5.0")
+        setRequestProperty("Referer", "https://gu.qq.com/")
+    }
+    try {
+        if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+            Log.e("KRBridge", "TX kline HTTP ${conn.responseCode}")
+            return "[]"
+        }
+        val json = JSONObject(conn.inputStream.bufferedReader().readText())
+        val root = json.optJSONObject("data")?.optJSONObject("$prefix$code")
+        val arr = root?.optJSONArray(fqKey) ?: root?.optJSONArray(periodKey) ?: JSONArray()
+        val out = JSONArray()
+        // 腾讯每根: ["2026-09-02", open, close, high, low, volume]
+        for (i in 0 until arr.length()) {
+            val row = arr.optJSONArray(i) ?: continue
+            if (row.length() < 5) continue
+            val close = row.optDouble(2)
+            if (close <= 0.0) continue
+            out.put(
+                JSONObject().apply {
+                    put("date", row.optString(0))
+                    put("open", row.optDouble(1))
+                    put("close", close)
+                    put("high", row.optDouble(3))
+                    put("low", row.optDouble(4))
+                    put("volume", if (row.length() > 5) row.optDouble(5) else 0.0)
+                }
+            )
+        }
+        return out.toString()
+    } finally {
+        conn.disconnect()
+    }
+}
+
+/**
+ * 北交所历史K线（新浪 CN_MarketData.getKLineData）。
+ *
+ * 为什么北交所不能走腾讯：腾讯 fqkline 对 bj 只返回当天 1 根、没有历史 —— 实测
+ * 830799/430047/833819/872925/831726 全部 n=0，换成 920 新代码后依然只有 1 根。
+ * 新浪在 920 代码上日/周/月均可（且与腾讯实时价逐只吻合），故北交所历史K线整段改走新浪。
+ *
+ * scale: 240=日 1200=周 7200=月；新浪无年K，年K 拉全量月K 后按年聚合。
+ * 返回与腾讯链路一致的归一化结构 {date,open,close,high,low,volume}（最老→最新）。
+ */
+private fun fetchSinaKline(secid: String, klt: Int, count: Int): String {
+    val code = if (secid.contains('.')) secid.substringAfter('.') else secid
+    val symbol = "bj$code"
+    val isYear = klt == 104
+    val scale = when (klt) { 102 -> 1200; 103 -> 7200; 104 -> 7200; else -> 240 }
+    // 年K 要尽可能长的月K 做聚合；其余按请求根数取
+    val datalen = if (isYear) 1023 else count
+    val url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/" +
+        "CN_MarketData.getKLineData?symbol=$symbol&scale=$scale&ma=no&datalen=$datalen"
+    val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"; connectTimeout = 8000; readTimeout = 10000
+        setRequestProperty("User-Agent", "Mozilla/5.0")
+        setRequestProperty("Referer", "https://finance.sina.com.cn/")
+    }
+    try {
+        if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+            Log.e("KRBridge", "Sina kline HTTP ${conn.responseCode}")
+            return "[]"
+        }
+        val raw = conn.inputStream.bufferedReader().readText().trim()
+        if (raw.isBlank() || raw == "null") return "[]"
+        val arr = JSONArray(raw)
+        // 新浪每根: { day:"2026-09-11 15:00:00", open, high, low, close, volume }
+        val rows = mutableListOf<JSONObject>()
+        for (i in 0 until arr.length()) {
+            val it = arr.optJSONObject(i) ?: continue
+            val close = it.optString("close").toDoubleOrNull() ?: continue
+            if (close <= 0.0) continue
+            val day = it.optString("day")
+            val date = if (day.length >= 10) day.substring(0, 10) else day
+            if (date.length < 8) continue
+            rows.add(
+                JSONObject().apply {
+                    put("date", date)
+                    put("open", it.optString("open").toDoubleOrNull() ?: close)
+                    put("close", close)
+                    put("high", it.optString("high").toDoubleOrNull() ?: close)
+                    put("low", it.optString("low").toDoubleOrNull() ?: close)
+                    // 新浪成交量单位是「股」，腾讯是「手」（实测同日同股比值恰为 100）。
+                    // 不换算的话北交所量能会比沪深虚高 100 倍（副图量柱/换手显示失真），故统一成手。
+                    put("volume", (it.optString("volume").toDoubleOrNull() ?: 0.0) / 100.0)
+                }
+            )
+        }
+        if (rows.isEmpty()) return "[]"
+        if (!isYear) {
+            val out = JSONArray()
+            // 新浪返回最老→最新，只取最近 count 根
+            rows.takeLast(count).forEach { out.put(it) }
+            return out.toString()
+        }
+        // 年K：按年聚合月K（开=年内首月开，收=年内末月收，高/低=年内极值，量=年内合计）
+        val byYear = LinkedHashMap<String, MutableList<JSONObject>>()
+        rows.forEach { r ->
+            val d = r.optString("date")
+            if (d.length >= 4) byYear.getOrPut(d.substring(0, 4)) { mutableListOf() }.add(r)
+        }
+        val out = JSONArray()
+        byYear.values.forEach { list ->
+            val first = list.first()
+            val last = list.last()
+            out.put(
+                JSONObject().apply {
+                    put("date", first.optString("date").substring(0, 4) + "-12-31")
+                    put("open", first.optDouble("open"))
+                    put("close", last.optDouble("close"))
+                    put("high", list.maxOf { it.optDouble("high") })
+                    put("low", list.minOf { it.optDouble("low") })
+                    put("volume", list.sumOf { it.optDouble("volume") })
+                }
+            )
+        }
+        return out.toString()
+    } finally {
+        conn.disconnect()
     }
 }
 

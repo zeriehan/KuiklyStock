@@ -552,14 +552,24 @@ object StockData {
         return secidOfCode(stock.code)
     }
 
-    /** 个股 code → 行情源 secid（不含指数；北交所 bj、老三板/新三板返回空=源不支持） */
+    /**
+     * 个股 code → 行情源 secid（不含指数；北交所 bj、老三板/新三板返回空=源不支持）
+     *
+     * ⚠️ 北交所 2025 年已完成证券代码切换：43/83/87/88 开头的存量代码统一平移成
+     * 「920 + 原代码后三位」（830799→920799、430047→920047、872925→920925）。
+     * 旧代码在各行情源已停更 —— 腾讯报价只给到开盘前快照、新浪日K 停在 2025-04-30、
+     * 腾讯 fqkline 直接返空 —— 只有换成 920 新代码才拿得到实时价与完整历史K线，故此处统一平移。
+     */
     private fun secidOfCode(code: String): String = when {
         code == "000002" -> "0.000001"       // mock 里"平安银行"的真实 secid
         code.startsWith("6") -> "1.$code"    // 沪市(含科创板 688)
-        code.startsWith("920") -> "bj.$code" // 北交所 新代码段
+        code.startsWith("920") -> "bj.$code" // 北交所 新代码段(已切换，原样用)
         code.startsWith("889") -> ""         // 新三板(889xxx) 行情源不支持
-        code.startsWith("8") -> "bj.$code"   // 北交所 旧代码段(8xxxxx)
-        code.startsWith("4") -> ""           // 老三板/退市(4xxxxx/43xxxx) 行情源不支持
+        // 北交所存量旧代码段 → 平移到 920 段（须排在下面的 "4"/"8" 兜底之前）
+        code.startsWith("43") || code.startsWith("83") ||
+            code.startsWith("87") || code.startsWith("88") -> "bj.920${code.takeLast(3)}"
+        code.startsWith("8") -> "bj.$code"   // 其余 8 段(兜底，保持原样)
+        code.startsWith("4") -> ""           // 老三板/退市(4xxxxx 非 43 段) 行情源不支持
         else -> "0.$code"                    // 深市(0/3 开头)
     }
 
