@@ -135,13 +135,13 @@ KuiklyStock/
 ### 页面路由
 
 ```text
-MainTab（四 Tab 主框架：AI 聊天 / 行情 / 自选 / 我的）
-  ├─ 行情 Tab ──────┐
-  ├─ 自选 Tab ──────┼──→ StockDetail（个股详情）
-  └─ 我的 Tab ──────┘    SectorDetail（板块详情）
+MainTab（四 Tab 主框架）
+  ├─ AI 聊天 Tab ──→ Chat（点「最近对话」继续聊）
+  ├─ 行情 Tab ─────┐
+  ├─ 自选 Tab ─────┼──→ StockDetail（个股详情）· SectorDetail（板块详情）
+  └─ 我的 Tab ─────┘        └──→ Chat（对该股 / 板块的 AI 对话）
 
-MainTab ──→ Chat（AI 对话）
-        ──→ StockCompare / StockPicker / HeatPool / QuotesPage
+MainTab ──→ StockCompare · StockPicker · HeatPool · QuotesPage
         ──→ Appearance / ExpandSettings / HiddenStocks / Credits / FullText
 ```
 
